@@ -1,4 +1,5 @@
 import { MockAiProvider } from "@/ai/mock-provider";
+import { createAiProviderFromEnv } from "@/ai/openai-compatible-provider";
 import { generateRouteOutput, makeFriendlyFailureOutput } from "@/ai/orchestrator";
 import type { RouteKey } from "@/domain/types";
 import { ROUTE_KEYS } from "@/domain/types";
@@ -19,10 +20,14 @@ export async function POST(request: Request) {
   try {
     const body = requestSchema.parse(await request.json());
     routeKey = body.routeKey;
+    const provider =
+      process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY
+        ? createAiProviderFromEnv()
+        : new MockAiProvider(body.scenario);
     const output = await generateRouteOutput({
       routeKey,
       input: body.input,
-      provider: new MockAiProvider(body.scenario),
+      provider,
     });
 
     return NextResponse.json(output);
