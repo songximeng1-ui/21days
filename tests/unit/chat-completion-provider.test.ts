@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  OpenAiCompatibleProvider,
+  ChatCompletionProvider,
   RetryFallbackAiProvider,
   createAiProviderFromEnv,
-} from "@/ai/openai-compatible-provider";
+} from "@/ai/chat-completion-provider";
 import { MockAiProvider } from "@/ai/mock-provider";
 
 const validOutput = {
@@ -33,7 +33,7 @@ const validOutput = {
   },
 };
 
-describe("OpenAiCompatibleProvider", () => {
+describe("ChatCompletionProvider", () => {
   it("sends a JSON-only chat completion request and parses the model response", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(
@@ -49,7 +49,7 @@ describe("OpenAiCompatibleProvider", () => {
         { status: 200 },
       ),
     );
-    const provider = new OpenAiCompatibleProvider({
+    const provider = new ChatCompletionProvider({
       apiKey: "test-key",
       baseUrl: "https://api.example.com",
       model: "test-model",
@@ -134,7 +134,7 @@ describe("OpenAiCompatibleProvider", () => {
     expect(fetchMock.mock.calls[2][0]).toBe("https://qwen.example.com/compatible-mode/v1/chat/completions");
   });
 
-  it("falls back to mock provider when no real model key is configured", () => {
+  it("falls back to mock provider when DeepSeek is not configured", () => {
     const provider = createAiProviderFromEnv({});
 
     expect(provider).toBeInstanceOf(MockAiProvider);

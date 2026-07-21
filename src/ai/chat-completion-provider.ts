@@ -4,7 +4,7 @@ import type { RouteOutput } from "@/domain/types";
 
 type FetchLike = typeof fetch;
 
-type OpenAiCompatibleProviderOptions = {
+type ChatCompletionProviderOptions = {
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -18,11 +18,11 @@ type RetryFallbackAiProviderOptions = {
   primaryAttempts?: number;
 };
 
-export class OpenAiCompatibleProvider implements AiProvider {
+export class ChatCompletionProvider implements AiProvider {
   private readonly fetchFn: FetchLike;
   private readonly completionsUrl: string;
 
-  constructor(private readonly options: OpenAiCompatibleProviderOptions) {
+  constructor(private readonly options: ChatCompletionProviderOptions) {
     this.fetchFn = options.fetchFn ?? fetch;
     this.completionsUrl = `${options.baseUrl.replace(/\/$/, "")}/chat/completions`;
   }
@@ -100,7 +100,7 @@ export class RetryFallbackAiProvider implements AiProvider {
 
 export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?: FetchLike): AiProvider {
   if (env.DEEPSEEK_API_KEY) {
-    const primary = new OpenAiCompatibleProvider({
+    const primary = new ChatCompletionProvider({
       apiKey: env.DEEPSEEK_API_KEY,
       baseUrl: env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
       model: env.DEEPSEEK_MODEL ?? "deepseek-chat",
@@ -108,7 +108,7 @@ export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?
     });
 
     const fallback = env.QWEN_API_KEY
-      ? new OpenAiCompatibleProvider({
+      ? new ChatCompletionProvider({
           apiKey: env.QWEN_API_KEY,
           baseUrl: env.QWEN_BASE_URL ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
           model: env.QWEN_MODEL ?? "qwen-plus",
@@ -120,18 +120,6 @@ export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?
       primary,
       fallback,
       primaryAttempts: 2,
-    });
-  }
-
-  if (env.OPENAI_API_KEY) {
-    return new RetryFallbackAiProvider({
-      primary: new OpenAiCompatibleProvider({
-      apiKey: env.OPENAI_API_KEY,
-      baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
-      model: env.OPENAI_MODEL ?? "gpt-4.1-mini",
-        fetchFn,
-      }),
-      primaryAttempts: 1,
     });
   }
 
