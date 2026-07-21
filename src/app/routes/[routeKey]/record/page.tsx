@@ -46,7 +46,7 @@ export default function RecordPage() {
       return false;
     }
 
-    return output.recordGuide.fieldsToRecord.every((field) => payload[field]?.trim());
+    return requiredRecordFields(output).every((field) => payload[field]?.trim());
   }
 
   const hasRouteMismatch = output && output.routeKey !== params.routeKey;
@@ -83,7 +83,10 @@ export default function RecordPage() {
 
           {output?.recordGuide.fieldsToRecord.map((field) => (
             <label className="field" key={field}>
-              <span>{recordFieldLabels[field] ?? field}</span>
+              <span>
+                {recordFieldLabels[field] ?? field}
+                {!requiredRecordFields(output).includes(field) && "（可先写“不确定”）"}
+              </span>
               <textarea
                 value={payload[field] ?? ""}
                 onChange={(event) => updatePayload(field, event.target.value)}
@@ -107,7 +110,7 @@ export default function RecordPage() {
           <p className="muted">
             {output?.outputType === "missing_info"
               ? "确认勾选并补齐上面的记录字段后，会回到当前路线继续判断。"
-              : "确认勾选并补齐上面的记录字段后，才能保存并复盘。"}
+              : recordHelpText(output)}
           </p>
           <Link className="secondary-button" href="/track">只查看我的求职轨迹</Link>
         </form>
@@ -119,6 +122,24 @@ export default function RecordPage() {
 
 function isRecordableOutput(output: RouteOutput) {
   return output.outputType === "route_result" || output.outputType === "missing_info";
+}
+
+function requiredRecordFields(output: RouteOutput): string[] {
+  if (output.recordGuide.recordType === "application") {
+    return ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"].filter((field) =>
+      output.recordGuide.fieldsToRecord.includes(field)
+    );
+  }
+
+  return output.recordGuide.fieldsToRecord;
+}
+
+function recordHelpText(output: RouteOutput | null) {
+  if (output?.recordGuide.recordType === "application") {
+    return "先补最低字段：岗位、公司或平台、投递时间、反馈状态。JD 摘要和这次用的简历/材料版本可以先写“不确定”，之后再补。";
+  }
+
+  return "确认勾选并补齐上面的记录字段后，才能保存并复盘。";
 }
 
 const recordFieldLabels: Record<string, string> = {

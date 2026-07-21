@@ -45,7 +45,7 @@ describe("Home", () => {
     render(<Home />);
 
     expect(screen.queryByText("你现在最想先解决哪件事？")).not.toBeInTheDocument();
-    expect(await screen.findByText("上次这一步还没完成，今天先接着处理它。")).toBeInTheDocument();
+    expect(await screen.findByText("上次这一步还没做完，今天可以把它缩小一点。")).toBeInTheDocument();
     expect(screen.getByText("今天先对照 JD 做 1 条投递前最小修改")).toBeInTheDocument();
     expect(screen.getByText("先改最能支撑 JD 的一处表达。")).toBeInTheDocument();
     expect(screen.getByText("圈出 JD 的 1 条关键要求")).toBeInTheDocument();
@@ -74,7 +74,7 @@ describe("Home", () => {
 
     render(<Home />);
 
-    expect(await screen.findByText("上次这一步还没完成，今天先接着处理它。")).toBeInTheDocument();
+    expect(await screen.findByText("上次这一步还没做完，今天可以把它缩小一点。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "查看这一步行动" })).toHaveAttribute(
       "href",
       "/routes/jd_to_revision/action",
@@ -94,7 +94,7 @@ describe("Home", () => {
 
     render(<Home />);
 
-    expect(await screen.findByText("上次这一步还没完成，今天先接着处理它。")).toBeInTheDocument();
+    expect(await screen.findByText("上次这一步还没做完，今天可以把它缩小一点。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "查看这一步行动" })).toHaveAttribute(
       "href",
       "/routes/jd_to_revision/action",
@@ -124,7 +124,7 @@ describe("Home", () => {
     expect(await screen.findByText("21 天陪跑 · 已保存 1 次推进")).toBeInTheDocument();
     expect(screen.getByText("最近推进：整理了社团招新报名表，并记录了自己负责的动作。")).toBeInTheDocument();
     expect(screen.getByText("下一步先补这段经历的交付物。")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "从这个问题继续整理" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "继续：下一步先补这段经历的交付物。" })).toHaveAttribute(
       "href",
       "/routes/experience_to_resume/input",
     );
@@ -195,7 +195,7 @@ describe("Home", () => {
 
     render(<Home />);
 
-    expect(await screen.findByText("上次这一步还没完成，今天先接着处理它。")).toBeInTheDocument();
+    expect(await screen.findByText("上次这一步还没做完，今天可以把它缩小一点。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "查看这一步行动" })).toHaveAttribute(
       "href",
       "/routes/jd_to_revision/action",

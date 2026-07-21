@@ -73,7 +73,7 @@ function ReturnHomeState({
 
     return (
       <div className="notice">
-        <p className="lead">上次这一步还没完成，今天先接着处理它。</p>
+        <p className="lead">上次这一步还没做完，今天可以把它缩小一点。</p>
         <h2>{action.actionTitle}</h2>
         <p>{action.actionReason}</p>
         <ul className="compact-list">
@@ -101,7 +101,9 @@ function ReturnHomeState({
 
   const routeKey = progress.latestReview?.routeKey ?? progress.latestRecord?.routeKey;
   const primaryHref = progress.latestReview && routeKey ? `/routes/${routeKey}/input` : "/review";
-  const primaryLabel = progress.latestReview ? "从这个问题继续整理" : "基于这条记录轻复盘";
+  const primaryLabel = progress.latestReview
+    ? `继续：${progress.latestReview.nextAction}`
+    : "基于这条记录轻复盘";
 
   return (
     <div className="notice">

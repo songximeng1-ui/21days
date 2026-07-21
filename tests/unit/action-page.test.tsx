@@ -3,12 +3,15 @@ import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ActionPage from "@/app/routes/[routeKey]/action/page";
 import RecordPage from "@/app/routes/[routeKey]/record/page";
+import { generateRouteOutput } from "@/ai/orchestrator";
+import { MockAiProvider } from "@/ai/mock-provider";
 import { loadCurrentAction, mergeDraft, saveRecord, type CurrentAction } from "@/lib/local-store";
 
 const push = vi.fn();
+let routeKeyParam = "jd_to_revision";
 
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ routeKey: "jd_to_revision" }),
+  useParams: () => ({ routeKey: routeKeyParam }),
   useRouter: () => ({ push }),
 }));
 
@@ -45,9 +48,64 @@ const missingInfoOutput: CurrentAction = {
   },
 };
 
+const routeResultOutput: CurrentAction = {
+  ...missingInfoOutput,
+  outputType: "route_result",
+  actionId: "action-jd-revision",
+  actionCreatedAt: "2026-07-21T05:00:00.000Z",
+  shortAssessment: "这份材料可以先做一处投递前最小修改。",
+  missingInfo: null,
+  routeResult: {
+    supportedByMaterial: ["材料里能看到内容整理经历"],
+    unclearFromMaterial: ["还看不出具体交付物"],
+  },
+  todayAction: {
+    actionTitle: "今天先对照 JD 做 1 条投递前最小修改",
+    actionReason: "先改最能支撑 JD 的一处表达。",
+    actionSteps: ["圈出 JD 的 1 条关键要求", "找到材料里对应经历", "补 1 个真实动作"],
+    estimatedTime: "15-30 分钟",
+    recordAfterDone: "记录修改前后片段。",
+    actionType: "jd_revision",
+  },
+  recordGuide: {
+    recordType: "jd_compare",
+    fieldsToRecord: ["beforeSnippet", "afterSnippet"],
+    requiresUserConfirmation: true,
+  },
+};
+
+const applicationOutput: CurrentAction = {
+  ...routeResultOutput,
+  routeKey: "applications_to_review",
+  actionId: "action-application-record",
+  shortAssessment: "先基于真实投递记录看一个可能线索。",
+  routeResult: {
+    reviewBasis: ["最近补充的投递记录"],
+    possibleClues: ["部分记录还缺材料版本，后续不好判断修改是否有效"],
+  },
+  todayAction: {
+    actionTitle: "今天先选择 1 条投递记录补齐材料版本",
+    actionReason: "先让这条记录可复盘，再判断下一轮怎么调整。",
+    actionSteps: [
+      "选最近一条投递",
+      "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态",
+      "JD 摘要和这次用的简历或材料版本不确定也可以先写“不确定”",
+    ],
+    estimatedTime: "15-30 分钟",
+    recordAfterDone: "先记录岗位、公司或平台、投递时间和反馈状态；其他不确定的字段之后再补。",
+    actionType: "application_record",
+  },
+  recordGuide: {
+    recordType: "application",
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "materialVersion", "feedbackStatus"],
+    requiresUserConfirmation: true,
+  },
+};
+
 describe("ActionPage", () => {
   beforeEach(() => {
     push.mockReset();
+    routeKeyParam = "jd_to_revision";
     vi.mocked(saveRecord).mockReset();
     vi.mocked(mergeDraft).mockReset();
     vi.mocked(loadCurrentAction).mockReturnValue(missingInfoOutput);
@@ -60,11 +118,53 @@ describe("ActionPage", () => {
 
     expect(recordLink).toHaveAttribute("href", "/routes/jd_to_revision/record");
   });
+
+  it("shows concrete evidence behind the current action", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
+
+    render(<ActionPage />);
+
+    expect(await screen.findByText("这一步基于：")).toBeInTheDocument();
+    expect(screen.getByText("你提供的材料里有：材料里能看到内容整理经历")).toBeInTheDocument();
+  });
+
+  it("limits long evidence snippets before showing them", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        supportedByMaterial: [
+          "这是一段很长很长的用户材料，包含学校项目细节、岗位要求原文、很多不适合直接铺满行动页的信息",
+        ],
+      },
+    });
+
+    render(<ActionPage />);
+
+    expect(await screen.findByText(/^你提供的材料里有：这是一段很长很长的用户材料/)).toBeInTheDocument();
+    expect(screen.queryByText(/很多不适合直接铺满行动页的信息/)).not.toBeInTheDocument();
+  });
+
+  it("blocks action pages when the saved action belongs to another route", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeKey: "experience_to_resume",
+    });
+
+    render(<ActionPage />);
+
+    expect(await screen.findByText("这不是当前问题的行动")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "回到输入页" })).toHaveAttribute(
+      "href",
+      "/routes/jd_to_revision/input",
+    );
+    expect(screen.queryByText("今天先对照 JD 做 1 条投递前最小修改")).not.toBeInTheDocument();
+  });
 });
 
 describe("RecordPage", () => {
   beforeEach(() => {
     push.mockReset();
+    routeKeyParam = "jd_to_revision";
     vi.mocked(saveRecord).mockReset();
     vi.mocked(loadCurrentAction).mockReturnValue(missingInfoOutput);
   });
@@ -102,6 +202,135 @@ describe("RecordPage", () => {
       jdTextOrRequirements: "负责用户调研、数据整理、活动复盘",
     });
     expect(push).toHaveBeenCalledWith("/routes/jd_to_revision/input");
+  });
+
+  it("saves completed route actions with their action id and continues to review", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
+
+    render(<RecordPage />);
+
+    fireEvent.change(await screen.findByLabelText("实际完成了什么？"), {
+      target: { value: "改完 JD 相关的一句话" },
+    });
+    fireEvent.change(screen.getByLabelText("修改前片段"), {
+      target: { value: "原片段" },
+    });
+    fireEvent.change(screen.getByLabelText("修改后片段"), {
+      target: { value: "加入了真实动作后的片段" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并轻复盘" }));
+
+    expect(saveRecord).toHaveBeenCalledWith({
+      actionId: "action-jd-revision",
+      routeKey: "jd_to_revision",
+      recordType: "jd_compare",
+      actionTitle: "今天先对照 JD 做 1 条投递前最小修改",
+      actualDone: "改完 JD 相关的一句话",
+      payload: {
+        beforeSnippet: "原片段",
+        afterSnippet: "加入了真实动作后的片段",
+      },
+      userConfirmed: true,
+    });
+    expect(push).toHaveBeenCalledWith("/review");
+  });
+
+  it("lets application records save with minimum fields while optional fields stay uncertain", async () => {
+    routeKeyParam = "applications_to_review";
+    vi.mocked(loadCurrentAction).mockReturnValue(applicationOutput);
+
+    render(<RecordPage />);
+
+    fireEvent.change(await screen.findByLabelText("实际完成了什么？"), {
+      target: { value: "补了一条投递记录" },
+    });
+    fireEvent.change(screen.getByLabelText("岗位名称"), {
+      target: { value: "内容运营实习" },
+    });
+    fireEvent.change(screen.getByLabelText("公司或平台"), {
+      target: { value: "A 公司" },
+    });
+    fireEvent.change(screen.getByLabelText("投递时间"), {
+      target: { value: "7 月 1 日" },
+    });
+    fireEvent.change(screen.getByLabelText("反馈状态"), {
+      target: { value: "暂无反馈" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并轻复盘" }));
+
+    expect(saveRecord).toHaveBeenCalledWith({
+      actionId: "action-application-record",
+      routeKey: "applications_to_review",
+      recordType: "application",
+      actionTitle: "今天先选择 1 条投递记录补齐材料版本",
+      actualDone: "补了一条投递记录",
+      payload: {
+        jobTitle: "内容运营实习",
+        companyOrPlatform: "A 公司",
+        submittedAt: "7 月 1 日",
+        feedbackStatus: "暂无反馈",
+      },
+      userConfirmed: true,
+    });
+    expect(screen.getByText(/先补最低字段/)).toBeInTheDocument();
+  });
+
+  it("lets application missing-info records use minimum fields while optional fields stay uncertain", async () => {
+    routeKeyParam = "applications_to_review";
+    const output = await generateRouteOutput({
+      routeKey: "applications_to_review",
+      input: { applications: {} },
+      provider: new MockAiProvider("success"),
+    });
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...output,
+      actionId: "action-application-missing",
+      actionCreatedAt: "2026-07-21T05:30:00.000Z",
+    });
+
+    render(<RecordPage />);
+
+    fireEvent.change(await screen.findByLabelText("实际完成了什么？"), {
+      target: { value: "补了一条最低字段投递记录" },
+    });
+    fireEvent.change(screen.getByLabelText("岗位名称"), {
+      target: { value: "内容运营实习" },
+    });
+    fireEvent.change(screen.getByLabelText("公司或平台"), {
+      target: { value: "A 公司" },
+    });
+    fireEvent.change(screen.getByLabelText("投递时间"), {
+      target: { value: "7 月 1 日" },
+    });
+    fireEvent.change(screen.getByLabelText("反馈状态"), {
+      target: { value: "暂无反馈" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+
+    expect(screen.getByLabelText("JD 摘要（可先写“不确定”）")).toBeInTheDocument();
+    expect(screen.getByLabelText("使用的材料版本（可先写“不确定”）")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存补充信息，继续判断" }));
+
+    expect(saveRecord).toHaveBeenCalledWith({
+      actionId: "action-application-missing",
+      routeKey: "applications_to_review",
+      recordType: "application",
+      actionTitle: "今天先补齐 1 条真实投递记录",
+      actualDone: "补了一条最低字段投递记录",
+      payload: {
+        jobTitle: "内容运营实习",
+        companyOrPlatform: "A 公司",
+        submittedAt: "7 月 1 日",
+        feedbackStatus: "暂无反馈",
+      },
+      userConfirmed: true,
+    });
+    expect(push).toHaveBeenCalledWith("/routes/applications_to_review/input");
   });
 
   it("does not save friendly failure as a completed record", async () => {

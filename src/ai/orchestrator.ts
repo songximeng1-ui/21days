@@ -118,7 +118,7 @@ function makeMissingInfoOutput(routeKey: RouteKey, input: Record<string, unknown
       actionType: "fill_info",
     },
     recordGuide: {
-      recordType: "fill_info",
+      recordType: config.recordType,
       fieldsToRecord: config.fieldsToRecord,
       requiresUserConfirmation: true,
     },
@@ -151,6 +151,7 @@ const missingInfoCopy: Record<
     actionSteps: string[];
     recordAfterDone: string;
     fieldsToRecord: string[];
+    recordType: RouteOutput["recordGuide"]["recordType"];
   }
 > = {
   direction_to_jobs: {
@@ -162,6 +163,7 @@ const missingInfoCopy: Record<
     actionSteps: ["补一条课程、项目、社团、兼职或实习经历", "写一个不排斥的工作内容", "保存后回来继续"],
     recordAfterDone: "记录补充的经历和可接受方向。",
     fieldsToRecord: ["realExperiences", "interestsOrAcceptables"],
+    recordType: "fill_info",
   },
   experience_to_resume: {
     shortAssessment: "现在还不能可靠整理简历材料，因为还缺这段经历里实际做过的动作。",
@@ -172,6 +174,7 @@ const missingInfoCopy: Record<
     actionSteps: ["回想这段经历", "列出 1-3 个真实动作", "写下有没有交付物或结果"],
     recordAfterDone: "记录实际动作、交付物和仍不确定的地方。",
     fieldsToRecord: ["actualActions", "deliverable"],
+    recordType: "fill_info",
   },
   jd_to_revision: {
     shortAssessment: "现在还不能可靠判断这份岗位和你的材料支撑关系，因为还缺真实 JD。",
@@ -182,6 +185,7 @@ const missingInfoCopy: Record<
     actionSteps: ["找到目标岗位页面", "复制 JD 或写下 3-5 条岗位要求", "保存后回来继续"],
     recordAfterDone: "记录岗位名称和真实 JD。",
     fieldsToRecord: ["targetJobTitle", "jdTextOrRequirements"],
+    recordType: "fill_info",
   },
   applications_to_review: {
     shortAssessment: "现在还不能可靠复盘投递情况，因为还缺一条完整投递记录。",
@@ -189,8 +193,13 @@ const missingInfoCopy: Record<
     missingFields: ["岗位名称", "公司或平台", "投递时间", "反馈状态"],
     actionTitle: "今天先补齐 1 条真实投递记录",
     actionReason: "先把记录补完整，再看下一步怎么调整，避免凭感觉归因。",
-    actionSteps: ["选最近一条投递", "补岗位、公司或平台、投递时间", "补当前反馈状态"],
-    recordAfterDone: "记录岗位、公司或平台、投递时间和反馈状态。",
-    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
+    actionSteps: [
+      "选最近一条投递",
+      "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态",
+      "JD 摘要和这次用的简历或材料版本不确定也可以先写“不确定”",
+    ],
+    recordAfterDone: "先记录岗位、公司或平台、投递时间和反馈状态；其他不确定的字段之后再补。",
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"],
+    recordType: "application",
   },
 };

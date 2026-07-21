@@ -108,7 +108,7 @@ export default function RouteInputPage() {
     <main className="shell">
       <Link className="back-link" href="/">返回今日入口</Link>
       <section className="panel">
-        <p className="eyebrow">路线轻输入</p>
+        <p className="eyebrow">先填一点真实情况</p>
         <h1>{strategy.label}</h1>
         <p className="muted">不用填完美。信息不够时，会先生成一个补信息行动。</p>
         <p className="status" role="status" aria-live="polite">{aiStatus || draftStatus}</p>

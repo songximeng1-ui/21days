@@ -168,9 +168,13 @@ function makeSuccessfulOutput(routeKey: AiProviderInput["routeKey"]): RouteOutpu
       todayAction: {
         actionTitle: "今天先选择 1 条投递记录补齐材料版本",
         actionReason: "先让这条记录可复盘，再判断下一轮怎么调整。",
-        actionSteps: ["选最近一条投递", "补岗位要求摘要", "补当时使用的材料版本"],
+        actionSteps: [
+          "选最近一条投递",
+          "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态",
+          "JD 摘要和这次用的简历或材料版本不确定也可以先写“不确定”",
+        ],
         estimatedTime: "15-30 分钟",
-        recordAfterDone: "记录岗位、公司或平台、投递时间、材料版本和反馈状态。",
+        recordAfterDone: "先记录岗位、公司或平台、投递时间和反馈状态；其他不确定的字段之后再补。",
         actionType: "application_record",
       },
       recordGuide: {
