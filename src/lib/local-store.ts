@@ -5,6 +5,7 @@ import { ROUTE_KEYS } from "@/domain/routes";
 
 export type LocalRecord = {
   id: string;
+  actionId?: string;
   routeKey: string;
   recordType: string;
   actionTitle: string;
@@ -28,11 +29,16 @@ export type LocalReview = {
 };
 
 export type HomeProgress = {
-  dayIndex: number;
-  currentAction: RouteOutput | null;
+  progressLabel: string;
+  currentAction: CurrentAction | null;
   latestRecord: LocalRecord | null;
   latestReview: LocalReview | null;
   hasUnfinishedAction: boolean;
+};
+
+export type CurrentAction = RouteOutput & {
+  actionId: string;
+  actionCreatedAt: string;
 };
 
 const ACTION_KEY = "mvp-current-action";
@@ -62,18 +68,26 @@ export function loadDraft(routeKey: string): Record<string, string> {
   }
 }
 
-export function saveCurrentAction(output: RouteOutput) {
-  window.localStorage.setItem(ACTION_KEY, JSON.stringify(output));
+export function saveCurrentAction(output: RouteOutput): CurrentAction {
+  const saved: CurrentAction = {
+    ...output,
+    actionId: crypto.randomUUID(),
+    actionCreatedAt: new Date().toISOString(),
+  };
+  window.localStorage.setItem(ACTION_KEY, JSON.stringify(saved));
+  return saved;
 }
 
-export function loadCurrentAction(): RouteOutput | null {
+export function loadCurrentAction(): CurrentAction | null {
   const raw = window.localStorage.getItem(ACTION_KEY);
   if (!raw) return null;
 
   try {
     const parsed = JSON.parse(raw);
-    if (!isValidRouteOutput(parsed)) return null;
-    return parsed;
+    const migrated = migrateCurrentAction(parsed);
+    if (!migrated) return null;
+    window.localStorage.setItem(ACTION_KEY, JSON.stringify(migrated));
+    return migrated;
   } catch {
     return null;
   }
@@ -87,14 +101,10 @@ export function loadHomeProgress(): HomeProgress {
   const hasUnfinishedAction =
     !!currentAction &&
     currentAction.outputType !== "friendly_failure" &&
-    !records.some(
-      (record) =>
-        record.routeKey === currentAction.routeKey &&
-        record.actionTitle === currentAction.todayAction.actionTitle,
-    );
+    !records.some((record) => record.actionId === currentAction.actionId);
 
   return {
-    dayIndex: Math.min(21, Math.max(1, records.length + 1)),
+    progressLabel: records.length > 0 ? `已保存 ${records.length} 次推进` : "第 1 次推进",
     currentAction,
     latestRecord,
     latestReview,
@@ -104,7 +114,7 @@ export function loadHomeProgress(): HomeProgress {
 
 function isValidRouteOutput(value: unknown): value is RouteOutput {
   if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<RouteOutput>;
+  const candidate = value as Partial<CurrentAction>;
   return (
     typeof candidate.routeKey === "string" &&
     ROUTE_KEYS.includes(candidate.routeKey) &&
@@ -115,6 +125,22 @@ function isValidRouteOutput(value: unknown): value is RouteOutput {
     typeof candidate.todayAction.actionTitle === "string" &&
     candidate.todayAction.actionTitle.trim().length > 0
   );
+}
+
+function migrateCurrentAction(value: unknown): CurrentAction | null {
+  if (!isValidRouteOutput(value)) return null;
+  const candidate = value as Partial<CurrentAction> & RouteOutput;
+  return {
+    ...candidate,
+    actionId:
+      typeof candidate.actionId === "string" && candidate.actionId.trim()
+        ? candidate.actionId
+        : crypto.randomUUID(),
+    actionCreatedAt:
+      typeof candidate.actionCreatedAt === "string" && candidate.actionCreatedAt.trim()
+        ? candidate.actionCreatedAt
+        : new Date().toISOString(),
+  };
 }
 
 function loadLatestReviewForRecord(record: LocalRecord | null): LocalReview | null {

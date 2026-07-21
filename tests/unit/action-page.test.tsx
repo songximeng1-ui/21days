@@ -3,8 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ActionPage from "@/app/routes/[routeKey]/action/page";
 import RecordPage from "@/app/routes/[routeKey]/record/page";
-import type { RouteOutput } from "@/domain/types";
-import { loadCurrentAction, mergeDraft, saveRecord } from "@/lib/local-store";
+import { loadCurrentAction, mergeDraft, saveRecord, type CurrentAction } from "@/lib/local-store";
 
 const push = vi.fn();
 
@@ -19,9 +18,11 @@ vi.mock("@/lib/local-store", () => ({
   mergeDraft: vi.fn(),
 }));
 
-const missingInfoOutput: RouteOutput = {
+const missingInfoOutput: CurrentAction = {
   routeKey: "jd_to_revision",
   outputType: "missing_info",
+  actionId: "action-fill-jd",
+  actionCreatedAt: "2026-07-21T04:00:00.000Z",
   shortAssessment: "现在还不能可靠判断这份岗位和你的材料支撑关系，因为还缺真实 JD。",
   routeResult: null,
   missingInfo: {
@@ -85,6 +86,7 @@ describe("RecordPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存补充信息，继续判断" }));
 
     expect(saveRecord).toHaveBeenCalledWith({
+      actionId: "action-fill-jd",
       routeKey: "jd_to_revision",
       recordType: "fill_info",
       actionTitle: "今天先补这份岗位的真实 JD 或 3-5 条岗位要求",

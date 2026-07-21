@@ -5,8 +5,10 @@ import { ROUTE_KEYS, getRouteStrategy } from "@/domain/routes";
 import { loadHomeProgress, type HomeProgress } from "@/lib/local-store";
 
 export default function Home() {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isChoosingQuestion, setIsChoosingQuestion] = useState(false);
   const [progress, setProgress] = useState<HomeProgress>({
-    dayIndex: 1,
+    progressLabel: "第 1 次推进",
     currentAction: null,
     latestRecord: null,
     latestReview: null,
@@ -14,20 +16,31 @@ export default function Home() {
   });
 
   useEffect(() => {
-    queueMicrotask(() => setProgress(loadHomeProgress()));
+    queueMicrotask(() => {
+      const nextProgress = loadHomeProgress();
+      setProgress(nextProgress);
+      setIsLoaded(true);
+    });
   }, []);
 
   const hasReturnState = Boolean(
     progress.hasUnfinishedAction || progress.latestRecord || progress.latestReview,
   );
+  const shouldShowRoutes = isLoaded && (!hasReturnState || isChoosingQuestion);
 
   return (
     <main className="shell">
       <section className="home-hero">
-        <p className="day-badge">21 天陪跑 · 第 {progress.dayIndex} 天</p>
+        <p className="day-badge">21 天陪跑 · {isLoaded ? progress.progressLabel : "正在读取本地进度"}</p>
         <h1>不用一次想清楚，今天先推进一件事。</h1>
-        {hasReturnState ? (
-          <ReturnHomeState progress={progress} />
+        {!isLoaded ? (
+          <p className="muted">正在把你上次保存的行动和记录找出来。</p>
+        ) : hasReturnState ? (
+          <ReturnHomeState
+            progress={progress}
+            isChoosingQuestion={isChoosingQuestion}
+            onChooseQuestion={() => setIsChoosingQuestion(true)}
+          />
         ) : (
           <>
             <p className="lead">你现在最想先解决哪件事？</p>
@@ -36,17 +49,7 @@ export default function Home() {
         )}
       </section>
 
-      <section className="route-list" id="current-question" aria-label="选择当前卡点">
-        {ROUTE_KEYS.map((routeKey) => {
-          const route = getRouteStrategy(routeKey);
-          return (
-            <a className="route-card" href={`/routes/${routeKey}/input`} key={routeKey}>
-              <span>{route.label}</span>
-              <strong>开始</strong>
-            </a>
-          );
-        })}
-      </section>
+      {shouldShowRoutes && <RouteQuestionList isReturnState={hasReturnState} />}
 
       <section className="home-footer">
         <a className="secondary-button" href="/track">我的求职轨迹</a>
@@ -56,21 +59,49 @@ export default function Home() {
   );
 }
 
-function ReturnHomeState({ progress }: { progress: HomeProgress }) {
+function ReturnHomeState({
+  progress,
+  isChoosingQuestion,
+  onChooseQuestion,
+}: {
+  progress: HomeProgress;
+  isChoosingQuestion: boolean;
+  onChooseQuestion: () => void;
+}) {
   if (progress.hasUnfinishedAction && progress.currentAction) {
+    const action = progress.currentAction.todayAction;
+
     return (
       <div className="notice">
-        <p className="lead">上次这一步还没完成，今天可以把它缩小一点。</p>
-        <h2>{progress.currentAction.todayAction.actionTitle}</h2>
-        <a className="primary-button" href={`/routes/${progress.currentAction.routeKey}/input`}>
-          继续一个更小版本
+        <p className="lead">上次这一步还没完成，今天先接着处理它。</p>
+        <h2>{action.actionTitle}</h2>
+        <p>{action.actionReason}</p>
+        <ul className="compact-list">
+          {action.actionSteps.map((step) => <li key={step}>{step}</li>)}
+        </ul>
+        <div className="action-meta">
+          <span>{action.estimatedTime}</span>
+          <span>{action.recordAfterDone}</span>
+        </div>
+        <a className="primary-button" href={`/routes/${progress.currentAction.routeKey}/action`}>
+          查看这一步行动
         </a>
-        <a className="secondary-button" href="#current-question">换一个当前问题</a>
+        <button
+          aria-controls="current-question"
+          aria-expanded={isChoosingQuestion}
+          className="secondary-button"
+          type="button"
+          onClick={onChooseQuestion}
+        >
+          换一个当前问题
+        </button>
       </div>
     );
   }
 
   const routeKey = progress.latestReview?.routeKey ?? progress.latestRecord?.routeKey;
+  const primaryHref = progress.latestReview && routeKey ? `/routes/${routeKey}/input` : "/review";
+  const primaryLabel = progress.latestReview ? "从这个问题继续整理" : "基于这条记录轻复盘";
 
   return (
     <div className="notice">
@@ -81,8 +112,33 @@ function ReturnHomeState({ progress }: { progress: HomeProgress }) {
           <h2>{progress.latestReview.nextAction}</h2>
         </>
       )}
-      {routeKey && <a className="primary-button" href={`/routes/${routeKey}/input`}>继续今天的行动</a>}
-      <a className="secondary-button" href="#current-question">换一个当前问题</a>
+      <a className="primary-button" href={primaryHref}>{primaryLabel}</a>
+      <button
+        aria-controls="current-question"
+        aria-expanded={isChoosingQuestion}
+        className="secondary-button"
+        type="button"
+        onClick={onChooseQuestion}
+      >
+        换一个当前问题
+      </button>
     </div>
+  );
+}
+
+function RouteQuestionList({ isReturnState }: { isReturnState: boolean }) {
+  return (
+    <section className="route-list" id="current-question" aria-label="选择当前卡点">
+      {isReturnState && <h2 className="section-title">你现在想换成哪个问题？</h2>}
+      {ROUTE_KEYS.map((routeKey) => {
+        const route = getRouteStrategy(routeKey);
+        return (
+          <a className="route-card" href={`/routes/${routeKey}/input`} key={routeKey}>
+            <span>{route.label}</span>
+            <strong>选这个</strong>
+          </a>
+        );
+      })}
+    </section>
   );
 }

@@ -4,12 +4,12 @@ import { FormEvent, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import type { RouteKey, RouteOutput } from "@/domain/types";
-import { loadCurrentAction, mergeDraft, saveRecord } from "@/lib/local-store";
+import { loadCurrentAction, mergeDraft, saveRecord, type CurrentAction } from "@/lib/local-store";
 
 export default function RecordPage() {
   const router = useRouter();
   const params = useParams<{ routeKey: RouteKey }>();
-  const [output, setOutput] = useState<RouteOutput | null>(null);
+  const [output, setOutput] = useState<CurrentAction | null>(null);
   const [actualDone, setActualDone] = useState("");
   const [payload, setPayload] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -23,6 +23,7 @@ export default function RecordPage() {
     if (!output || !canSaveRecord()) return;
 
     saveRecord({
+      actionId: output.actionId,
       routeKey: output.routeKey,
       recordType: output.recordGuide.recordType,
       actionTitle: output.todayAction.actionTitle,
