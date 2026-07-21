@@ -12,6 +12,7 @@ describe("local record storage", () => {
       recordType: "experience_fact",
       actionTitle: "Confirm real actions",
       actualDone: "Listed three real actions.",
+      payload: { actualActions: "planned topics", deliverable: "posts" },
       userConfirmed: true,
     });
     saveRecord({
@@ -19,6 +20,7 @@ describe("local record storage", () => {
       recordType: "jd_compare",
       actionTitle: "Save a JD",
       actualDone: "Saved one JD.",
+      payload: { targetJobTitle: "operations intern" },
       userConfirmed: true,
     });
 
@@ -34,6 +36,7 @@ describe("local record storage", () => {
       recordType: "experience_fact",
       actionTitle: "Confirm real actions",
       actualDone: "Listed three real actions.",
+      payload: {},
       userConfirmed: true,
     });
 
@@ -48,11 +51,13 @@ describe("local record storage", () => {
       recordType: "experience_fact",
       actionTitle: "Confirm real actions",
       actualDone: "Draft content.",
+      payload: { actualActions: "draft" },
       userConfirmed: true,
     });
 
-    updateRecord(record.id, { actualDone: "Edited content." });
+    updateRecord(record.id, { actualDone: "Edited content.", payload: { actualActions: "edited" } });
 
     expect(loadRecords()[0].actualDone).toBe("Edited content.");
+    expect(loadRecords()[0].payload.actualActions).toBe("edited");
   });
 });

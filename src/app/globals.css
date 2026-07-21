@@ -106,7 +106,16 @@ textarea {
   border-color: var(--primary-line);
   border-left-color: var(--primary);
   background: var(--primary-soft);
-  outline: none;
+}
+
+.route-card:focus-visible,
+.primary-button:focus-visible,
+.secondary-button:focus-visible,
+.danger-button:focus-visible,
+.text-button:focus-visible,
+.back-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
 }
 
 .route-card span {
@@ -190,6 +199,12 @@ textarea:focus {
   cursor: not-allowed;
 }
 
+.primary-button:hover:not(:disabled),
+.secondary-button:hover,
+.danger-button:hover {
+  filter: brightness(0.97);
+}
+
 .secondary-button {
   color: var(--primary);
   background: #fff;
@@ -269,4 +284,3 @@ textarea:focus {
     padding-top: 48px;
   }
 }
-

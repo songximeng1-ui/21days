@@ -45,7 +45,7 @@ describe("generateRouteOutput", () => {
         routeKey,
         input:
           routeKey === "applications_to_review"
-            ? { applications: "job/company/date/status" }
+            ? { applications: "内容运营实习，A 公司，7 月 1 日投递，暂无反馈" }
             : {
                 educationBackground: "major",
                 realExperiences: "project",

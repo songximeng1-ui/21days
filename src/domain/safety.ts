@@ -6,7 +6,11 @@ type SafetyScanResult = {
 const BLOCKERS: Array<{ reason: string; patterns: RegExp[] }> = [
   {
     reason: "禁止输出匹配度、录取概率或适合度评分",
-    patterns: [/匹配度|录取概率|适合度|fit score|match rate|probability/i, /\d+\s*%/],
+    patterns: [
+      /匹配度|匹配率|录取概率|适合度|fit score|match rate|probability/i,
+      /(匹配|适合|录取|通过|offer|概率)[^。；，,.]{0,12}\d+\s*%/i,
+      /\d+\s*%[^。；，,.]{0,12}(匹配|适合|录取|通过|offer|概率)/i,
+    ],
   },
   {
     reason: "禁止编造经历、JD、数据、结果或反馈",

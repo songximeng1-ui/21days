@@ -8,13 +8,28 @@ export type LocalRecord = {
   recordType: string;
   actionTitle: string;
   actualDone: string;
+  payload: Record<string, string>;
   userConfirmed: boolean;
+  createdAt: string;
+};
+
+export type LocalReview = {
+  id: string;
+  basedOnRecordIds: string[];
+  routeKey: string;
+  reviewBasis: string[];
+  clues: string[];
+  missingInfo: string[];
+  nextAction: string;
+  aiGenerated: boolean;
+  userSaved: boolean;
   createdAt: string;
 };
 
 const ACTION_KEY = "mvp-current-action";
 const DRAFT_PREFIX = "mvp-draft:";
 const RECORDS_KEY = "mvp-records";
+const REVIEWS_KEY = "mvp-reviews";
 
 export function saveDraft(routeKey: string, value: Record<string, FormDataEntryValue>) {
   window.localStorage.setItem(`${DRAFT_PREFIX}${routeKey}`, JSON.stringify(value));
@@ -63,7 +78,11 @@ export function loadRecords(): LocalRecord[] {
   if (!raw) return [];
 
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Array<Partial<LocalRecord>>;
+    return parsed.map((record) => ({
+      ...record,
+      payload: record.payload ?? {},
+    })) as LocalRecord[];
   } catch {
     return [];
   }
@@ -74,7 +93,10 @@ export function deleteRecord(id: string) {
   window.localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
 }
 
-export function updateRecord(id: string, patch: Partial<Pick<LocalRecord, "actualDone" | "userConfirmed">>) {
+export function updateRecord(
+  id: string,
+  patch: Partial<Pick<LocalRecord, "actualDone" | "payload" | "userConfirmed">>
+) {
   const records = loadRecords().map((record) =>
     record.id === id ? { ...record, ...patch } : record
   );
@@ -83,4 +105,36 @@ export function updateRecord(id: string, patch: Partial<Pick<LocalRecord, "actua
 
 export function clearRecords() {
   window.localStorage.removeItem(RECORDS_KEY);
+}
+
+export function saveReview(
+  review: Omit<LocalReview, "id" | "createdAt" | "aiGenerated" | "userSaved"> &
+    Partial<Pick<LocalReview, "aiGenerated" | "userSaved">>
+): LocalReview {
+  const reviews = loadReviews();
+  const saved: LocalReview = {
+    ...review,
+    aiGenerated: review.aiGenerated ?? true,
+    userSaved: review.userSaved ?? false,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+  };
+
+  window.localStorage.setItem(REVIEWS_KEY, JSON.stringify([saved, ...reviews]));
+  return saved;
+}
+
+export function loadReviews(): LocalReview[] {
+  const raw = window.localStorage.getItem(REVIEWS_KEY);
+  if (!raw) return [];
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function loadLatestReview(): LocalReview | null {
+  return loadReviews()[0] ?? null;
 }

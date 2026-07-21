@@ -35,8 +35,10 @@ const validOutput = {
 
 describe("ChatCompletionProvider", () => {
   it("sends a JSON-only chat completion request and parses the model response", async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
+      void _url;
+      void _init;
+      return new Response(
         JSON.stringify({
           choices: [
             {
@@ -47,8 +49,8 @@ describe("ChatCompletionProvider", () => {
           ],
         }),
         { status: 200 },
-      ),
-    );
+      );
+    });
     const provider = new ChatCompletionProvider({
       apiKey: "test-key",
       baseUrl: "https://api.example.com",
@@ -77,10 +79,66 @@ describe("ChatCompletionProvider", () => {
         }),
       }),
     );
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const firstCall = fetchMock.mock.calls[0];
+    expect(firstCall).toBeDefined();
+    const requestInit = firstCall?.[1] as RequestInit;
+    const body = JSON.parse(requestInit.body as string);
     expect(body.model).toBe("test-model");
+    expect(body.max_tokens).toBe(1000);
     expect(body.response_format).toEqual({ type: "json_object" });
     expect(JSON.stringify(body.messages)).toContain("只返回 JSON");
+  });
+
+  it("adds dedicated light review constraints to light review requests", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
+      void _url;
+      void _init;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  ...validOutput,
+                  outputType: "light_review",
+                  routeResult: {
+                    reviewBasis: ["用户记录了一个真实行动"],
+                    clues: ["这条记录可以继续补材料版本"],
+                    missingInfo: ["还缺材料版本"],
+                    nextAction: "下次先补材料版本",
+                  },
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    });
+    const provider = new ChatCompletionProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.example.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+
+    await provider.generate({
+      routeKey: "applications_to_review",
+      input: {
+        mode: "light_review",
+        record: {
+          actualDone: "补了内容运营实习、A 公司、7 月 1 日投递、暂无反馈。",
+          payload: { jobTitle: "内容运营实习" },
+        },
+      },
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(requestInit.body as string);
+    const messages = JSON.stringify(body.messages);
+    expect(messages).toContain("light_review");
+    expect(messages).toContain("真实记录");
+    expect(messages).toContain("reviewBasis");
   });
 
   it("uses DeepSeek env config before falling back to mock provider", () => {
@@ -132,6 +190,82 @@ describe("ChatCompletionProvider", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("https://deepseek.example.com/chat/completions");
     expect(fetchMock.mock.calls[1][0]).toBe("https://deepseek.example.com/chat/completions");
     expect(fetchMock.mock.calls[2][0]).toBe("https://qwen.example.com/compatible-mode/v1/chat/completions");
+  });
+
+  it("does not call Qwen when the primary model returns invalid JSON", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "not json" } }],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "still not json" } }],
+          }),
+          { status: 200 },
+        ),
+      );
+    const provider = createAiProviderFromEnv(
+      {
+        DEEPSEEK_API_KEY: "deepseek-key",
+        DEEPSEEK_BASE_URL: "https://deepseek.example.com",
+        QWEN_API_KEY: "qwen-key",
+        QWEN_BASE_URL: "https://qwen.example.com/compatible-mode/v1",
+      },
+      fetchMock,
+    );
+
+    await expect(
+      provider.generate({
+        routeKey: "experience_to_resume",
+        input: {
+          targetDirection: "运营",
+          rawExperience: "社团活动",
+          actualActions: "整理报名表",
+          deliverableOrResult: "报名名单",
+        },
+      }),
+    ).rejects.toThrow();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every((call) => String(call[0]).includes("deepseek.example.com"))).toBe(true);
+  });
+
+  it("does not call Qwen when the primary provider returns an invalid JSON response body", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("not a json body", { status: 200 }))
+      .mockResolvedValueOnce(new Response("still not a json body", { status: 200 }));
+    const provider = createAiProviderFromEnv(
+      {
+        DEEPSEEK_API_KEY: "deepseek-key",
+        DEEPSEEK_BASE_URL: "https://deepseek.example.com",
+        QWEN_API_KEY: "qwen-key",
+        QWEN_BASE_URL: "https://qwen.example.com/compatible-mode/v1",
+      },
+      fetchMock,
+    );
+
+    await expect(
+      provider.generate({
+        routeKey: "experience_to_resume",
+        input: {
+          targetDirection: "运营",
+          rawExperience: "社团活动",
+          actualActions: "整理报名表",
+          deliverableOrResult: "报名名单",
+        },
+      }),
+    ).rejects.toThrow();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every((call) => String(call[0]).includes("deepseek.example.com"))).toBe(true);
   });
 
   it("falls back to mock provider when DeepSeek is not configured", () => {

@@ -17,7 +17,7 @@ export interface AiProvider {
 }
 
 export class AiProviderError extends Error {
-  constructor(message = "AI provider unavailable") {
+  constructor(message = "AI provider unavailable", readonly kind: "service_unavailable" | "invalid_json" | "empty_response" = "service_unavailable") {
     super(message);
     this.name = "AiProviderError";
   }

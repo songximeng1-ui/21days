@@ -21,8 +21,43 @@ export class MockAiProvider implements AiProvider {
       return makeUnsafeOutput(input.routeKey);
     }
 
+    if (input.input.mode === "light_review") {
+      return makeLightReviewOutput(input);
+    }
+
     return makeSuccessfulOutput(input.routeKey);
   }
+}
+
+function makeLightReviewOutput(input: AiProviderInput): RouteOutput {
+  const record = input.input.record as { actualDone?: string } | undefined;
+  const actualDone = record?.actualDone ?? "你保存了一条真实记录。";
+
+  return {
+    routeKey: input.routeKey,
+    outputType: "light_review",
+    shortAssessment: "这条记录可以先做一次轻复盘。",
+    routeResult: {
+      reviewBasis: [actualDone],
+      clues: ["这一步已经从模糊想法变成了一条可回看的记录"],
+      missingInfo: ["还可以补一项更具体的材料版本或事实依据"],
+      nextAction: "下次先补这条记录里还缺的一项事实。",
+    },
+    missingInfo: null,
+    todayAction: {
+      actionTitle: "下次先补这条记录里还缺的一项事实",
+      actionReason: "先让记录更完整，后续复盘才更可靠。",
+      actionSteps: ["打开这条记录", "补 1 项真实事实", "保存修改"],
+      estimatedTime: "15-30 分钟",
+      recordAfterDone: "记录补充的事实和仍不确定的地方。",
+      actionType: "fill_info",
+    },
+    recordGuide: {
+      recordType: "fill_info",
+      fieldsToRecord: ["missingFact"],
+      requiresUserConfirmation: true,
+    },
+  };
 }
 
 function makeSuccessfulOutput(routeKey: AiProviderInput["routeKey"]): RouteOutput {

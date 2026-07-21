@@ -37,5 +37,28 @@ describe("route strategies", () => {
       })
     ).toBe(false);
   });
-});
 
+  it("does not treat vague no-feedback application worry as sufficient review evidence", () => {
+    expect(
+      isRouteInputSufficient("applications_to_review", {
+        applications: "投了很多岗位都没反馈，不知道是不是我太差了",
+      })
+    ).toBe(false);
+  });
+
+  it("accepts one application record with minimum concrete fields", () => {
+    expect(
+      isRouteInputSufficient("applications_to_review", {
+        applications: "内容运营实习，A 公司，7 月 1 日投递，暂无反馈",
+      })
+    ).toBe(true);
+  });
+
+  it("accepts one application record written as natural text without delimiters", () => {
+    expect(
+      isRouteInputSufficient("applications_to_review", {
+        applications: "内容运营实习 A 公司 7 月 1 日投递 暂无反馈",
+      })
+    ).toBe(true);
+  });
+});

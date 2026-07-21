@@ -68,7 +68,7 @@ function makeOutput(
       actionType,
     },
     recordGuide: {
-      recordType: actionType === "jd_revision" ? "jd_compare" : actionType,
+      recordType: recordTypeForAction(actionType),
       fieldsToRecord: ["note"],
       requiresUserConfirmation: true,
     },
@@ -82,4 +82,14 @@ function makeOutput(
       ...overrides.todayAction,
     },
   };
+}
+
+function recordTypeForAction(actionType: RouteOutput["todayAction"]["actionType"]): RouteOutput["recordGuide"]["recordType"] {
+  if (actionType === "jd_revision") return "jd_compare";
+  if (actionType === "application_record") return "application";
+  if (actionType === "feedback_record") return "feedback";
+  if (actionType === "resume_snippet") return "resume_snippet";
+  if (actionType === "job_sample") return "job_sample";
+  if (actionType === "experience_fact") return "experience_fact";
+  return "fill_info";
 }

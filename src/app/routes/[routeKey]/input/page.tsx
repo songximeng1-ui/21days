@@ -37,6 +37,7 @@ export default function RouteInputPage() {
   const [draftStatus, setDraftStatus] = useState("已保存草稿");
   const [values, setValues] = useState<Record<string, string>>({});
   const [aiStatus, setAiStatus] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => setValues(loadDraft(routeKey)));
@@ -52,18 +53,41 @@ export default function RouteInputPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
     setAiStatus("正在阅读你提供的信息。");
+    const controller = new AbortController();
+    const longWaitTimer = window.setTimeout(() => {
+      setAiStatus("还在整理，内容已经保存，可以稍后回来继续。");
+    }, 8000);
+    const timeoutTimer = window.setTimeout(() => {
+      controller.abort();
+    }, 30000);
 
-    const response = await fetch("/api/ai", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ routeKey, input: values }),
-    });
+    try {
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeKey, input: values }),
+        signal: controller.signal,
+      });
 
-    setAiStatus("正在生成今天先做的一步。");
-    const output = (await response.json()) as RouteOutput;
-    saveCurrentAction(output);
-    router.push(`/routes/${routeKey}/action`);
+      if (!response.ok) {
+        throw new Error("Request failed");
+      }
+
+      setAiStatus("正在生成今天先做的一步。");
+      const output = (await response.json()) as RouteOutput;
+      saveCurrentAction(output);
+      router.push(`/routes/${routeKey}/action`);
+    } catch {
+      setAiStatus("这次暂时没整理出来。草稿已经保存在本页，可以稍后再试。");
+      setIsSubmitting(false);
+    } finally {
+      window.clearTimeout(longWaitTimer);
+      window.clearTimeout(timeoutTimer);
+    }
   }
 
   return (
@@ -73,9 +97,9 @@ export default function RouteInputPage() {
         <p className="eyebrow">路线轻输入</p>
         <h1>{strategy.label}</h1>
         <p className="muted">不用填完美。信息不够时，会先生成一个补信息行动。</p>
-        <p className="status">{aiStatus || draftStatus}</p>
+        <p className="status" role="status" aria-live="polite">{aiStatus || draftStatus}</p>
 
-        <form onSubmit={submit} className="form-stack">
+        <form onSubmit={submit} className="form-stack" aria-busy={isSubmitting}>
           {routeFields[routeKey].map((field) => (
             <label key={field} className="field">
               <span>{fieldLabels[field]}</span>
@@ -88,7 +112,9 @@ export default function RouteInputPage() {
             </label>
           ))}
 
-          <button className="primary-button" type="submit">生成今天先做的一步</button>
+          <button className="primary-button" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "正在生成..." : "生成今天先做的一步"}
+          </button>
           <Link className="secondary-button" href="/">先保存，稍后继续</Link>
         </form>
       </section>

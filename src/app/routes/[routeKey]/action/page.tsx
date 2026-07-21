@@ -32,6 +32,28 @@ export default function ActionPage() {
         <p className="eyebrow">今天先推进这一步</p>
         <h1>{output.shortAssessment}</h1>
 
+        {output.outputType === "friendly_failure" && (
+          <div className="notice">
+            <strong>这次先不进入记录</strong>
+            <p>当前内容已经尽量保留。你可以回到输入页，稍后继续整理。</p>
+          </div>
+        )}
+
+        {output.outputType !== "friendly_failure" && (
+          <article className="action-card">
+            <p className="eyebrow">{output.outputType === "missing_info" ? "补信息行动" : "今日行动"}</p>
+            <h2>{output.todayAction.actionTitle}</h2>
+            <p>{output.todayAction.actionReason}</p>
+            <ul>
+              {output.todayAction.actionSteps.map((step) => <li key={step}>{step}</li>)}
+            </ul>
+            <div className="action-meta">
+              <span>{output.todayAction.estimatedTime}</span>
+              <span>{output.todayAction.recordAfterDone}</span>
+            </div>
+          </article>
+        )}
+
         {output.outputType === "missing_info" && (
           <div className="notice">
             <strong>还缺一个关键信息</strong>
@@ -42,20 +64,13 @@ export default function ActionPage() {
           </div>
         )}
 
-        <article className="action-card">
-          <p className="eyebrow">今日行动</p>
-          <h2>{output.todayAction.actionTitle}</h2>
-          <p>{output.todayAction.actionReason}</p>
-          <ul>
-            {output.todayAction.actionSteps.map((step) => <li key={step}>{step}</li>)}
-          </ul>
-          <div className="action-meta">
-            <span>{output.todayAction.estimatedTime}</span>
-            <span>{output.todayAction.recordAfterDone}</span>
-          </div>
-        </article>
-
-        <Link className="primary-button" href={`/routes/${params.routeKey}/record`}>我做完了，记录结果</Link>
+        {output.outputType === "route_result" ? (
+          <Link className="primary-button" href={`/routes/${params.routeKey}/record`}>我做完了，记录结果</Link>
+        ) : (
+          <Link className="primary-button" href={`/routes/${params.routeKey}/input`}>
+            {output.outputType === "missing_info" ? "回去补这项信息" : "回到输入页"}
+          </Link>
+        )}
         <Link className="secondary-button" href="/">先保存，稍后回来</Link>
       </section>
     </main>

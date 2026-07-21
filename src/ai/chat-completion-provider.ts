@@ -37,6 +37,7 @@ export class ChatCompletionProvider implements AiProvider {
       body: JSON.stringify({
         model: this.options.model,
         temperature: 0.2,
+        max_tokens: 1000,
         response_format: { type: "json_object" },
         messages: [
           {
@@ -52,22 +53,30 @@ export class ChatCompletionProvider implements AiProvider {
     });
 
     if (!response.ok) {
-      throw new AiProviderError(`AI provider returned ${response.status}`);
+      throw new AiProviderError(`AI provider returned ${response.status}`, "service_unavailable");
     }
 
-    const payload = (await response.json()) as {
+    let payload: {
       choices?: Array<{ message?: { content?: string } }>;
     };
+
+    try {
+      payload = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+    } catch {
+      throw new AiProviderError("AI provider returned invalid JSON body", "invalid_json");
+    }
     const content = payload.choices?.[0]?.message?.content;
 
     if (!content) {
-      throw new AiProviderError("AI provider returned an empty response");
+      throw new AiProviderError("AI provider returned an empty response", "empty_response");
     }
 
     try {
       return JSON.parse(stripJsonFence(content)) as RouteOutput;
     } catch {
-      throw new AiProviderError("AI provider returned invalid JSON");
+      throw new AiProviderError("AI provider returned invalid JSON", "invalid_json");
     }
   }
 }
@@ -91,6 +100,10 @@ export class RetryFallbackAiProvider implements AiProvider {
     }
 
     if (this.options.fallback) {
+      if (lastError instanceof AiProviderError && lastError.kind !== "service_unavailable") {
+        throw lastError;
+      }
+
       return this.options.fallback.generate(input);
     }
 
@@ -140,6 +153,22 @@ function buildSystemPrompt(): string {
 }
 
 function buildUserPrompt(input: AiProviderInput): string {
+  if (input.input.mode === "light_review") {
+    return [
+      `路线：${input.routeKey}`,
+      "任务：基于用户已确认保存的一条真实记录，生成一次轻复盘。",
+      "必须输出 outputType: \"light_review\"。",
+      "routeResult 必须包含：reviewBasis、clues、missingInfo、nextAction。",
+      "reviewBasis 只能引用 record.actualDone 或 record.payload 中已经存在的事实。",
+      "clues 只能写可继续验证的线索，不能写失败原因、公司筛选规则或用户能力判断。",
+      "missingInfo 写 1-3 条还缺的信息；没有新缺口时写“暂无新的信息缺口”。",
+      "nextAction 只能是 1 个 15-30 分钟内可完成并可记录的小行动。",
+      "禁止输出报告、基础版报告、匹配率、匹配度、录取概率、适合/不适合、能投/不能投。",
+      "用户记录：",
+      JSON.stringify(input.input.record, null, 2),
+    ].join("\n");
+  }
+
   return [
     `路线：${input.routeKey}`,
     "请按路线生成结构化 JSON。",
