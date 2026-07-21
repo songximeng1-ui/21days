@@ -1,10 +1,10 @@
 # MVP 研发进度记录
 
-更新时间：2026-07-20
+更新时间：2026-07-21
 
 ## 当前阶段
 
-已进入研发阶段第一轮，完成从空仓库搭建新 MVP 工程骨架。
+已完成 MVP 研发第一版纵向闭环，并进入真实 AI 联调前的质量闸门阶段。
 
 本轮没有沿用旧页面、旧接口或旧报告结构。
 
@@ -25,6 +25,12 @@
 - 实现 mock AI 编排，不依赖 DeepSeek / Qwen key。
 - 实现四路线独立 mock 输出。
 - 实现基础安全检查。
+- 实现 DeepSeek 主模型、Qwen 副模型的主副模型调用底座。
+- 移除 OpenAI 配置和代码路径。
+- 明确第一版 MVP 不设置基础版报告兜底。
+- 新增 AI 输出质量闸门，拦截基础版报告 / 完整报告式输出。
+- 新增 AI 输出质量闸门，拦截空泛、不可直接执行的今日行动。
+- 新增四路线真实模型联调用样本库，覆盖完整输入、缺信息和安全陷阱。
 - 使用 Code Reviewer agent 审查并修复 Critical / Important 问题。
 
 ## 当前验证
@@ -38,31 +44,26 @@
 
 最新测试结果：
 
-- 5 个测试文件通过。
-- 13 个测试用例通过。
+- 8 个测试文件通过。
+- 22 个测试用例通过。
 
 ## 当前本地预览
 
-开发服务器已启动：
+当前未保持长期运行的开发服务器。需要预览时可重新启动：
 
 ```text
-http://localhost:3000
+npm.cmd run dev
 ```
 
 ## GitHub 状态
 
-当前机器缺少 GitHub CLI：
+已配置并推送到 GitHub：
 
 ```text
-gh : The term 'gh' is not recognized
+https://github.com/songximeng1-ui/21days.git
 ```
 
-当前目录最初也不是 git 仓库，且没有 GitHub remote。
-
-因此本轮无法安全完成 GitHub 推送。已改为先完成本地 git 初始化、提交和 tag。后续推送到 GitHub 需要主人提供以下任一项：
-
-- 已创建好的 GitHub 仓库地址；或
-- 允许创建新 GitHub 仓库的明确仓库名与可用 GitHub 认证方式。
+当前默认分支为 `main`。
 
 ## 重要研发边界
 
@@ -74,8 +75,7 @@ gh : The term 'gh' is not recognized
 
 ## 下一步建议
 
-1. 安装并登录 GitHub CLI，或提供 GitHub remote。
-2. 推送当前本地提交和 tag。
-3. 继续补 Playwright 端到端测试。
-4. 接入真实 DeepSeek / Qwen provider 前，先补日志脱敏和成本护栏。
-
+1. 填写 `.env.local` 中的 DeepSeek / Qwen key。
+2. 用四路线样本库做真实模型联调。
+3. 根据失败样本调 prompt，而不是凭感觉调 prompt。
+4. 补日志脱敏、成本护栏和真实调用超时策略。
