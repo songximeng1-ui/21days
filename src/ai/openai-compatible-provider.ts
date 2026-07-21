@@ -12,6 +12,11 @@ type OpenAiCompatibleProviderOptions = {
 };
 
 type ProviderEnv = Record<string, string | undefined>;
+type RetryFallbackAiProviderOptions = {
+  primary: AiProvider;
+  fallback?: AiProvider;
+  primaryAttempts?: number;
+};
 
 export class OpenAiCompatibleProvider implements AiProvider {
   private readonly fetchFn: FetchLike;
@@ -67,20 +72,66 @@ export class OpenAiCompatibleProvider implements AiProvider {
   }
 }
 
-export function createAiProviderFromEnv(env: ProviderEnv = process.env): AiProvider {
+export class RetryFallbackAiProvider implements AiProvider {
+  private readonly primaryAttempts: number;
+
+  constructor(private readonly options: RetryFallbackAiProviderOptions) {
+    this.primaryAttempts = options.primaryAttempts ?? 2;
+  }
+
+  async generate(input: AiProviderInput): Promise<RouteOutput> {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < this.primaryAttempts; attempt += 1) {
+      try {
+        return await this.options.primary.generate(input);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (this.options.fallback) {
+      return this.options.fallback.generate(input);
+    }
+
+    throw lastError instanceof Error ? lastError : new AiProviderError();
+  }
+}
+
+export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?: FetchLike): AiProvider {
   if (env.DEEPSEEK_API_KEY) {
-    return new OpenAiCompatibleProvider({
+    const primary = new OpenAiCompatibleProvider({
       apiKey: env.DEEPSEEK_API_KEY,
       baseUrl: env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
       model: env.DEEPSEEK_MODEL ?? "deepseek-chat",
+      fetchFn,
+    });
+
+    const fallback = env.QWEN_API_KEY
+      ? new OpenAiCompatibleProvider({
+          apiKey: env.QWEN_API_KEY,
+          baseUrl: env.QWEN_BASE_URL ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          model: env.QWEN_MODEL ?? "qwen-plus",
+          fetchFn,
+        })
+      : undefined;
+
+    return new RetryFallbackAiProvider({
+      primary,
+      fallback,
+      primaryAttempts: 2,
     });
   }
 
   if (env.OPENAI_API_KEY) {
-    return new OpenAiCompatibleProvider({
+    return new RetryFallbackAiProvider({
+      primary: new OpenAiCompatibleProvider({
       apiKey: env.OPENAI_API_KEY,
       baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       model: env.OPENAI_MODEL ?? "gpt-4.1-mini",
+        fetchFn,
+      }),
+      primaryAttempts: 1,
     });
   }
 

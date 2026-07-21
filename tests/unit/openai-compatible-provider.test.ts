@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { OpenAiCompatibleProvider, createAiProviderFromEnv } from "@/ai/openai-compatible-provider";
+import {
+  OpenAiCompatibleProvider,
+  RetryFallbackAiProvider,
+  createAiProviderFromEnv,
+} from "@/ai/openai-compatible-provider";
 import { MockAiProvider } from "@/ai/mock-provider";
 
 const validOutput = {
@@ -85,7 +89,49 @@ describe("OpenAiCompatibleProvider", () => {
       DEEPSEEK_MODEL: "deepseek-chat",
     });
 
-    expect(provider).toBeInstanceOf(OpenAiCompatibleProvider);
+    expect(provider).toBeInstanceOf(RetryFallbackAiProvider);
+  });
+
+  it("calls Qwen only after the DeepSeek primary model fails after retry", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("primary failure", { status: 500 }))
+      .mockResolvedValueOnce(new Response("primary retry failure", { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify(validOutput) } }],
+          }),
+          { status: 200 },
+        ),
+      );
+    const provider = createAiProviderFromEnv(
+      {
+        DEEPSEEK_API_KEY: "deepseek-key",
+        DEEPSEEK_BASE_URL: "https://deepseek.example.com",
+        DEEPSEEK_MODEL: "deepseek-chat",
+        QWEN_API_KEY: "qwen-key",
+        QWEN_BASE_URL: "https://qwen.example.com/compatible-mode/v1",
+        QWEN_MODEL: "qwen-plus",
+      },
+      fetchMock,
+    );
+
+    const result = await provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    });
+
+    expect(result.todayAction.actionType).toBe("experience_fact");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://deepseek.example.com/chat/completions");
+    expect(fetchMock.mock.calls[1][0]).toBe("https://deepseek.example.com/chat/completions");
+    expect(fetchMock.mock.calls[2][0]).toBe("https://qwen.example.com/compatible-mode/v1/chat/completions");
   });
 
   it("falls back to mock provider when no real model key is configured", () => {
