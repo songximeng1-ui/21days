@@ -66,9 +66,11 @@ export default function ActionPage() {
 
         {output.outputType === "route_result" ? (
           <Link className="primary-button" href={`/routes/${params.routeKey}/record`}>我做完了，记录结果</Link>
+        ) : output.outputType === "missing_info" ? (
+          <Link className="primary-button" href={`/routes/${params.routeKey}/record`}>我补完了，去记录</Link>
         ) : (
           <Link className="primary-button" href={`/routes/${params.routeKey}/input`}>
-            {output.outputType === "missing_info" ? "回去补这项信息" : "回到输入页"}
+            回到输入页
           </Link>
         )}
         <Link className="secondary-button" href="/">先保存，稍后回来</Link>

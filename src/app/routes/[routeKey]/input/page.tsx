@@ -19,14 +19,28 @@ const fieldLabels: Record<string, string> = {
   realExperiences: "你做过哪些课程、项目、社团、兼职或实习？",
   interestsOrAcceptables: "你感兴趣或不排斥哪些事情？",
   constraints: "有哪些暂时不想接受的工作条件？",
-  applications: "先补 1 条投递记录：岗位、公司、投递时间、反馈状态。",
+  jobTitle: "岗位名称",
+  companyOrPlatform: "公司或平台",
+  submittedAt: "投递时间",
+  feedbackStatus: "当前反馈状态",
+  jdSummary: "岗位要求摘要，可先写“不确定”。",
+  materialVersion: "使用的材料版本，可先写“不确定”。",
+  userSuspicion: "你自己怀疑的问题是什么？可选。",
 };
 
 const routeFields: Record<RouteKey, string[]> = {
   experience_to_resume: ["targetDirection", "rawExperience", "actualActions", "deliverableOrResult"],
   jd_to_revision: ["targetJobTitle", "jdTextOrRequirements", "userMaterial"],
   direction_to_jobs: ["educationBackground", "realExperiences", "interestsOrAcceptables", "constraints"],
-  applications_to_review: ["applications"],
+  applications_to_review: [
+    "jobTitle",
+    "companyOrPlatform",
+    "submittedAt",
+    "feedbackStatus",
+    "jdSummary",
+    "materialVersion",
+    "userSuspicion",
+  ],
 };
 
 export default function RouteInputPage() {
@@ -69,7 +83,7 @@ export default function RouteInputPage() {
       const response = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ routeKey, input: values }),
+        body: JSON.stringify({ routeKey, input: buildRouteInput(routeKey, values) }),
         signal: controller.signal,
       });
 
@@ -120,4 +134,22 @@ export default function RouteInputPage() {
       </section>
     </main>
   );
+}
+
+function buildRouteInput(routeKey: RouteKey, values: Record<string, string>): Record<string, unknown> {
+  if (routeKey !== "applications_to_review") {
+    return values;
+  }
+
+  return {
+    applications: {
+      jobTitle: values.jobTitle ?? "",
+      companyOrPlatform: values.companyOrPlatform ?? "",
+      submittedAt: values.submittedAt ?? "",
+      feedbackStatus: values.feedbackStatus ?? "",
+      jdSummary: values.jdSummary ?? "",
+      materialVersion: values.materialVersion ?? "",
+      userSuspicion: values.userSuspicion ?? "",
+    },
+  };
 }

@@ -33,10 +33,11 @@ export async function POST(request: Request) {
   try {
     const body = requestSchema.parse(await request.json());
     routeKey = body.routeKey;
+    const canUseScenarioMock = process.env.NODE_ENV !== "production" && !process.env.DEEPSEEK_API_KEY;
     const provider =
       process.env.DEEPSEEK_API_KEY
         ? createAiProviderFromEnv()
-        : new MockAiProvider(body.scenario);
+        : new MockAiProvider(canUseScenarioMock ? body.scenario : "provider_failure");
     const output =
       body.mode === "light_review"
         ? await generateLightReviewOutput({

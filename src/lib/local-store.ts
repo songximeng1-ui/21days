@@ -35,6 +35,13 @@ export function saveDraft(routeKey: string, value: Record<string, FormDataEntryV
   window.localStorage.setItem(`${DRAFT_PREFIX}${routeKey}`, JSON.stringify(value));
 }
 
+export function mergeDraft(routeKey: string, value: Record<string, string>) {
+  saveDraft(routeKey, {
+    ...loadDraft(routeKey),
+    ...value,
+  });
+}
+
 export function loadDraft(routeKey: string): Record<string, string> {
   const raw = window.localStorage.getItem(`${DRAFT_PREFIX}${routeKey}`);
   if (!raw) return {};

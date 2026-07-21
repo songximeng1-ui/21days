@@ -48,7 +48,7 @@ export function validateRouteOutput(output: RouteOutput): ValidationResult {
     issues.push("轻复盘必须包含复盘依据、线索、信息缺口和下一步行动");
   }
 
-  if (!/15\s*-\s*30|15-30/.test(action.estimatedTime)) {
+  if (output.outputType !== "friendly_failure" && !/15\s*-\s*30|15-30/.test(action.estimatedTime)) {
     issues.push("今日行动预计时间应优先为 15-30 分钟");
   }
 

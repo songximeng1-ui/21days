@@ -28,32 +28,39 @@ export class ChatCompletionProvider implements AiProvider {
   }
 
   async generate(input: AiProviderInput): Promise<RouteOutput> {
-    const response = await this.fetchFn(this.completionsUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.options.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: this.options.model,
-        temperature: 0.2,
-        max_tokens: 1000,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: buildSystemPrompt(),
-          },
-          {
-            role: "user",
-            content: buildUserPrompt(input),
-          },
-        ],
-      }),
-    });
+    let response: Response;
+
+    try {
+      response = await this.fetchFn(this.completionsUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.options.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: this.options.model,
+          temperature: 0.2,
+          max_tokens: 1000,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content: buildSystemPrompt(),
+            },
+            {
+              role: "user",
+              content: buildUserPrompt(input),
+            },
+          ],
+        }),
+      });
+    } catch {
+      throw new AiProviderError("AI provider request failed", "service_unavailable");
+    }
 
     if (!response.ok) {
-      throw new AiProviderError(`AI provider returned ${response.status}`, "service_unavailable");
+      const kind = isRetryableProviderStatus(response.status) ? "service_unavailable" : "invalid_request";
+      throw new AiProviderError(`AI provider returned ${response.status}`, kind);
     }
 
     let payload: {
@@ -81,6 +88,10 @@ export class ChatCompletionProvider implements AiProvider {
   }
 }
 
+function isRetryableProviderStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
 export class RetryFallbackAiProvider implements AiProvider {
   private readonly primaryAttempts: number;
 
@@ -100,11 +111,11 @@ export class RetryFallbackAiProvider implements AiProvider {
     }
 
     if (this.options.fallback) {
-      if (lastError instanceof AiProviderError && lastError.kind !== "service_unavailable") {
-        throw lastError;
+      if (lastError instanceof AiProviderError && lastError.kind === "service_unavailable") {
+        return this.options.fallback.generate(input);
       }
 
-      return this.options.fallback.generate(input);
+      throw lastError instanceof Error ? lastError : new AiProviderError("AI provider failed", "invalid_request");
     }
 
     throw lastError instanceof Error ? lastError : new AiProviderError();
@@ -148,7 +159,8 @@ function buildSystemPrompt(): string {
     "每次只给一个今天能做的行动，行动必须普通、具体、克制、可执行。",
     "输出必须包含 routeKey、outputType、shortAssessment、routeResult、missingInfo、todayAction、recordGuide。",
     "todayAction.actionSteps 必须是 1 到 4 条。",
-    "estimatedTime 优先使用 15-30 分钟。",
+    "route_result、missing_info、light_review 的 todayAction.estimatedTime 必须使用 15-30 分钟。",
+    "不要主动输出 friendly_failure；无法可靠整理时仍按同一路线输出 missing_info，产品侧会处理保存和稍后继续状态。",
   ].join("\n");
 }
 

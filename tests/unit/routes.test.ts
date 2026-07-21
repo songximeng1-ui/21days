@@ -49,16 +49,32 @@ describe("route strategies", () => {
   it("accepts one application record with minimum concrete fields", () => {
     expect(
       isRouteInputSufficient("applications_to_review", {
-        applications: "内容运营实习，A 公司，7 月 1 日投递，暂无反馈",
+        applications: {
+          jobTitle: "内容运营实习",
+          companyOrPlatform: "A 公司",
+          submittedAt: "7 月 1 日",
+          feedbackStatus: "暂无反馈",
+        },
       })
     ).toBe(true);
   });
 
-  it("accepts one application record written as natural text without delimiters", () => {
+  it("keeps partial structured application records insufficient", () => {
+    expect(
+      isRouteInputSufficient("applications_to_review", {
+        applications: {
+          jobTitle: "内容运营实习",
+          feedbackStatus: "暂无反馈",
+        },
+      })
+    ).toBe(false);
+  });
+
+  it("keeps natural-language application text insufficient until it is structured", () => {
     expect(
       isRouteInputSufficient("applications_to_review", {
         applications: "内容运营实习 A 公司 7 月 1 日投递 暂无反馈",
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 });

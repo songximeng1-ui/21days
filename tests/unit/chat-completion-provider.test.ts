@@ -192,6 +192,66 @@ describe("ChatCompletionProvider", () => {
     expect(fetchMock.mock.calls[2][0]).toBe("https://qwen.example.com/compatible-mode/v1/chat/completions");
   });
 
+  it("does not call Qwen for primary model bad request responses", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("bad request", { status: 400 }))
+      .mockResolvedValueOnce(new Response("bad request again", { status: 400 }));
+    const provider = createAiProviderFromEnv(
+      {
+        DEEPSEEK_API_KEY: "deepseek-key",
+        DEEPSEEK_BASE_URL: "https://deepseek.example.com",
+        QWEN_API_KEY: "qwen-key",
+        QWEN_BASE_URL: "https://qwen.example.com/compatible-mode/v1",
+      },
+      fetchMock,
+    );
+
+    await expect(
+      provider.generate({
+        routeKey: "experience_to_resume",
+        input: {
+          targetDirection: "运营",
+          rawExperience: "社团活动",
+          actualActions: "整理报名表",
+          deliverableOrResult: "报名名单",
+        },
+      }),
+    ).rejects.toThrow();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every((call) => String(call[0]).includes("deepseek.example.com"))).toBe(true);
+  });
+
+  it("does not call fallback for unexpected primary errors that are not service availability failures", async () => {
+    const primary = {
+      generate: vi.fn().mockRejectedValue(new Error("unexpected primary bug")),
+    };
+    const fallback = {
+      generate: vi.fn().mockResolvedValue(validOutput),
+    };
+    const provider = new RetryFallbackAiProvider({
+      primary,
+      fallback,
+      primaryAttempts: 2,
+    });
+
+    await expect(
+      provider.generate({
+        routeKey: "experience_to_resume",
+        input: {
+          targetDirection: "运营",
+          rawExperience: "社团活动",
+          actualActions: "整理报名表",
+          deliverableOrResult: "报名名单",
+        },
+      }),
+    ).rejects.toThrow("unexpected primary bug");
+
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
   it("does not call Qwen when the primary model returns invalid JSON", async () => {
     const fetchMock = vi
       .fn()

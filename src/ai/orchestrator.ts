@@ -24,11 +24,11 @@ export function makeFriendlyFailureOutput(routeKey: RouteKey): RouteOutput {
     routeResult: null,
     missingInfo: null,
     todayAction: {
-      actionTitle: "先保存当前填写内容，稍后继续",
-      actionReason: "当前内容不应该丢失，稍后可以从这里接着推进。",
-      actionSteps: ["保存当前内容", "稍后回到这一页继续"],
-      estimatedTime: "15-30 分钟",
-      recordAfterDone: "保存当前草稿。",
+      actionTitle: "当前内容已保存，稍后继续",
+      actionReason: "这次暂时没有整理出可执行的小行动，先保留当前填写内容。",
+      actionSteps: ["稍后从当前内容继续"],
+      estimatedTime: "已保存，稍后继续",
+      recordAfterDone: "保留当前草稿，稍后继续。",
       actionType: "fill_info",
     },
     recordGuide: {

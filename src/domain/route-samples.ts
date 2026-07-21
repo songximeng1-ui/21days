@@ -83,7 +83,13 @@ export const ROUTE_SAMPLES: RouteSample[] = [
     kind: "complete",
     title: "投递复盘：有投递记录",
     input: {
-      applications: "内容运营实习，A 公司，7 月 1 日投递，用简历 v1，暂无反馈",
+      applications: {
+        jobTitle: "内容运营实习",
+        companyOrPlatform: "A 公司",
+        submittedAt: "7 月 1 日",
+        feedbackStatus: "暂无反馈",
+        materialVersion: "简历 v1",
+      },
     },
     expectedFocus: "补齐 1 条记录或找一个可能线索",
   },

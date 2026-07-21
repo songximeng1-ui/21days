@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import type { RouteKey, RouteOutput } from "@/domain/types";
-import { loadCurrentAction, saveRecord } from "@/lib/local-store";
+import { loadCurrentAction, mergeDraft, saveRecord } from "@/lib/local-store";
 
 export default function RecordPage() {
   const router = useRouter();
@@ -30,7 +30,10 @@ export default function RecordPage() {
       payload,
       userConfirmed: confirmed,
     });
-    router.push("/review");
+    if (output.outputType === "missing_info") {
+      mergeDraft(params.routeKey, payload);
+    }
+    router.push(output.outputType === "missing_info" ? `/routes/${params.routeKey}/input` : "/review");
   }
 
   function updatePayload(field: string, value: string) {
@@ -38,7 +41,7 @@ export default function RecordPage() {
   }
 
   function canSaveRecord() {
-    if (!output || output.outputType !== "route_result" || output.routeKey !== params.routeKey || !confirmed) {
+    if (!output || !isRecordableOutput(output) || output.routeKey !== params.routeKey || !confirmed) {
       return false;
     }
 
@@ -62,15 +65,15 @@ export default function RecordPage() {
           </div>
         )}
 
-        {output && !hasRouteMismatch && output.outputType !== "route_result" && (
+        {output && !hasRouteMismatch && !isRecordableOutput(output) && (
           <div className="notice">
-            <strong>这一步先不进入求职轨迹</strong>
-            <p>当前状态更适合回到输入页补信息或稍后继续，不需要保存成已完成记录。</p>
+            <strong>这一步先不保存成完成记录</strong>
+            <p>当前内容可以先回到输入页继续补充。等有了真实行动或补充信息，再保存成记录。</p>
             <Link className="primary-button" href={`/routes/${params.routeKey}/input`}>回到输入页</Link>
           </div>
         )}
 
-        {(!output || (!hasRouteMismatch && output.outputType === "route_result")) && (
+        {(!output || (!hasRouteMismatch && isRecordableOutput(output))) && (
         <form className="form-stack" onSubmit={submit}>
           <label className="field">
             <span>实际完成了什么？</span>
@@ -98,15 +101,23 @@ export default function RecordPage() {
           </label>
 
           <button className="primary-button" type="submit" disabled={!actualDone.trim() || !canSaveRecord()}>
-            保存并轻复盘
+            {output?.outputType === "missing_info" ? "保存补充信息，继续判断" : "保存并轻复盘"}
           </button>
-          <p className="muted">确认勾选并补齐上面的记录字段后，才能保存并复盘。</p>
+          <p className="muted">
+            {output?.outputType === "missing_info"
+              ? "确认勾选并补齐上面的记录字段后，会回到当前路线继续判断。"
+              : "确认勾选并补齐上面的记录字段后，才能保存并复盘。"}
+          </p>
           <Link className="secondary-button" href="/track">只查看我的求职轨迹</Link>
         </form>
         )}
       </section>
     </main>
   );
+}
+
+function isRecordableOutput(output: RouteOutput) {
+  return output.outputType === "route_result" || output.outputType === "missing_info";
 }
 
 const recordFieldLabels: Record<string, string> = {
@@ -128,4 +139,6 @@ const recordFieldLabels: Record<string, string> = {
   note: "补充的信息",
   draft: "当前草稿",
   missingFact: "要补充的事实",
+  targetJobTitle: "目标岗位名称",
+  jdTextOrRequirements: "真实 JD 或 3-5 条岗位要求",
 };

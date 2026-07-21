@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MockAiProvider } from "@/ai/mock-provider";
-import { generateRouteOutput } from "@/ai/orchestrator";
+import { generateLightReviewOutput, generateRouteOutput } from "@/ai/orchestrator";
 
 describe("generateRouteOutput", () => {
   it("returns missing info action for incomplete JD route input", async () => {
@@ -32,6 +32,83 @@ describe("generateRouteOutput", () => {
     expect(result.shortAssessment).toContain("暂时没整理出来");
   });
 
+  it("keeps friendly failure outside the 15-30 minute action contract", async () => {
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "operations",
+        rawExperience: "student club event",
+        actualActions: "organized sign-up sheet",
+        deliverableOrResult: "no clear result",
+      },
+      provider: new MockAiProvider("provider_failure"),
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(result.todayAction.estimatedTime).not.toBe("15-30 分钟");
+  });
+
+  it("presents friendly failure as a saved-for-later state instead of a timed today action", async () => {
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "operations",
+        rawExperience: "student club event",
+        actualActions: "organized sign-up sheet",
+        deliverableOrResult: "no clear result",
+      },
+      provider: new MockAiProvider("provider_failure"),
+    });
+
+    const visibleCopy = JSON.stringify(result.todayAction);
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(result.todayAction.actionTitle).toContain("保存");
+    expect(result.todayAction.actionTitle).toContain("稍后继续");
+    expect(result.todayAction.estimatedTime).toBe("已保存，稍后继续");
+    expect(visibleCopy).not.toMatch(/15\s*-\s*30|15-30|\d+\s*分钟/);
+    expect(JSON.stringify(result)).not.toMatch(/DeepSeek|Qwen|fallback|token|prompt|API/i);
+  });
+
+  it("keeps ordinary route, missing info, and light review outputs on the 15-30 minute action contract", async () => {
+    const routeResult = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "operations",
+        rawExperience: "student club event",
+        actualActions: "organized sign-up sheet",
+        deliverableOrResult: "no clear result",
+      },
+      provider: new MockAiProvider("success"),
+    });
+    const missingInfo = await generateRouteOutput({
+      routeKey: "jd_to_revision",
+      input: { targetJobTitle: "operations intern" },
+      provider: new MockAiProvider("success"),
+    });
+    const lightReview = await generateLightReviewOutput({
+      record: {
+        id: "record-1",
+        routeKey: "experience_to_resume",
+        recordType: "experience_fact",
+        actionTitle: "补一条真实经历",
+        actualDone: "整理了社团招新报名表，并记录了自己负责的动作。",
+        payload: {},
+        userConfirmed: true,
+        createdAt: "2026-07-21T00:00:00.000Z",
+      },
+      provider: new MockAiProvider("success"),
+    });
+
+    expect(routeResult.outputType).toBe("route_result");
+    expect(missingInfo.outputType).toBe("missing_info");
+    expect(lightReview.outputType).toBe("light_review");
+
+    for (const output of [routeResult, missingInfo, lightReview]) {
+      expect(output.todayAction.estimatedTime).toMatch(/15\s*-\s*30|15-30/);
+    }
+  });
+
   it("keeps route-specific mock outputs for every route", async () => {
     const cases = [
       ["direction_to_jobs", "job_sample"],
@@ -45,7 +122,14 @@ describe("generateRouteOutput", () => {
         routeKey,
         input:
           routeKey === "applications_to_review"
-            ? { applications: "内容运营实习，A 公司，7 月 1 日投递，暂无反馈" }
+            ? {
+                applications: {
+                  jobTitle: "内容运营实习",
+                  companyOrPlatform: "A 公司",
+                  submittedAt: "7 月 1 日",
+                  feedbackStatus: "暂无反馈",
+                },
+              }
             : {
                 educationBackground: "major",
                 realExperiences: "project",

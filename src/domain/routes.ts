@@ -61,22 +61,7 @@ function hasApplicationRecordDetails(value: unknown): boolean {
     );
   }
 
-  if (typeof value !== "string") {
-    return false;
-  }
-
-  const normalized = value.trim();
-  if (!normalized) {
-    return false;
-  }
-
-  const parts = normalized.split(/[，,、；;\n]/).map((part) => part.trim()).filter(Boolean);
-  const hasJob = /岗位|实习|助理|运营|产品|设计|开发|销售|hr|财务|行政/i.test(normalized);
-  const hasCompany = /公司|平台|单位|机构|企业|工作室|厂|店|A\s*公司|B\s*公司/i.test(normalized);
-  const hasTime = /\d+\s*(月|日|号)|昨天|今天|上周|本周|202\d|投递/.test(normalized);
-  const hasFeedback = /暂无反馈|无反馈|没反馈|已拒|拒绝|面试|笔试|待回复|通过|反馈状态/.test(normalized);
-
-  return parts.length >= 4 || (hasJob && hasCompany && hasTime && hasFeedback);
+  return false;
 }
 
 function hasMeaningfulValue(value: unknown): boolean {
