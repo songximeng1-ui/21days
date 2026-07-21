@@ -1,6 +1,7 @@
 "use client";
 
 import type { RouteOutput } from "@/domain/types";
+import { ROUTE_KEYS } from "@/domain/routes";
 
 export type LocalRecord = {
   id: string;
@@ -24,6 +25,14 @@ export type LocalReview = {
   aiGenerated: boolean;
   userSaved: boolean;
   createdAt: string;
+};
+
+export type HomeProgress = {
+  dayIndex: number;
+  currentAction: RouteOutput | null;
+  latestRecord: LocalRecord | null;
+  latestReview: LocalReview | null;
+  hasUnfinishedAction: boolean;
 };
 
 const ACTION_KEY = "mvp-current-action";
@@ -62,10 +71,55 @@ export function loadCurrentAction(): RouteOutput | null {
   if (!raw) return null;
 
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!isValidRouteOutput(parsed)) return null;
+    return parsed;
   } catch {
     return null;
   }
+}
+
+export function loadHomeProgress(): HomeProgress {
+  const records = loadRecords();
+  const currentAction = loadCurrentAction();
+  const latestRecord = records[0] ?? null;
+  const latestReview = loadLatestReviewForRecord(latestRecord);
+  const hasUnfinishedAction =
+    !!currentAction &&
+    currentAction.outputType !== "friendly_failure" &&
+    !records.some(
+      (record) =>
+        record.routeKey === currentAction.routeKey &&
+        record.actionTitle === currentAction.todayAction.actionTitle,
+    );
+
+  return {
+    dayIndex: Math.min(21, Math.max(1, records.length + 1)),
+    currentAction,
+    latestRecord,
+    latestReview,
+    hasUnfinishedAction,
+  };
+}
+
+function isValidRouteOutput(value: unknown): value is RouteOutput {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<RouteOutput>;
+  return (
+    typeof candidate.routeKey === "string" &&
+    ROUTE_KEYS.includes(candidate.routeKey) &&
+    (candidate.outputType === "route_result" ||
+      candidate.outputType === "missing_info" ||
+      candidate.outputType === "friendly_failure") &&
+    !!candidate.todayAction &&
+    typeof candidate.todayAction.actionTitle === "string" &&
+    candidate.todayAction.actionTitle.trim().length > 0
+  );
+}
+
+function loadLatestReviewForRecord(record: LocalRecord | null): LocalReview | null {
+  if (!record) return null;
+  return loadReviews().find((review) => review.basedOnRecordIds.includes(record.id)) ?? null;
 }
 
 export function saveRecord(record: Omit<LocalRecord, "id" | "createdAt">): LocalRecord {

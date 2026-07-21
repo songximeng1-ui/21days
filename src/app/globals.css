@@ -240,6 +240,7 @@ textarea:focus {
 }
 
 .action-card h2,
+.notice h2,
 .review-grid h2,
 .timeline-item h2 {
   margin: 8px 0;
