@@ -166,6 +166,29 @@ describe("ChatCompletionProvider", () => {
       kind: "envelope_json",
     },
     {
+      name: "null provider envelope",
+      response: () => Promise.resolve(new Response("null", { status: 200 })),
+      kind: "envelope_json",
+    },
+    {
+      name: "object content",
+      response: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ choices: [{ message: { content: { unsafe: "shape" } } }] }), {
+            status: 200,
+          }),
+        ),
+      kind: "envelope_json",
+    },
+    {
+      name: "numeric content",
+      response: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ choices: [{ message: { content: 42 } }] }), { status: 200 }),
+        ),
+      kind: "envelope_json",
+    },
+    {
       name: "empty content",
       response: () =>
         Promise.resolve(

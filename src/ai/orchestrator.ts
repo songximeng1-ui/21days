@@ -66,7 +66,6 @@ export async function generateRouteOutput({
   primary,
   fallback,
   reporter,
-  requestId,
 }: GenerateRouteOutputInput): Promise<RouteOutput> {
   if (!isRouteInputSufficient(routeKey, input)) {
     return makeMissingInfoOutput(routeKey, input);
@@ -78,7 +77,7 @@ export async function generateRouteOutput({
     mode: "route",
     ...resolveProviders(provider, primary, fallback),
     reporter: reporter ?? noopAiFailureReporter,
-    requestId: requestId ?? createRequestId(),
+    requestId: createRequestId(),
   });
 }
 
@@ -88,7 +87,6 @@ export async function generateLightReviewOutput({
   primary,
   fallback,
   reporter,
-  requestId,
 }: GenerateLightReviewInput): Promise<RouteOutput> {
   if (!record.userConfirmed || !record.actualDone.trim()) {
     return makeFriendlyFailureOutput(record.routeKey as RouteKey);
@@ -101,7 +99,7 @@ export async function generateLightReviewOutput({
     mode: "light_review",
     ...resolveProviders(provider, primary, fallback),
     reporter: reporter ?? noopAiFailureReporter,
-    requestId: requestId ?? createRequestId(),
+    requestId: createRequestId(),
   });
 }
 

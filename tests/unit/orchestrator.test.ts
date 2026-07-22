@@ -622,4 +622,29 @@ describe("generateRouteOutput", () => {
       /provider_http|retryable_http|candidate_schema|schema|fallback|transport|stage|code/i,
     );
   });
+
+  it("replaces an external requestId containing sensitive material with one safe internal id", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const externalRequestId = "request?token=secret-test-key Authorization=Bearer-sensitive-value";
+    const primary = { generate: vi.fn().mockRejectedValue(new AiProviderError("retryable_http", "5xx")) };
+
+    await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      requestId: externalRequestId,
+      reporter: {
+        report: (event) => {
+          events.push(event);
+        },
+      },
+    });
+
+    expect(events).toHaveLength(2);
+    const diagnosticRequestIds = events.map((event) => event.requestId);
+    expect(new Set(diagnosticRequestIds).size).toBe(1);
+    expect(diagnosticRequestIds[0]).toMatch(/^[a-zA-Z0-9-]{1,64}$/);
+    expect(JSON.stringify(events)).not.toMatch(/secret-test-key|Bearer-sensitive-value|Authorization|\?token=/i);
+    expect(diagnosticRequestIds).not.toContain(externalRequestId);
+  });
 });

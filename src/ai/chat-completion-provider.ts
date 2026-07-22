@@ -63,22 +63,14 @@ export class ChatCompletionProvider implements AiProvider {
       throw new AiProviderError(kind, getHttpStatusClass(response.status));
     }
 
-    let payload: {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
+    let payload: unknown;
 
     try {
-      payload = (await response.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
+      payload = await response.json();
     } catch {
       throw new AiProviderError("envelope_json");
     }
-    const content = payload.choices?.[0]?.message?.content;
-
-    if (!content?.trim()) {
-      throw new AiProviderError("empty_content");
-    }
+    const content = readEnvelopeContent(payload);
 
     try {
       return JSON.parse(stripJsonFence(content)) as RouteOutput;
@@ -90,6 +82,33 @@ export class ChatCompletionProvider implements AiProvider {
 
 function isRetryableProviderStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
+}
+
+function readEnvelopeContent(payload: unknown): string {
+  if (!isRecord(payload) || !Array.isArray(payload.choices)) {
+    throw new AiProviderError("envelope_json");
+  }
+
+  const firstChoice = payload.choices[0];
+  if (firstChoice === undefined) {
+    throw new AiProviderError("empty_content");
+  }
+  if (!isRecord(firstChoice) || !isRecord(firstChoice.message)) {
+    throw new AiProviderError("envelope_json");
+  }
+
+  const content = firstChoice.message.content;
+  if (content === undefined || content === null || (typeof content === "string" && !content.trim())) {
+    throw new AiProviderError("empty_content");
+  }
+  if (typeof content !== "string") {
+    throw new AiProviderError("envelope_json");
+  }
+  return content;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 class ConfiguredAiProviderSet implements AiProviderSet {
