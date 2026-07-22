@@ -32,6 +32,13 @@ describe("scanSafetyViolations", () => {
   });
 
   it.each([
+    "记录公司、拒绝状态、来源和保存原因。",
+    "表格包含公司、是否未通过、跟进人和备注原因。",
+  ])("allows neutral application-record field lists: %s", (text) => {
+    expect(scanSafetyViolations(text)).toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it.each([
     "公司拒绝你的原因可能是学历不符。",
     "公司拒绝了你，原因是学历不符。",
     "公司没有反馈，原因可能是简历太弱。",
