@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { ChatCompletionProvider, createAiProviderFromEnv } from "@/ai/chat-completion-provider";
-import { AiProviderError } from "@/ai/provider";
+import { AiProviderError, type AiProviderInput } from "@/ai/provider";
 import { MockAiProvider } from "@/ai/mock-provider";
+import type { RouteKey } from "@/domain/types";
 
 const validOutput = {
   routeKey: "experience_to_resume",
@@ -30,7 +31,232 @@ const validOutput = {
   },
 };
 
+async function capturePrompt(input: AiProviderInput): Promise<string> {
+  const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
+    void _url;
+    void _init;
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(validOutput) } }],
+      }),
+      { status: 200 },
+    );
+  });
+  const provider = new ChatCompletionProvider({
+    apiKey: "test-key",
+    baseUrl: "https://api.example.com",
+    model: "test-model",
+    fetchFn: fetchMock,
+  });
+
+  await provider.generate(input);
+
+  const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+  const body = JSON.parse(requestInit.body as string) as {
+    messages: Array<{ content: string }>;
+  };
+  return body.messages.map((message) => message.content).join("\n");
+}
+
+const routePromptCases: Array<{
+  routeKey: RouteKey;
+  input: Record<string, unknown>;
+  routeResultFields: string[];
+  actionType: string;
+  recordType: string;
+}> = [
+  {
+    routeKey: "direction_to_jobs",
+    input: {
+      educationBackground: "信息管理专业",
+      realExperiences: "整理社团报名信息",
+      interestsOrAcceptables: "不排斥内容整理",
+      constraints: "暂不考虑夜班",
+    },
+    routeResultFields: ["explorableDirections", "directionName", "searchKeywords", "basisFromUserMaterial", "riskOrGap", "validationFocus"],
+    actionType: "job_sample",
+    recordType: "job_sample",
+  },
+  {
+    routeKey: "experience_to_resume",
+    input: {
+      targetDirection: "运营",
+      rawExperience: "社团活动",
+      actualActions: "整理报名表",
+      deliverableOrResult: "报名名单",
+    },
+    routeResultFields: ["confirmedFacts", "missingFacts", "doNotExaggerate", "resumeSnippetDraft", "supportingFacts"],
+    actionType: "experience_fact",
+    recordType: "experience_fact",
+  },
+  {
+    routeKey: "jd_to_revision",
+    input: {
+      targetJobTitle: "内容运营实习生",
+      jdTextOrRequirements: "负责选题和数据记录",
+      userMaterial: "整理社团推文并记录阅读数据",
+    },
+    routeResultFields: ["jdKeyRequirements", "supportedByMaterial", "unclearFromMaterial", "minimalRevisionActions", "afterSubmissionRecording"],
+    actionType: "jd_revision",
+    recordType: "jd_compare",
+  },
+  {
+    routeKey: "applications_to_review",
+    input: {
+      applications: [
+        {
+          jobTitle: "内容运营实习",
+          companyOrPlatform: "A 公司",
+          submittedAt: "7 月 1 日",
+          feedbackStatus: "暂无反馈",
+          jdSummary: "负责内容整理",
+          materialVersion: "社团经历版",
+        },
+        {
+          jobTitle: "新媒体运营实习",
+          companyOrPlatform: "B 公司",
+          submittedAt: "7 月 3 日",
+          feedbackStatus: "已查看",
+          jdSummary: "负责选题和数据记录",
+          materialVersion: "项目经历版",
+        },
+      ],
+    },
+    routeResultFields: ["reviewBasis", "recordSufficiency", "possibleClues", "informationGaps", "nextValidationAction"],
+    actionType: "application_record",
+    recordType: "application",
+  },
+];
+
 describe("ChatCompletionProvider", () => {
+  it.each(routePromptCases)(
+    "sends the complete forced result contract for $routeKey",
+    async ({ routeKey, input, routeResultFields, actionType, recordType }) => {
+      const prompt = await capturePrompt({ routeKey, input });
+
+      expect(prompt).toContain("ACTIVE_ROUTE_CONTRACT_BEGIN");
+      expect(prompt).toContain(`\"routeKey\": \"${routeKey}\"`);
+      expect(prompt).toContain('\"outputType\": \"route_result\"');
+      expect(prompt).toContain("routeResult 必须是非 null 对象");
+      expect(prompt).toContain('\"missingInfo\": null');
+      for (const field of routeResultFields) expect(prompt).toContain(`\"${field}\"`);
+      expect(prompt).toContain(`\"actionType\": \"${actionType}\"`);
+      expect(prompt).toContain(`\"recordType\": \"${recordType}\"`);
+      expect(prompt).toContain('\"estimatedTime\": \"15-30 分钟\"');
+      expect(prompt).toContain('\"requiresUserConfirmation\": true');
+      expect(prompt).toContain("不得选择 missing_info、light_review 或 friendly_failure");
+    },
+  );
+
+  it.each(routePromptCases)(
+    "includes exactly one active-route contract/example for $routeKey",
+    async ({ routeKey, input, routeResultFields }) => {
+      const prompt = await capturePrompt({ routeKey, input });
+      const otherCases = routePromptCases.filter((routeCase) => routeCase.routeKey !== routeKey);
+
+      expect(prompt.match(/ACTIVE_ROUTE_CONTRACT_BEGIN/g)).toHaveLength(1);
+      expect(prompt.match(/ACTIVE_ROUTE_EXAMPLE_BEGIN/g)).toHaveLength(1);
+      for (const field of routeResultFields) expect(prompt).toContain(`\"${field}\"`);
+      for (const other of otherCases) {
+        expect(prompt).not.toContain(`\"routeKey\": \"${other.routeKey}\"`);
+        for (const field of other.routeResultFields) expect(prompt).not.toContain(`\"${field}\"`);
+      }
+    },
+  );
+
+  it.each([
+    {
+      routeKey: "direction_to_jobs" as const,
+      input: {
+        educationBackground: "ALLOW_DIRECTION_EDUCATION",
+        realExperiences: "ALLOW_DIRECTION_EXPERIENCE",
+        interestsOrAcceptables: "ALLOW_DIRECTION_INTEREST",
+        constraints: "ALLOW_DIRECTION_CONSTRAINT",
+        privateNotes: "DENY_DIRECTION_PRIVATE",
+      },
+      allowed: ["ALLOW_DIRECTION_EDUCATION", "ALLOW_DIRECTION_EXPERIENCE", "ALLOW_DIRECTION_INTEREST", "ALLOW_DIRECTION_CONSTRAINT"],
+      denied: "DENY_DIRECTION_PRIVATE",
+      mapping: "basisFromUserMaterial",
+    },
+    {
+      routeKey: "experience_to_resume" as const,
+      input: {
+        targetDirection: "ALLOW_EXPERIENCE_DIRECTION",
+        rawExperience: "ALLOW_EXPERIENCE_RAW",
+        actualActions: "ALLOW_EXPERIENCE_ACTION",
+        deliverableOrResult: "ALLOW_EXPERIENCE_RESULT",
+        privateNotes: "DENY_EXPERIENCE_PRIVATE",
+      },
+      allowed: ["ALLOW_EXPERIENCE_DIRECTION", "ALLOW_EXPERIENCE_RAW", "ALLOW_EXPERIENCE_ACTION", "ALLOW_EXPERIENCE_RESULT"],
+      denied: "DENY_EXPERIENCE_PRIVATE",
+      mapping: "confirmedFacts / supportingFacts",
+    },
+    {
+      routeKey: "jd_to_revision" as const,
+      input: {
+        targetJobTitle: "ALLOW_JD_TITLE",
+        jdTextOrRequirements: "ALLOW_JD_REQUIREMENT",
+        userMaterial: "ALLOW_JD_MATERIAL",
+        privateNotes: "DENY_JD_PRIVATE",
+      },
+      allowed: ["ALLOW_JD_REQUIREMENT", "ALLOW_JD_MATERIAL"],
+      denied: "DENY_JD_PRIVATE",
+      mapping: "jdKeyRequirements <- jdTextOrRequirements; supportedByMaterial <- userMaterial",
+    },
+    {
+      routeKey: "applications_to_review" as const,
+      input: {
+        applications: [{ jobTitle: "ALLOW_APPLICATION_RECORD" }],
+        privateNotes: "DENY_APPLICATION_PRIVATE",
+      },
+      allowed: ["ALLOW_APPLICATION_RECORD"],
+      denied: "DENY_APPLICATION_PRIVATE",
+      mapping: "reviewBasis <- applications",
+    },
+  ])("limits evidence sources and bans transformed quotes for $routeKey", async ({ routeKey, input, allowed, denied, mapping }) => {
+    const prompt = await capturePrompt({ routeKey, input });
+    const evidenceSection = prompt.split("ALLOWED_EVIDENCE_BEGIN")[1]?.split("ALLOWED_EVIDENCE_END")[0] ?? "";
+
+    for (const value of allowed) expect(evidenceSection).toContain(value);
+    expect(evidenceSection).not.toContain(denied);
+    expect(prompt).toContain(mapping);
+    expect(prompt).toContain("严格连续逐字引用同一个白名单来源值");
+    expect(prompt).toContain("不得添加前缀或后缀");
+    expect(prompt).toContain("不得跨字段拼接");
+    expect(prompt).toContain("不得用同义词改写");
+  });
+
+  it("serializes only allow-listed corrective retry fields without replaying sensitive context", async () => {
+    const input = {
+      routeKey: "experience_to_resume" as const,
+      input: {
+        targetDirection: "运营",
+        rawExperience: "COMPLETE_INPUT_SECRET",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+      retryFeedback: {
+        stage: "candidate_schema",
+        code: "candidate_zod",
+        schemaPaths: ["routeResult.confirmedFacts[0]"],
+        previousOutput: "FIRST_FULL_CANDIDATE DeepSeek Qwen fallback prompt token API key stack trace 内部错误",
+        providerName: "PROVIDER_SECRET",
+        apiKey: "sk-secret-test-key",
+        completeInput: "COMPLETE_INPUT_SECRET",
+      },
+    } as AiProviderInput;
+
+    const prompt = await capturePrompt(input);
+    const retrySection = prompt.split("RETRY_CORRECTION_BEGIN")[1]?.split("RETRY_CORRECTION_END")[0] ?? "";
+
+    expect(retrySection).toContain('\"stage\": \"candidate_schema\"');
+    expect(retrySection).toContain('\"code\": \"candidate_zod\"');
+    expect(retrySection).toContain("routeResult.confirmedFacts[0]");
+    expect(retrySection).not.toMatch(
+      /FIRST_FULL_CANDIDATE|PROVIDER_SECRET|sk-secret-test-key|COMPLETE_INPUT_SECRET|DeepSeek|Qwen|fallback|prompt|token|API key|stack trace|内部错误/i,
+    );
+  });
+
   it("sends a JSON-only chat completion request and parses the model response", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
       void _url;

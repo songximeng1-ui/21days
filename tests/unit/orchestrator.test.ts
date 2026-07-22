@@ -348,6 +348,47 @@ describe("generateRouteOutput", () => {
     expect(JSON.stringify(result)).not.toContain("5000");
   });
 
+  it.each([
+    {
+      routeKey: "direction_to_jobs" as const,
+      input: {
+        educationBackground: "信息管理专业",
+        realExperiences: "整理社团报名信息",
+        interestsOrAcceptables: "不排斥信息整理",
+        privateNotes: "PRIVATE_NOT_ALLOWLISTED",
+      },
+      replaceEvidence: (output: RouteOutput) => ({
+        ...output,
+        routeResult: {
+          ...output.routeResult,
+          explorableDirections: (output.routeResult?.explorableDirections as Array<Record<string, unknown>>).map(
+            (direction) => ({ ...direction, basisFromUserMaterial: ["PRIVATE_NOT_ALLOWLISTED"] }),
+          ),
+        },
+      }),
+    },
+    {
+      routeKey: "experience_to_resume" as const,
+      input: { ...sufficientExperienceInput, privateNotes: "PRIVATE_NOT_ALLOWLISTED" },
+      replaceEvidence: (output: RouteOutput) => ({
+        ...output,
+        routeResult: {
+          ...output.routeResult,
+          confirmedFacts: ["PRIVATE_NOT_ALLOWLISTED"],
+          supportingFacts: ["PRIVATE_NOT_ALLOWLISTED"],
+        },
+      }),
+    },
+  ])("rejects $routeKey evidence from fields outside its route allowlist", async ({ routeKey, input, replaceEvidence }) => {
+    const generated = await new MockAiProvider("success").generate({ routeKey, input });
+    const provider = { generate: vi.fn().mockResolvedValue(replaceEvidence(generated)) };
+
+    const result = await generateRouteOutput({ routeKey, input, provider });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_NOT_ALLOWLISTED");
+  });
+
   it("retries once when the first structured output violates safety boundaries", async () => {
     const safeProvider = new MockAiProvider("success");
     const safeOutput = await safeProvider.generate({
@@ -433,6 +474,128 @@ describe("generateRouteOutput", () => {
     expect(result.outputType).toBe("route_result");
     expect(primary.generate).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    {
+      name: "candidate Zod",
+      makeInvalid: () => ({ broken: "FIRST_FULL_CANDIDATE_SECRET" }) as unknown as RouteOutput,
+      feedback: {
+        stage: "candidate_schema",
+        code: "candidate_zod",
+        schemaPaths: expect.any(Array),
+      },
+    },
+    {
+      name: "route mismatch",
+      makeInvalid: (output: RouteOutput) => ({
+        ...output,
+        routeKey: "jd_to_revision",
+        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
+      }) as unknown as RouteOutput,
+      feedback: { stage: "route_mismatch", code: "route_mismatch" },
+    },
+    {
+      name: "unexpected route output type",
+      makeInvalid: (output: RouteOutput) => ({
+        ...output,
+        outputType: "missing_info",
+        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
+      }) as unknown as RouteOutput,
+      feedback: { stage: "route_shape", code: "unexpected_output_type" },
+    },
+    {
+      name: "route result shape",
+      makeInvalid: (output: RouteOutput) => ({
+        ...output,
+        routeResult: null,
+        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
+      }),
+      feedback: { stage: "route_shape", code: "route_shape" },
+    },
+    {
+      name: "action",
+      makeInvalid: (output: RouteOutput) => ({
+        ...output,
+        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
+        todayAction: { ...output.todayAction, estimatedTime: "later" },
+      }),
+      feedback: { stage: "action", code: "action_contract" },
+    },
+    {
+      name: "safety",
+      makeInvalid: (output: RouteOutput) => ({
+        ...output,
+        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
+        shortAssessment: "匹配度 90%",
+      }),
+      feedback: { stage: "safety", code: "safety_boundary" },
+    },
+    {
+      name: "grounding",
+      makeInvalid: (output: RouteOutput) => ({
+        ...output,
+        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
+        routeResult: { ...output.routeResult, supportingFacts: ["发布 999 篇文章"] },
+      }),
+      feedback: { stage: "grounding", code: "grounding_failure" },
+    },
+  ])("sends sanitized $name feedback only on the second primary call", async ({ makeInvalid, feedback }) => {
+    const validOutput = await makeValidExperienceOutput();
+    const primary = {
+      generate: vi.fn()
+        .mockResolvedValueOnce(makeInvalid(validOutput))
+        .mockResolvedValueOnce(validOutput),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(primary.generate.mock.calls[0]?.[0]).toEqual({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+    });
+    expect(primary.generate.mock.calls[1]?.[0]).toEqual({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      retryFeedback: feedback,
+    });
+    expect(JSON.stringify(primary.generate.mock.calls[1]?.[0])).not.toMatch(
+      /FIRST_FULL_CANDIDATE_SECRET|candidateMarker|previousOutput|providerName|apiKey/i,
+    );
+  });
+
+  it.each(["transport", "retryable_http", "envelope_json", "empty_content", "model_json"] as const)(
+    "uses only one generic retry code after a %s provider-machine failure",
+    async (kind) => {
+      const validOutput = await makeValidExperienceOutput();
+      const primary = {
+        generate: vi.fn()
+          .mockRejectedValueOnce(new AiProviderError(kind))
+          .mockResolvedValueOnce(validOutput),
+      };
+
+      const result = await generateRouteOutput({
+        routeKey: "experience_to_resume",
+        input: sufficientExperienceInput,
+        primary,
+      });
+
+      expect(result.outputType).toBe("route_result");
+      expect(primary.generate.mock.calls[1]?.[0]).toEqual({
+        routeKey: "experience_to_resume",
+        input: sufficientExperienceInput,
+        retryFeedback: { code: "provider_retryable" },
+      });
+      expect(JSON.stringify(primary.generate.mock.calls[1]?.[0])).not.toMatch(
+        /transport|retryable_http|envelope_json|empty_content|model_json|provider_http|provider_content/i,
+      );
+    },
+  );
 
   it.each(["transport", "retryable_http", "envelope_json", "empty_content", "model_json"] as const)(
     "calls fallback once after two primary %s failures",

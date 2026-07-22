@@ -3,6 +3,7 @@ import {
   type AiProvider,
   type AiProviderErrorKind,
   type AiProviderSet,
+  type AiRetryFeedback,
 } from "@/ai/provider";
 import {
   noopAiFailureReporter,
@@ -131,13 +132,15 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
   if (!options.primary) return makeFriendlyFailureOutput(options.routeKey);
 
   let exhaustedFailure: AttemptFailure | undefined;
+  let retryFeedback: AiRetryFeedback | undefined;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const result = await generateAndValidate(options.primary, options);
+    const result = await generateAndValidate(options.primary, options, retryFeedback);
     if (result.output) return result.output;
 
     exhaustedFailure = result.failure;
     await reportAttemptFailure(options, "primary", attempt, result.failure);
     if (!result.failure.retryPrimary) return makeFriendlyFailureOutput(options.routeKey);
+    retryFeedback = toRetryFeedback(result.failure);
   }
 
   if (exhaustedFailure?.allowFallback && options.fallback) {
@@ -152,12 +155,17 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
 async function generateAndValidate(
   provider: AiProvider,
   options: Pick<OrchestrateOutputInput, "routeKey" | "input" | "mode">,
+  retryFeedback?: AiRetryFeedback,
 ): Promise<AttemptResult> {
   const startedAt = nowMs();
   let rawOutput: RouteOutput;
 
   try {
-    rawOutput = await provider.generate({ routeKey: options.routeKey, input: options.input });
+    rawOutput = await provider.generate({
+      routeKey: options.routeKey,
+      input: options.input,
+      ...(retryFeedback ? { retryFeedback } : {}),
+    });
   } catch (error) {
     return { failure: providerFailure(error, nowMs() - startedAt) };
   }
@@ -231,6 +239,27 @@ function providerFailure(error: unknown, durationMs: number): AttemptFailure {
 
 function contentFailure(stage: AiFailureStage, code: string, durationMs: number): AttemptFailure {
   return { stage, code, retryPrimary: true, allowFallback: false, durationMs };
+}
+
+function toRetryFeedback(failure: AttemptFailure): AiRetryFeedback {
+  if (failure.stage.startsWith("provider_")) return { code: "provider_retryable" };
+  if (failure.stage === "candidate_schema") {
+    return {
+      stage: "candidate_schema",
+      code: "candidate_zod",
+      ...(failure.schemaPaths ? { schemaPaths: failure.schemaPaths } : {}),
+    };
+  }
+  if (failure.stage === "route_mismatch") return { stage: "route_mismatch", code: "route_mismatch" };
+  if (failure.stage === "route_shape") {
+    return {
+      stage: "route_shape",
+      code: failure.code === "unexpected_output_type" ? "unexpected_output_type" : "route_shape",
+    };
+  }
+  if (failure.stage === "action") return { stage: "action", code: "action_contract" };
+  if (failure.stage === "safety") return { stage: "safety", code: "safety_boundary" };
+  return { stage: "grounding", code: "grounding_failure" };
 }
 
 function isProviderFailureRetryable(kind: AiProviderErrorKind): boolean {
@@ -641,14 +670,25 @@ function hasGroundedRouteEvidence(
       ? routeResult.explorableDirections
       : [];
     return directions.every((direction) =>
-      isRecord(direction) && claimsAreGrounded(direction.basisFromUserMaterial, input)
+      isRecord(direction) && claimsAreGrounded(direction.basisFromUserMaterial, {
+        educationBackground: input.educationBackground,
+        realExperiences: input.realExperiences,
+        interestsOrAcceptables: input.interestsOrAcceptables,
+        constraints: input.constraints,
+      })
     );
   }
 
   if (routeKey === "experience_to_resume") {
+    const evidenceSource = {
+      targetDirection: input.targetDirection,
+      rawExperience: input.rawExperience,
+      actualActions: input.actualActions,
+      deliverableOrResult: input.deliverableOrResult,
+    };
     return (
-      claimsAreGrounded(routeResult.confirmedFacts, input) &&
-      claimsAreGrounded(routeResult.supportingFacts, input)
+      claimsAreGrounded(routeResult.confirmedFacts, evidenceSource) &&
+      claimsAreGrounded(routeResult.supportingFacts, evidenceSource)
     );
   }
 

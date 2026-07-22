@@ -10,6 +10,27 @@ export type AiProviderScenario =
 export type AiProviderInput = {
   routeKey: RouteKey;
   input: Record<string, unknown>;
+  retryFeedback?: AiRetryFeedback;
+};
+
+export type AiRetryFeedback = {
+  stage?:
+    | "candidate_schema"
+    | "route_mismatch"
+    | "route_shape"
+    | "action"
+    | "safety"
+    | "grounding";
+  code:
+    | "candidate_zod"
+    | "route_mismatch"
+    | "unexpected_output_type"
+    | "route_shape"
+    | "action_contract"
+    | "safety_boundary"
+    | "grounding_failure"
+    | "provider_retryable";
+  schemaPaths?: string[];
 };
 
 export interface AiProvider {
