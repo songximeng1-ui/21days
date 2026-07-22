@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { RouteOutput } from "@/domain/types";
-import { loadLatestReview, loadRecords, saveReview, type LocalRecord, type LocalReview } from "@/lib/local-store";
+import {
+  loadLatestReview,
+  loadRecords,
+  markReviewSaved,
+  saveReview,
+  type LocalRecord,
+  type LocalReview,
+} from "@/lib/local-store";
 
 export default function ReviewPage() {
   const [latest, setLatest] = useState<LocalRecord | null>(null);
@@ -88,7 +95,19 @@ export default function ReviewPage() {
           </section>
         </div>
 
-        <Link className="primary-button" href="/">回到今日入口</Link>
+        {review ? (
+          <Link
+            className="primary-button"
+            href="/"
+            onClick={() => {
+              markReviewSaved(review.id);
+            }}
+          >
+            设为下一次行动
+          </Link>
+        ) : (
+          <Link className="primary-button" href="/">回到今日入口</Link>
+        )}
         <Link className="secondary-button" href="/track">查看我的求职轨迹</Link>
       </section>
     </main>

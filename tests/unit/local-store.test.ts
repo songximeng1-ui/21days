@@ -7,6 +7,7 @@ import {
   loadCurrentAction,
   loadDraft,
   loadRecords,
+  markReviewSaved,
   mergeDraft,
   saveCurrentAction,
   saveDraft,
@@ -149,6 +150,7 @@ describe("local record storage", () => {
     });
 
     expect(loadLatestReview()).toMatchObject({ id: review.id });
+    markReviewSaved(review.id);
     expect(loadHomeProgress()).toMatchObject({
       latestRecord: expect.objectContaining({ id: record.id }),
       latestReview: expect.objectContaining({ id: review.id }),

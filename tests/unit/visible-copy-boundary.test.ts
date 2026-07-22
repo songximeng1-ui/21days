@@ -9,6 +9,7 @@ const userFacingFiles = [
   "src/app/routes/[routeKey]/input/page.tsx",
   "src/app/routes/[routeKey]/record/page.tsx",
   "src/app/track/page.tsx",
+  "src/ai/orchestrator.ts",
 ];
 
 const forbiddenCopy = [
@@ -34,5 +35,20 @@ describe("visible product copy boundaries", () => {
     for (const forbidden of forbiddenCopy) {
       expect(visibleCopy).not.toContain(forbidden);
     }
+  });
+
+  it("keeps mobile hero titles from being clipped on narrow screens", () => {
+    const css = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+
+    expect(css).toContain("overflow-wrap: anywhere");
+    expect(css).toMatch(/\.home-hero h1,[\s\S]*?word-break: break-word/);
+  });
+
+  it("declares a mobile viewport so narrow screens use the device width", () => {
+    const layout = readFileSync(join(process.cwd(), "src/app/layout.tsx"), "utf8");
+
+    expect(layout).toContain("export const viewport");
+    expect(layout).toContain("width: \"device-width\"");
+    expect(layout).toContain("initialScale: 1");
   });
 });

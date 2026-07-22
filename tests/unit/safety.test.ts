@@ -30,4 +30,16 @@ describe("scanSafetyViolations", () => {
 
     expect(result).toEqual({ passed: true, blockedReasons: [] });
   });
+
+  it("blocks non-numeric outcome probability and failure attribution copy", () => {
+    const result = scanSafetyViolations("通过概率很高，大概率能进面。没反馈是因为你的简历太弱。");
+
+    expect(result.passed).toBe(false);
+    expect(result.blockedReasons).toEqual(
+      expect.arrayContaining([
+        "禁止输出匹配度、录取概率或适合度评分",
+        "禁止猜测公司筛选规则或失败原因",
+      ])
+    );
+  });
 });

@@ -44,20 +44,23 @@ export function isRouteInputSufficient(routeKey: RouteKey, input: Record<string,
   if (routeKey === "applications_to_review") {
     const applications = input.applications;
     if (Array.isArray(applications)) {
-      return applications.some((application) => hasApplicationRecordDetails(application));
+      return applications.filter((application) => hasApplicationReviewDetails(application)).length >= 2;
     }
 
-    return hasApplicationRecordDetails(applications);
+    return false;
   }
 
   return getRouteStrategy(routeKey).requiredFields.every((field) => hasMeaningfulValue(input[field]));
 }
 
-function hasApplicationRecordDetails(value: unknown): boolean {
+function hasApplicationReviewDetails(value: unknown): boolean {
   if (typeof value === "object" && value !== null) {
     const record = value as Record<string, unknown>;
-    return ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"].every((field) =>
-      hasMeaningfulValue(record[field])
+    return (
+      ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"].every((field) =>
+        hasMeaningfulValue(record[field])
+      ) &&
+      ["jdSummary", "materialVersion"].every((field) => hasSpecificReviewValue(record[field]))
     );
   }
 
@@ -74,4 +77,14 @@ function hasMeaningfulValue(value: unknown): boolean {
   }
 
   return value !== null && value !== undefined;
+}
+
+function hasSpecificReviewValue(value: unknown): boolean {
+  if (!hasMeaningfulValue(value) || typeof value !== "string") {
+    return false;
+  }
+
+  return !/^(不确定|不知道|不清楚|暂时没有|还没整理|没有|无|无明确版本|unknown|not sure|none)$/i.test(
+    value.trim()
+  );
 }

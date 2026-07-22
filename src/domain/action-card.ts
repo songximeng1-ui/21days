@@ -48,6 +48,10 @@ export function validateRouteOutput(output: RouteOutput): ValidationResult {
     issues.push("轻复盘必须包含复盘依据、线索、信息缺口和下一步行动");
   }
 
+  if (output.outputType === "route_result") {
+    issues.push(...validateRouteResultShape(output));
+  }
+
   if (output.outputType !== "friendly_failure" && !/15\s*-\s*30|15-30/.test(action.estimatedTime)) {
     issues.push("今日行动预计时间应优先为 15-30 分钟");
   }
@@ -59,6 +63,69 @@ export function validateRouteOutput(output: RouteOutput): ValidationResult {
     passed: issues.length === 0,
     issues,
   };
+}
+
+function validateRouteResultShape(output: RouteOutput): string[] {
+  const result = output.routeResult;
+  if (!result) return ["路线输出必须包含对应路线结果"];
+
+  if (output.routeKey === "direction_to_jobs") {
+    const directions = result.explorableDirections;
+    if (!Array.isArray(directions) || directions.length < 1) {
+      return ["方向路线必须包含可探索方向和搜索关键词"];
+    }
+
+    const validDirections = directions.every((direction) => {
+      if (!isRecord(direction)) return false;
+      return (
+        hasText(direction.directionName) &&
+        hasStringArray(direction.searchKeywords, 1, 5) &&
+        hasStringArray(direction.basisFromUserMaterial, 1, 5) &&
+        hasText(direction.riskOrGap)
+      );
+    });
+    return validDirections ? [] : ["方向路线必须包含可探索方向和搜索关键词"];
+  }
+
+  if (output.routeKey === "experience_to_resume") {
+    return hasStringArray(result.confirmedFacts, 1, 5) &&
+      hasStringArray(result.missingFacts, 1, 5) &&
+      hasStringArray(result.doNotExaggerate, 1, 5) &&
+      hasText(result.resumeSnippetDraft) &&
+      hasStringArray(result.supportingFacts, 1, 5)
+      ? []
+      : ["经历路线必须包含事实、缺口、克制边界和事实支撑"];
+  }
+
+  if (output.routeKey === "jd_to_revision") {
+    return hasStringArray(result.jdKeyRequirements, 1, 5) &&
+      hasStringArray(result.supportedByMaterial, 1, 5) &&
+      hasStringArray(result.unclearFromMaterial, 1, 5) &&
+      hasStringArray(result.minimalRevisionActions, 1, 2) &&
+      hasStringArray(result.afterSubmissionRecording, 1, 3)
+      ? []
+      : ["JD 路线必须包含 JD 要求、材料支撑、缺口和最小修改"];
+  }
+
+  if (output.routeKey === "applications_to_review") {
+    return hasStringArray(result.reviewBasis, 1, 3) &&
+      hasText(result.recordSufficiency) &&
+      hasStringArray(result.possibleClues, 1, 3) &&
+      hasStringArray(result.informationGaps, 1, 3) &&
+      hasText(result.nextValidationAction)
+      ? []
+      : ["投递复盘路线必须包含复盘依据、线索、信息缺口和下一轮动作"];
+  }
+
+  return [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function hasText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function hasLightReviewBlocks(routeResult: RouteOutput["routeResult"]): boolean {

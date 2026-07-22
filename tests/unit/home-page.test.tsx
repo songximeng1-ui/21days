@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it } from "vitest";
 import Home from "@/app/page";
-import { saveCurrentAction, saveRecord, saveReview } from "@/lib/local-store";
+import { markReviewSaved, saveCurrentAction, saveRecord, saveReview } from "@/lib/local-store";
 import type { RouteOutput } from "@/domain/types";
 
 const currentAction: RouteOutput = {
@@ -47,10 +47,10 @@ describe("Home", () => {
     expect(screen.queryByText("你现在最想先解决哪件事？")).not.toBeInTheDocument();
     expect(await screen.findByText("上次这一步还没做完，今天可以把它缩小一点。")).toBeInTheDocument();
     expect(screen.getByText("今天先对照 JD 做 1 条投递前最小修改")).toBeInTheDocument();
-    expect(screen.getByText("先改最能支撑 JD 的一处表达。")).toBeInTheDocument();
-    expect(screen.getByText("圈出 JD 的 1 条关键要求")).toBeInTheDocument();
+    expect(screen.getByText("今天先完成一个更小版本。")).toBeInTheDocument();
+    expect(screen.getByText("只做第一步：圈出 JD 的 1 条关键要求")).toBeInTheDocument();
     expect(screen.getByText("15-30 分钟")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "查看这一步行动" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "继续一个更小版本" })).toHaveAttribute(
       "href",
       "/routes/jd_to_revision/action",
     );
@@ -75,7 +75,7 @@ describe("Home", () => {
     render(<Home />);
 
     expect(await screen.findByText("上次这一步还没做完，今天可以把它缩小一点。")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "查看这一步行动" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "继续一个更小版本" })).toHaveAttribute(
       "href",
       "/routes/jd_to_revision/action",
     );
@@ -95,7 +95,7 @@ describe("Home", () => {
     render(<Home />);
 
     expect(await screen.findByText("上次这一步还没做完，今天可以把它缩小一点。")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "查看这一步行动" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "继续一个更小版本" })).toHaveAttribute(
       "href",
       "/routes/jd_to_revision/action",
     );
@@ -110,7 +110,7 @@ describe("Home", () => {
       payload: { actualActions: "整理报名表" },
       userConfirmed: true,
     });
-    saveReview({
+    const review = saveReview({
       basedOnRecordIds: [record.id],
       routeKey: "experience_to_resume",
       reviewBasis: ["整理了社团招新报名表"],
@@ -118,15 +118,17 @@ describe("Home", () => {
       missingInfo: ["还缺交付物"],
       nextAction: "下一步先补这段经历的交付物。",
     });
+    markReviewSaved(review.id);
 
     render(<Home />);
 
     expect(await screen.findByText("21 天陪跑 · 已保存 1 次推进")).toBeInTheDocument();
     expect(screen.getByText("最近推进：整理了社团招新报名表，并记录了自己负责的动作。")).toBeInTheDocument();
+    expect(screen.getByText("今天继续这一件事")).toBeInTheDocument();
     expect(screen.getByText("下一步先补这段经历的交付物。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "继续：下一步先补这段经历的交付物。" })).toHaveAttribute(
       "href",
-      "/routes/experience_to_resume/input",
+      "/routes/experience_to_resume/action",
     );
     expect(screen.queryByText("我不知道能投哪些岗位")).not.toBeInTheDocument();
   });
@@ -196,7 +198,7 @@ describe("Home", () => {
     render(<Home />);
 
     expect(await screen.findByText("上次这一步还没做完，今天可以把它缩小一点。")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "查看这一步行动" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "继续一个更小版本" })).toHaveAttribute(
       "href",
       "/routes/jd_to_revision/action",
     );

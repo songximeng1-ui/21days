@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ActionPage from "@/app/routes/[routeKey]/action/page";
@@ -166,40 +166,36 @@ describe("RecordPage", () => {
     push.mockReset();
     routeKeyParam = "jd_to_revision";
     vi.mocked(saveRecord).mockReset();
+    vi.mocked(mergeDraft).mockReset();
     vi.mocked(loadCurrentAction).mockReturnValue(missingInfoOutput);
   });
 
-  it("saves completed fill-info records and returns to route input", async () => {
+  it("saves a fill-info record and merges the payload into the draft", async () => {
     render(<RecordPage />);
 
-    fireEvent.change(await screen.findByLabelText("实际完成了什么？"), {
-      target: { value: "补了真实 JD 和岗位要求" },
-    });
-    fireEvent.change(screen.getByLabelText("目标岗位名称"), {
-      target: { value: "产品运营实习生" },
-    });
-    fireEvent.change(screen.getByLabelText("真实 JD 或 3-5 条岗位要求"), {
-      target: { value: "负责用户调研、数据整理、活动复盘" },
-    });
-    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    await waitFor(() => expect(screen.getAllByRole("textbox")).toHaveLength(3));
+    const textboxes = screen.getAllByRole("textbox");
+    fireEvent.change(textboxes[1], { target: { value: "product operations intern" } });
+    fireEvent.change(textboxes[2], { target: { value: "research, data整理, activity review" } });
+    fireEvent.click(screen.getByRole("checkbox"));
 
-    fireEvent.click(screen.getByRole("button", { name: "保存补充信息，继续判断" }));
+    fireEvent.click(screen.getByRole("button"));
 
     expect(saveRecord).toHaveBeenCalledWith({
       actionId: "action-fill-jd",
       routeKey: "jd_to_revision",
       recordType: "fill_info",
       actionTitle: "今天先补这份岗位的真实 JD 或 3-5 条岗位要求",
-      actualDone: "补了真实 JD 和岗位要求",
+      actualDone: "补充了 2 项信息",
       payload: {
-        targetJobTitle: "产品运营实习生",
-        jdTextOrRequirements: "负责用户调研、数据整理、活动复盘",
+        targetJobTitle: "product operations intern",
+        jdTextOrRequirements: "research, data整理, activity review",
       },
       userConfirmed: true,
     });
     expect(mergeDraft).toHaveBeenCalledWith("jd_to_revision", {
-      targetJobTitle: "产品运营实习生",
-      jdTextOrRequirements: "负责用户调研、数据整理、活动复盘",
+      targetJobTitle: "product operations intern",
+      jdTextOrRequirements: "research, data整理, activity review",
     });
     expect(push).toHaveBeenCalledWith("/routes/jd_to_revision/input");
   });
@@ -237,9 +233,22 @@ describe("RecordPage", () => {
     expect(push).toHaveBeenCalledWith("/review");
   });
 
-  it("lets application records save with minimum fields while optional fields stay uncertain", async () => {
+  it("requires application records to include concrete review fields before saving", async () => {
     routeKeyParam = "applications_to_review";
-    vi.mocked(loadCurrentAction).mockReturnValue(applicationOutput);
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...applicationOutput,
+      recordGuide: {
+        ...applicationOutput.recordGuide,
+        fieldsToRecord: [
+          "jobTitle",
+          "companyOrPlatform",
+          "submittedAt",
+          "feedbackStatus",
+          "jdSummary",
+          "materialVersion",
+        ],
+      },
+    });
 
     render(<RecordPage />);
 
@@ -260,6 +269,16 @@ describe("RecordPage", () => {
     });
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
 
+    expect(screen.getByRole("button", { name: "保存并轻复盘" })).toBeDisabled();
+    expect(saveRecord).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("JD 摘要"), {
+      target: { value: "负责内容整理和活动复盘" },
+    });
+    fireEvent.change(screen.getByLabelText("使用的材料版本"), {
+      target: { value: "社团经历版" },
+    });
+
     fireEvent.click(screen.getByRole("button", { name: "保存并轻复盘" }));
 
     expect(saveRecord).toHaveBeenCalledWith({
@@ -273,13 +292,15 @@ describe("RecordPage", () => {
         companyOrPlatform: "A 公司",
         submittedAt: "7 月 1 日",
         feedbackStatus: "暂无反馈",
+        jdSummary: "负责内容整理和活动复盘",
+        materialVersion: "社团经历版",
       },
       userConfirmed: true,
     });
-    expect(screen.getByText(/先补最低字段/)).toBeInTheDocument();
+    expect(screen.getByLabelText("JD 摘要")).toBeInTheDocument();
   });
 
-  it("lets application missing-info records use minimum fields while optional fields stay uncertain", async () => {
+  it("saves an application fill-info record and merges the payload into the draft", async () => {
     routeKeyParam = "applications_to_review";
     const output = await generateRouteOutput({
       routeKey: "applications_to_review",
@@ -294,41 +315,41 @@ describe("RecordPage", () => {
 
     render(<RecordPage />);
 
-    fireEvent.change(await screen.findByLabelText("实际完成了什么？"), {
-      target: { value: "补了一条最低字段投递记录" },
-    });
-    fireEvent.change(screen.getByLabelText("岗位名称"), {
-      target: { value: "内容运营实习" },
-    });
-    fireEvent.change(screen.getByLabelText("公司或平台"), {
-      target: { value: "A 公司" },
-    });
-    fireEvent.change(screen.getByLabelText("投递时间"), {
-      target: { value: "7 月 1 日" },
-    });
-    fireEvent.change(screen.getByLabelText("反馈状态"), {
-      target: { value: "暂无反馈" },
-    });
-    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    await waitFor(() => expect(screen.getAllByRole("textbox")).toHaveLength(7));
+    const textboxes = screen.getAllByRole("textbox");
+    fireEvent.change(textboxes[1], { target: { value: "content operations intern" } });
+    fireEvent.change(textboxes[2], { target: { value: "A company" } });
+    fireEvent.change(textboxes[3], { target: { value: "July 21" } });
+    fireEvent.change(textboxes[4], { target: { value: "no feedback yet" } });
+    fireEvent.change(textboxes[5], { target: { value: "content editing and campaign recap" } });
+    fireEvent.change(textboxes[6], { target: { value: "resume version for campus club work" } });
+    fireEvent.click(screen.getByRole("checkbox"));
 
-    expect(screen.getByLabelText("JD 摘要（可先写“不确定”）")).toBeInTheDocument();
-    expect(screen.getByLabelText("使用的材料版本（可先写“不确定”）")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "保存补充信息，继续判断" }));
+    fireEvent.click(screen.getByRole("button"));
 
     expect(saveRecord).toHaveBeenCalledWith({
       actionId: "action-application-missing",
       routeKey: "applications_to_review",
       recordType: "application",
-      actionTitle: "今天先补齐 1 条真实投递记录",
-      actualDone: "补了一条最低字段投递记录",
+      actionTitle: "今天先补齐 2 条真实投递记录",
+      actualDone: "补充了 6 项信息",
       payload: {
-        jobTitle: "内容运营实习",
-        companyOrPlatform: "A 公司",
-        submittedAt: "7 月 1 日",
-        feedbackStatus: "暂无反馈",
+        jobTitle: "content operations intern",
+        companyOrPlatform: "A company",
+        submittedAt: "July 21",
+        feedbackStatus: "no feedback yet",
+        jdSummary: "content editing and campaign recap",
+        materialVersion: "resume version for campus club work",
       },
       userConfirmed: true,
+    });
+    expect(mergeDraft).toHaveBeenCalledWith("applications_to_review", {
+      jobTitle: "content operations intern",
+      companyOrPlatform: "A company",
+      submittedAt: "July 21",
+      feedbackStatus: "no feedback yet",
+      jdSummary: "content editing and campaign recap",
+      materialVersion: "resume version for campus club work",
     });
     expect(push).toHaveBeenCalledWith("/routes/applications_to_review/input");
   });

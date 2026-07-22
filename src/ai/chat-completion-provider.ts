@@ -111,7 +111,7 @@ export class RetryFallbackAiProvider implements AiProvider {
     }
 
     if (this.options.fallback) {
-      if (lastError instanceof AiProviderError && lastError.kind === "service_unavailable") {
+      if (lastError instanceof AiProviderError && isFallbackEligible(lastError)) {
         return this.options.fallback.generate(input);
       }
 
@@ -120,6 +120,10 @@ export class RetryFallbackAiProvider implements AiProvider {
 
     throw lastError instanceof Error ? lastError : new AiProviderError();
   }
+}
+
+function isFallbackEligible(error: AiProviderError): boolean {
+  return error.kind === "service_unavailable" || error.kind === "invalid_json" || error.kind === "empty_response";
 }
 
 export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?: FetchLike): AiProvider {
@@ -147,7 +151,7 @@ export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?
     });
   }
 
-  return new MockAiProvider("success");
+  return new MockAiProvider(env.NODE_ENV === "production" ? "provider_failure" : "success");
 }
 
 function buildSystemPrompt(): string {

@@ -8,6 +8,8 @@ const BLOCKERS: Array<{ reason: string; patterns: RegExp[] }> = [
     reason: "禁止输出匹配度、录取概率或适合度评分",
     patterns: [
       /匹配度|匹配率|录取概率|适合度|fit score|match rate|probability/i,
+      /(通过|录取|offer|进面|面试)[^。；，,.]{0,8}(概率|可能性|机会|希望)[^。；，,.]{0,8}(很高|高|大|不低)/i,
+      /大概率[^。；，,.]{0,8}(通过|录取|offer|进面|面试)/i,
       /(匹配|适合|录取|通过|offer|概率)[^。；，,.]{0,12}\d+\s*%/i,
       /\d+\s*%[^。；，,.]{0,12}(匹配|适合|录取|通过|offer|概率)/i,
     ],

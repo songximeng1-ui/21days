@@ -81,17 +81,28 @@ export const ROUTE_SAMPLES: RouteSample[] = [
   {
     routeKey: "applications_to_review",
     kind: "complete",
-    title: "投递复盘：有投递记录",
+    title: "投递复盘：有 2 条可复盘投递记录",
     input: {
-      applications: {
-        jobTitle: "内容运营实习",
-        companyOrPlatform: "A 公司",
-        submittedAt: "7 月 1 日",
-        feedbackStatus: "暂无反馈",
-        materialVersion: "简历 v1",
-      },
+      applications: [
+        {
+          jobTitle: "内容运营实习",
+          companyOrPlatform: "A 公司",
+          submittedAt: "7 月 1 日",
+          feedbackStatus: "暂无反馈",
+          jdSummary: "负责内容整理和活动复盘",
+          materialVersion: "简历 v1",
+        },
+        {
+          jobTitle: "新媒体运营实习",
+          companyOrPlatform: "B 公司",
+          submittedAt: "7 月 3 日",
+          feedbackStatus: "已查看",
+          jdSummary: "负责选题、推文编辑和数据记录",
+          materialVersion: "简历 v2",
+        },
+      ],
     },
-    expectedFocus: "补齐 1 条记录或找一个可能线索",
+    expectedFocus: "基于真实投递记录找一个可能线索",
   },
   {
     routeKey: "applications_to_review",

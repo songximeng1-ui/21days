@@ -60,4 +60,58 @@ describe("route output contract", () => {
 
     expect(validateRouteOutput(output).passed).toBe(false);
   });
+
+  it("rejects JD route output that misses route-specific support fields", () => {
+    const output = routeOutputSchema.parse({
+      routeKey: "jd_to_revision",
+      outputType: "route_result",
+      shortAssessment: "这里先看材料和 JD 的支撑关系。",
+      routeResult: {
+        genericAdvice: ["改一下简历"],
+      },
+      missingInfo: null,
+      todayAction: {
+        actionTitle: "今天先对照 JD 做 1 条投递前最小修改",
+        actionReason: "先改最能支撑 JD 的一处表达。",
+        actionSteps: ["圈出 JD 的 1 条关键要求", "补 1 个真实动作"],
+        estimatedTime: "15-30 分钟",
+        recordAfterDone: "记录修改前后片段。",
+        actionType: "jd_revision",
+      },
+      recordGuide: {
+        recordType: "jd_compare",
+        fieldsToRecord: ["beforeSnippet", "afterSnippet"],
+        requiresUserConfirmation: true,
+      },
+    });
+
+    expect(validateRouteOutput(output).passed).toBe(false);
+  });
+
+  it("rejects direction route output without explorable directions and search keywords", () => {
+    const output = routeOutputSchema.parse({
+      routeKey: "direction_to_jobs",
+      outputType: "route_result",
+      shortAssessment: "可以先把方向落到岗位样本。",
+      routeResult: {
+        explorableDirections: [],
+      },
+      missingInfo: null,
+      todayAction: {
+        actionTitle: "今天先保存 1-3 个真实岗位样本",
+        actionReason: "先用真实 JD 验证方向。",
+        actionSteps: ["搜索一个关键词", "保存岗位要求摘要"],
+        estimatedTime: "15-30 分钟",
+        recordAfterDone: "记录岗位名称、JD 摘要和担心点。",
+        actionType: "job_sample",
+      },
+      recordGuide: {
+        recordType: "job_sample",
+        fieldsToRecord: ["jobTitle"],
+        requiresUserConfirmation: true,
+      },
+    });
+
+    expect(validateRouteOutput(output).passed).toBe(false);
+  });
 });

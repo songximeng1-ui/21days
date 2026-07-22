@@ -22,6 +22,21 @@ export default function RecordPage() {
     event.preventDefault();
     if (!output || !canSaveRecord()) return;
 
+    if (output.outputType === "missing_info") {
+      saveRecord({
+        actionId: output.actionId,
+        routeKey: output.routeKey,
+        recordType: output.recordGuide.recordType,
+        actionTitle: output.todayAction.actionTitle,
+        actualDone: summarizeFillInfo(payload),
+        payload,
+        userConfirmed: confirmed,
+      });
+      mergeDraft(params.routeKey, payload);
+      router.push(`/routes/${params.routeKey}/input`);
+      return;
+    }
+
     saveRecord({
       actionId: output.actionId,
       routeKey: output.routeKey,
@@ -31,10 +46,7 @@ export default function RecordPage() {
       payload,
       userConfirmed: confirmed,
     });
-    if (output.outputType === "missing_info") {
-      mergeDraft(params.routeKey, payload);
-    }
-    router.push(output.outputType === "missing_info" ? `/routes/${params.routeKey}/input` : "/review");
+    router.push("/review");
   }
 
   function updatePayload(field: string, value: string) {
@@ -104,7 +116,11 @@ export default function RecordPage() {
             <span>我确认这条记录反映了我实际做过的事；如果没有做过，不要保留。</span>
           </label>
 
-          <button className="primary-button" type="submit" disabled={!actualDone.trim() || !canSaveRecord()}>
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={(output?.outputType !== "missing_info" && !actualDone.trim()) || !canSaveRecord()}
+          >
             {output?.outputType === "missing_info" ? "保存补充信息，继续判断" : "保存并轻复盘"}
           </button>
           <p className="muted">
@@ -126,7 +142,7 @@ function isRecordableOutput(output: RouteOutput) {
 
 function requiredRecordFields(output: RouteOutput): string[] {
   if (output.recordGuide.recordType === "application") {
-    return ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"].filter((field) =>
+    return ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"].filter((field) =>
       output.recordGuide.fieldsToRecord.includes(field)
     );
   }
@@ -134,9 +150,14 @@ function requiredRecordFields(output: RouteOutput): string[] {
   return output.recordGuide.fieldsToRecord;
 }
 
+function summarizeFillInfo(payload: Record<string, string>): string {
+  const count = Object.values(payload).filter((value) => value.trim()).length;
+  return `补充了 ${count} 项信息`;
+}
+
 function recordHelpText(output: RouteOutput | null) {
   if (output?.recordGuide.recordType === "application") {
-    return "先补最低字段：岗位、公司或平台、投递时间、反馈状态。JD 摘要和这次用的简历/材料版本可以先写“不确定”，之后再补。";
+    return "先补可复盘字段：岗位、公司或平台、投递时间、反馈状态、JD 摘要和这次用的简历/材料版本。JD 摘要和材料版本需要写具体。";
   }
 
   return "确认勾选并补齐上面的记录字段后，才能保存并复盘。";

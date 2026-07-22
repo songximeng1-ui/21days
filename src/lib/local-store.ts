@@ -1,12 +1,13 @@
 "use client";
 
 import type { RouteOutput } from "@/domain/types";
+import type { RouteKey } from "@/domain/types";
 import { ROUTE_KEYS } from "@/domain/routes";
 
 export type LocalRecord = {
   id: string;
   actionId?: string;
-  routeKey: string;
+  routeKey: RouteKey;
   recordType: string;
   actionTitle: string;
   actualDone: string;
@@ -18,7 +19,7 @@ export type LocalRecord = {
 export type LocalReview = {
   id: string;
   basedOnRecordIds: string[];
-  routeKey: string;
+  routeKey: RouteKey;
   reviewBasis: string[];
   clues: string[];
   missingInfo: string[];
@@ -145,7 +146,7 @@ function migrateCurrentAction(value: unknown): CurrentAction | null {
 
 function loadLatestReviewForRecord(record: LocalRecord | null): LocalReview | null {
   if (!record) return null;
-  return loadReviews().find((review) => review.basedOnRecordIds.includes(record.id)) ?? null;
+  return loadReviews().find((review) => review.userSaved && review.basedOnRecordIds.includes(record.id)) ?? null;
 }
 
 export function saveRecord(record: Omit<LocalRecord, "id" | "createdAt">): LocalRecord {
@@ -224,4 +225,15 @@ export function loadReviews(): LocalReview[] {
 
 export function loadLatestReview(): LocalReview | null {
   return loadReviews()[0] ?? null;
+}
+
+export function markReviewSaved(id: string): LocalReview | null {
+  let savedReview: LocalReview | null = null;
+  const reviews = loadReviews().map((review) => {
+    if (review.id !== id) return review;
+    savedReview = { ...review, userSaved: true };
+    return savedReview;
+  });
+  window.localStorage.setItem(REVIEWS_KEY, JSON.stringify(reviews));
+  return savedReview;
 }

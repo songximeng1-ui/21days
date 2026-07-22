@@ -19,13 +19,20 @@ const fieldLabels: Record<string, string> = {
   realExperiences: "你做过哪些课程、项目、社团、兼职或实习？",
   interestsOrAcceptables: "你感兴趣或不排斥哪些事情？",
   constraints: "有哪些暂时不想接受的工作条件？",
-  jobTitle: "岗位名称",
-  companyOrPlatform: "公司或平台",
-  submittedAt: "投递时间",
-  feedbackStatus: "当前反馈状态",
-  jdSummary: "岗位要求摘要，可先写“不确定”。",
-  materialVersion: "使用的材料版本，可先写“不确定”。",
+  jobTitle: "第 1 条投递：岗位名称",
+  companyOrPlatform: "第 1 条投递：公司或平台",
+  submittedAt: "第 1 条投递：投递时间",
+  feedbackStatus: "第 1 条投递：当前反馈状态",
+  jdSummary: "第 1 条投递：岗位要求摘要",
+  materialVersion: "第 1 条投递：使用的材料版本",
   userSuspicion: "你自己怀疑的问题是什么？可选。",
+  jobTitle2: "第 2 条投递：岗位名称",
+  companyOrPlatform2: "第 2 条投递：公司或平台",
+  submittedAt2: "第 2 条投递：投递时间",
+  feedbackStatus2: "第 2 条投递：当前反馈状态",
+  jdSummary2: "第 2 条投递：岗位要求摘要",
+  materialVersion2: "第 2 条投递：使用的材料版本",
+  userSuspicion2: "第 2 条投递：你自己怀疑的问题是什么？可选。",
 };
 
 const routeFields: Record<RouteKey, string[]> = {
@@ -40,6 +47,13 @@ const routeFields: Record<RouteKey, string[]> = {
     "jdSummary",
     "materialVersion",
     "userSuspicion",
+    "jobTitle2",
+    "companyOrPlatform2",
+    "submittedAt2",
+    "feedbackStatus2",
+    "jdSummary2",
+    "materialVersion2",
+    "userSuspicion2",
   ],
 };
 
@@ -121,7 +135,7 @@ export default function RouteInputPage() {
                 name={field}
                 value={values[field] ?? ""}
                 onChange={(event) => updateValue(field, event.target.value)}
-                placeholder="可以写“不确定”或“暂时没有”。不要补不存在的经历、数据或结果。"
+                placeholder={inputPlaceholder(routeKey)}
               />
             </label>
           ))}
@@ -136,20 +150,39 @@ export default function RouteInputPage() {
   );
 }
 
+function inputPlaceholder(routeKey: RouteKey) {
+  if (routeKey === "applications_to_review") {
+    return "只写你能确认的真实投递信息；如果 JD 摘要或材料版本还不具体，先去补齐后再提交。";
+  }
+
+  return "可以写“不确定”或“暂时没有”。不要补不存在的经历、数据或结果。";
+}
+
 function buildRouteInput(routeKey: RouteKey, values: Record<string, string>): Record<string, unknown> {
   if (routeKey !== "applications_to_review") {
     return values;
   }
 
   return {
-    applications: {
-      jobTitle: values.jobTitle ?? "",
-      companyOrPlatform: values.companyOrPlatform ?? "",
-      submittedAt: values.submittedAt ?? "",
-      feedbackStatus: values.feedbackStatus ?? "",
-      jdSummary: values.jdSummary ?? "",
-      materialVersion: values.materialVersion ?? "",
-      userSuspicion: values.userSuspicion ?? "",
-    },
+    applications: [
+      {
+        jobTitle: values.jobTitle ?? "",
+        companyOrPlatform: values.companyOrPlatform ?? "",
+        submittedAt: values.submittedAt ?? "",
+        feedbackStatus: values.feedbackStatus ?? "",
+        jdSummary: values.jdSummary ?? "",
+        materialVersion: values.materialVersion ?? "",
+        userSuspicion: values.userSuspicion ?? "",
+      },
+      {
+        jobTitle: values.jobTitle2 ?? "",
+        companyOrPlatform: values.companyOrPlatform2 ?? "",
+        submittedAt: values.submittedAt2 ?? "",
+        feedbackStatus: values.feedbackStatus2 ?? "",
+        jdSummary: values.jdSummary2 ?? "",
+        materialVersion: values.materialVersion2 ?? "",
+        userSuspicion: values.userSuspicion2 ?? "",
+      },
+    ],
   };
 }

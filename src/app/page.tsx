@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { ROUTE_KEYS, getRouteStrategy } from "@/domain/routes";
-import { loadHomeProgress, type HomeProgress } from "@/lib/local-store";
+import type { RouteKey, RouteOutput } from "@/domain/types";
+import { loadHomeProgress, saveCurrentAction, type HomeProgress } from "@/lib/local-store";
 
 export default function Home() {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -70,21 +71,26 @@ function ReturnHomeState({
 }) {
   if (progress.hasUnfinishedAction && progress.currentAction) {
     const action = progress.currentAction.todayAction;
+    const smallerAction = makeSmallerAction(progress.currentAction);
 
     return (
       <div className="notice">
         <p className="lead">上次这一步还没做完，今天可以把它缩小一点。</p>
         <h2>{action.actionTitle}</h2>
-        <p>{action.actionReason}</p>
+        <p>{smallerAction.todayAction.actionReason}</p>
         <ul className="compact-list">
-          {action.actionSteps.map((step) => <li key={step}>{step}</li>)}
+          {smallerAction.todayAction.actionSteps.map((step) => <li key={step}>{step}</li>)}
         </ul>
         <div className="action-meta">
           <span>{action.estimatedTime}</span>
           <span>{action.recordAfterDone}</span>
         </div>
-        <a className="primary-button" href={`/routes/${progress.currentAction.routeKey}/action`}>
-          查看这一步行动
+        <a
+          className="primary-button"
+          href={`/routes/${progress.currentAction.routeKey}/action`}
+          onClick={() => saveCurrentAction(smallerAction)}
+        >
+          继续一个更小版本
         </a>
         <button
           aria-controls="current-question"
@@ -100,10 +106,9 @@ function ReturnHomeState({
   }
 
   const routeKey = progress.latestReview?.routeKey ?? progress.latestRecord?.routeKey;
-  const primaryHref = progress.latestReview && routeKey ? `/routes/${routeKey}/input` : "/review";
-  const primaryLabel = progress.latestReview
-    ? `继续：${progress.latestReview.nextAction}`
-    : "基于这条记录轻复盘";
+  const reviewAction = progress.latestReview && routeKey ? makeReviewNextAction(routeKey, progress.latestReview.nextAction) : null;
+  const primaryHref = reviewAction ? `/routes/${routeKey}/action` : "/review";
+  const primaryLabel = reviewAction ? `继续：${reviewAction.todayAction.actionTitle}` : "基于这条记录轻复盘";
 
   return (
     <div className="notice">
@@ -111,10 +116,19 @@ function ReturnHomeState({
       {progress.latestReview && (
         <>
           <p className="muted">上次复盘后的下一步：</p>
+          <p className="lead">今天继续这一件事</p>
           <h2>{progress.latestReview.nextAction}</h2>
         </>
       )}
-      <a className="primary-button" href={primaryHref}>{primaryLabel}</a>
+      <a
+        className="primary-button"
+        href={primaryHref}
+        onClick={() => {
+          if (reviewAction) saveCurrentAction(reviewAction);
+        }}
+      >
+        {primaryLabel}
+      </a>
       <button
         aria-controls="current-question"
         aria-expanded={isChoosingQuestion}
@@ -137,10 +151,52 @@ function RouteQuestionList({ isReturnState }: { isReturnState: boolean }) {
         return (
           <a className="route-card" href={`/routes/${routeKey}/input`} key={routeKey}>
             <span>{route.label}</span>
-            <strong>选这个</strong>
+            <strong>从这里开始</strong>
           </a>
         );
       })}
     </section>
   );
+}
+
+function makeSmallerAction(output: RouteOutput): RouteOutput {
+  const firstStep = output.todayAction.actionSteps[0] ?? output.todayAction.actionTitle;
+  return {
+    ...output,
+    todayAction: {
+      ...output.todayAction,
+      actionReason: "今天先完成一个更小版本。",
+      actionSteps: [`只做第一步：${firstStep}`],
+      recordAfterDone: output.todayAction.recordAfterDone,
+    },
+  };
+}
+
+function makeReviewNextAction(routeKey: RouteKey, nextAction: string): RouteOutput {
+  return {
+    routeKey,
+    outputType: "route_result",
+    shortAssessment: "根据上次复盘，今天继续这一件事。",
+    routeResult: {
+      reviewBasis: ["上次轻复盘生成的下一步行动"],
+      recordSufficiency: "next_action",
+      possibleClues: ["已经有一条可继续推进的行动"],
+      informationGaps: ["做完后再补真实记录"],
+      nextValidationAction: nextAction,
+    },
+    missingInfo: null,
+    todayAction: {
+      actionTitle: nextAction,
+      actionReason: "这一步来自上次真实记录后的轻复盘。",
+      actionSteps: ["打开上次记录", "完成这一小步", "做完后保存结果"],
+      estimatedTime: "15-30 分钟",
+      recordAfterDone: "记录这次实际完成了什么。",
+      actionType: "fill_info",
+    },
+    recordGuide: {
+      recordType: "fill_info",
+      fieldsToRecord: ["note"],
+      requiresUserConfirmation: true,
+    },
+  };
 }

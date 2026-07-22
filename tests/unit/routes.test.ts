@@ -46,7 +46,7 @@ describe("route strategies", () => {
     ).toBe(false);
   });
 
-  it("accepts one application record with minimum concrete fields", () => {
+  it("keeps one minimum application record insufficient for review output", () => {
     expect(
       isRouteInputSufficient("applications_to_review", {
         applications: {
@@ -55,6 +55,31 @@ describe("route strategies", () => {
           submittedAt: "7 月 1 日",
           feedbackStatus: "暂无反馈",
         },
+      })
+    ).toBe(false);
+  });
+
+  it("requires at least two application records with review fields before review output", () => {
+    expect(
+      isRouteInputSufficient("applications_to_review", {
+        applications: [
+          {
+            jobTitle: "内容运营实习",
+            companyOrPlatform: "A 公司",
+            submittedAt: "7 月 1 日",
+            feedbackStatus: "暂无反馈",
+            jdSummary: "负责内容整理",
+            materialVersion: "社团经历版",
+          },
+          {
+            jobTitle: "新媒体运营实习",
+            companyOrPlatform: "B 公司",
+            submittedAt: "7 月 3 日",
+            feedbackStatus: "已查看",
+            jdSummary: "负责选题和数据记录",
+            materialVersion: "项目经历版",
+          },
+        ],
       })
     ).toBe(true);
   });
@@ -66,6 +91,56 @@ describe("route strategies", () => {
           jobTitle: "内容运营实习",
           feedbackStatus: "暂无反馈",
         },
+      })
+    ).toBe(false);
+  });
+
+  it("keeps application records with unknown JD or material version insufficient for review", () => {
+    expect(
+      isRouteInputSufficient("applications_to_review", {
+        applications: [
+          {
+            jobTitle: "内容运营实习",
+            companyOrPlatform: "A 公司",
+            submittedAt: "7 月 1 日",
+            feedbackStatus: "暂无反馈",
+            jdSummary: "不确定",
+            materialVersion: "社团经历版",
+          },
+          {
+            jobTitle: "新媒体运营实习",
+            companyOrPlatform: "B 公司",
+            submittedAt: "7 月 3 日",
+            feedbackStatus: "已查看",
+            jdSummary: "负责选题和数据记录",
+            materialVersion: "不知道",
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it("keeps application records with unfinished placeholder review fields insufficient", () => {
+    expect(
+      isRouteInputSufficient("applications_to_review", {
+        applications: [
+          {
+            jobTitle: "内容运营实习",
+            companyOrPlatform: "A 公司",
+            submittedAt: "7 月 1 日",
+            feedbackStatus: "暂无反馈",
+            jdSummary: "还没整理",
+            materialVersion: "社团经历版",
+          },
+          {
+            jobTitle: "新媒体运营实习",
+            companyOrPlatform: "B 公司",
+            submittedAt: "7 月 3 日",
+            feedbackStatus: "已查看",
+            jdSummary: "负责选题和数据记录",
+            materialVersion: "无明确版本",
+          },
+        ],
       })
     ).toBe(false);
   });

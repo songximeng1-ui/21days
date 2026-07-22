@@ -252,7 +252,7 @@ describe("ChatCompletionProvider", () => {
     expect(fallback.generate).not.toHaveBeenCalled();
   });
 
-  it("does not call Qwen when the primary model returns invalid JSON", async () => {
+  it("calls Qwen after the primary model returns invalid JSON twice", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -270,6 +270,14 @@ describe("ChatCompletionProvider", () => {
           }),
           { status: 200 },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify(validOutput) } }],
+          }),
+          { status: 200 },
+        ),
       );
     const provider = createAiProviderFromEnv(
       {
@@ -281,27 +289,34 @@ describe("ChatCompletionProvider", () => {
       fetchMock,
     );
 
-    await expect(
-      provider.generate({
-        routeKey: "experience_to_resume",
-        input: {
-          targetDirection: "运营",
-          rawExperience: "社团活动",
-          actualActions: "整理报名表",
-          deliverableOrResult: "报名名单",
-        },
-      }),
-    ).rejects.toThrow();
+    const result = await provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls.every((call) => String(call[0]).includes("deepseek.example.com"))).toBe(true);
+    expect(result.todayAction.actionType).toBe("experience_fact");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toBe("https://qwen.example.com/compatible-mode/v1/chat/completions");
   });
 
-  it("does not call Qwen when the primary provider returns an invalid JSON response body", async () => {
+  it("calls Qwen after the primary provider returns an invalid JSON response body twice", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("not a json body", { status: 200 }))
-      .mockResolvedValueOnce(new Response("still not a json body", { status: 200 }));
+      .mockResolvedValueOnce(new Response("still not a json body", { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify(validOutput) } }],
+          }),
+          { status: 200 },
+        ),
+      );
     const provider = createAiProviderFromEnv(
       {
         DEEPSEEK_API_KEY: "deepseek-key",
@@ -312,25 +327,35 @@ describe("ChatCompletionProvider", () => {
       fetchMock,
     );
 
+    const result = await provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    });
+
+    expect(result.todayAction.actionType).toBe("experience_fact");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toBe("https://qwen.example.com/compatible-mode/v1/chat/completions");
+  });
+
+  it("falls back to mock provider in non-production when DeepSeek is not configured", () => {
+    const provider = createAiProviderFromEnv({ NODE_ENV: "development" });
+
+    expect(provider).toBeInstanceOf(MockAiProvider);
+  });
+
+  it("returns provider failure in production when DeepSeek is not configured", async () => {
+    const provider = createAiProviderFromEnv({ NODE_ENV: "production" });
+
     await expect(
       provider.generate({
         routeKey: "experience_to_resume",
-        input: {
-          targetDirection: "运营",
-          rawExperience: "社团活动",
-          actualActions: "整理报名表",
-          deliverableOrResult: "报名名单",
-        },
+        input: {},
       }),
     ).rejects.toThrow();
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls.every((call) => String(call[0]).includes("deepseek.example.com"))).toBe(true);
-  });
-
-  it("falls back to mock provider when DeepSeek is not configured", () => {
-    const provider = createAiProviderFromEnv({});
-
-    expect(provider).toBeInstanceOf(MockAiProvider);
   });
 });

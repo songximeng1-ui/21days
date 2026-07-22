@@ -53,6 +53,10 @@ export async function generateRouteOutput({
     const output = routeOutputSchema.parse(rawOutput);
     const validation = validateRouteOutput(output);
 
+    if (output.outputType === "friendly_failure") {
+      return makeFriendlyFailureOutput(routeKey);
+    }
+
     if (output.routeKey !== routeKey) {
       return makeFriendlyFailureOutput(routeKey);
     }
@@ -106,7 +110,7 @@ function makeMissingInfoOutput(routeKey: RouteKey, input: Record<string, unknown
     routeResult: null,
     missingInfo: {
       cannotJudge: config.cannotJudge,
-      alreadyKnown: Object.keys(input).map((field) => fieldLabelMap[field] ?? field),
+      alreadyKnown: collectKnownFacts(input),
       missingFields: config.missingFields,
     },
     todayAction: {
@@ -181,25 +185,51 @@ const missingInfoCopy: Record<
     cannotJudge: "材料与 JD 的支撑关系",
     missingFields: ["真实 JD 或 3-5 条岗位要求"],
     actionTitle: "今天先补这份岗位的真实 JD 或 3-5 条岗位要求",
-    actionReason: "补完这一项后，系统才能继续整理今天先做的一步。",
+    actionReason: "补完这一项后，后面才好继续整理今天先做的一步。",
     actionSteps: ["找到目标岗位页面", "复制 JD 或写下 3-5 条岗位要求", "保存后回来继续"],
     recordAfterDone: "记录岗位名称和真实 JD。",
     fieldsToRecord: ["targetJobTitle", "jdTextOrRequirements"],
     recordType: "fill_info",
   },
   applications_to_review: {
-    shortAssessment: "现在还不能可靠复盘投递情况，因为还缺一条完整投递记录。",
+    shortAssessment: "现在还不能可靠复盘投递情况，因为还缺两条可对照的完整投递记录。",
     cannotJudge: "这轮投递里可以先看哪一个线索",
-    missingFields: ["岗位名称", "公司或平台", "投递时间", "反馈状态"],
-    actionTitle: "今天先补齐 1 条真实投递记录",
-    actionReason: "先把记录补完整，再看下一步怎么调整，避免凭感觉归因。",
+    missingFields: ["第 1 条完整投递记录", "第 2 条完整投递记录", "JD 摘要", "材料版本"],
+    actionTitle: "今天先补齐 2 条真实投递记录",
+    actionReason: "先把两条记录补到可对照，再看下一步怎么调整，避免凭感觉归因。",
     actionSteps: [
-      "选最近一条投递",
-      "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态",
-      "JD 摘要和这次用的简历或材料版本不确定也可以先写“不确定”",
+      "选最近两条投递",
+      "每条都补：岗位 / 公司或平台 / 投递时间 / 反馈状态",
+      "每条都补具体 JD 摘要和这次使用的简历或材料版本",
     ],
-    recordAfterDone: "先记录岗位、公司或平台、投递时间和反馈状态；其他不确定的字段之后再补。",
+    recordAfterDone: "记录两条投递的岗位、公司或平台、投递时间、反馈状态、JD 摘要和材料版本。",
     fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"],
     recordType: "application",
   },
 };
+
+function collectKnownFacts(input: Record<string, unknown>): string[] {
+  const facts = Object.entries(input).flatMap(([field, value]) => knownFactsFromValue(field, value));
+  return facts.length > 0 ? facts.slice(0, 3) : ["已有部分输入"];
+}
+
+function knownFactsFromValue(field: string, value: unknown): string[] {
+  if (typeof value === "string") {
+    const cleaned = value.trim();
+    return cleaned ? [`${fieldLabelMap[field] ?? field}：${limitKnownFact(cleaned)}`] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => knownFactsFromValue(`${field} ${index + 1}`, item));
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value).flatMap(([childField, childValue]) => knownFactsFromValue(childField, childValue));
+  }
+
+  return [];
+}
+
+function limitKnownFact(value: string): string {
+  return value.length > 36 ? `${value.slice(0, 36)}...` : value;
+}

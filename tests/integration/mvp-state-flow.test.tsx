@@ -147,6 +147,7 @@ describe("MVP page state flow", () => {
     cleanup();
     render(<ReviewPage />);
     expect(await screen.findByText("已根据这条记录生成轻复盘。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "设为下一次行动" }));
 
     cleanup();
     render(<Home />);
@@ -154,7 +155,7 @@ describe("MVP page state flow", () => {
     expect(screen.getByText("下一步先记录这次投递使用的材料版本。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "继续：下一步先记录这次投递使用的材料版本。" })).toHaveAttribute(
       "href",
-      "/routes/jd_to_revision/input",
+      "/routes/jd_to_revision/action",
     );
     expect(screen.queryByText("我不知道能投哪些岗位")).not.toBeInTheDocument();
   });
@@ -180,6 +181,13 @@ describe("MVP page state flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存补充信息，继续判断" }));
 
     expect(push).toHaveBeenCalledWith("/routes/jd_to_revision/input");
+    expect(loadRecords()).toEqual([
+      expect.objectContaining({
+        routeKey: "jd_to_revision",
+        recordType: "fill_info",
+        actualDone: "补充了 2 项信息",
+      }),
+    ]);
 
     cleanup();
     render(<RouteInputPage />);
@@ -206,5 +214,79 @@ describe("MVP page state flow", () => {
     expect(await screen.findByDisplayValue("产品运营实习生")).toBeInTheDocument();
     expect(screen.getByDisplayValue("负责用户调研")).toBeInTheDocument();
     expect(screen.getByDisplayValue("社团活动经历")).toBeInTheDocument();
+  });
+
+  it("submits two concrete application records for review judgment", async () => {
+    routeKeyParam = "applications_to_review";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => missingInfoOutput,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RouteInputPage />);
+
+    fireEvent.change(await screen.findByLabelText("第 1 条投递：岗位名称"), {
+      target: { value: "内容运营实习" },
+    });
+    fireEvent.change(screen.getByLabelText("第 1 条投递：公司或平台"), {
+      target: { value: "A 公司" },
+    });
+    fireEvent.change(screen.getByLabelText("第 1 条投递：投递时间"), {
+      target: { value: "7 月 1 日" },
+    });
+    fireEvent.change(screen.getByLabelText("第 1 条投递：当前反馈状态"), {
+      target: { value: "暂无反馈" },
+    });
+    expect(screen.queryByLabelText(/可先写“不确定”/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/可先不填/)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("第 1 条投递：岗位要求摘要"), {
+      target: { value: "负责内容整理" },
+    });
+    fireEvent.change(screen.getByLabelText("第 1 条投递：使用的材料版本"), {
+      target: { value: "社团经历版" },
+    });
+    fireEvent.change(screen.getByLabelText("第 2 条投递：岗位名称"), {
+      target: { value: "新媒体运营实习" },
+    });
+    fireEvent.change(screen.getByLabelText("第 2 条投递：公司或平台"), {
+      target: { value: "B 公司" },
+    });
+    fireEvent.change(screen.getByLabelText("第 2 条投递：投递时间"), {
+      target: { value: "7 月 3 日" },
+    });
+    fireEvent.change(screen.getByLabelText("第 2 条投递：当前反馈状态"), {
+      target: { value: "已查看" },
+    });
+    fireEvent.change(screen.getByLabelText("第 2 条投递：岗位要求摘要"), {
+      target: { value: "负责选题和数据记录" },
+    });
+    fireEvent.change(screen.getByLabelText("第 2 条投递：使用的材料版本"), {
+      target: { value: "项目经历版" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成今天先做的一步" }));
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.input.applications).toEqual([
+      {
+        jobTitle: "内容运营实习",
+        companyOrPlatform: "A 公司",
+        submittedAt: "7 月 1 日",
+        feedbackStatus: "暂无反馈",
+        jdSummary: "负责内容整理",
+        materialVersion: "社团经历版",
+        userSuspicion: "",
+      },
+      {
+        jobTitle: "新媒体运营实习",
+        companyOrPlatform: "B 公司",
+        submittedAt: "7 月 3 日",
+        feedbackStatus: "已查看",
+        jdSummary: "负责选题和数据记录",
+        materialVersion: "项目经历版",
+        userSuspicion: "",
+      },
+    ]);
   });
 });

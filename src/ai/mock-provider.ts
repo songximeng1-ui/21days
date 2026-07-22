@@ -220,7 +220,7 @@ function makeMissingInfoOutput(routeKey: AiProviderInput["routeKey"]): RouteOutp
     },
     todayAction: {
       actionTitle: "今天先补一小块真实信息",
-      actionReason: "补完这一项后，系统才能继续整理下一步。",
+      actionReason: "补完这一项后，后面才好继续整理下一步。",
       actionSteps: ["补一条真实信息", "保存后回来继续"],
       estimatedTime: "15-30 分钟",
       recordAfterDone: "记录补充的真实信息。",
