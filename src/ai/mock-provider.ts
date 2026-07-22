@@ -263,7 +263,7 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
       routeResult: {
         reviewBasis,
         recordSufficiency: "enough",
-        possibleClues: ["部分记录还缺材料版本，后续不好判断修改是否有效"],
+        possibleClues: ["可能需要继续验证材料版本与反馈状态之间是否存在差异"],
         informationGaps: ["JD 摘要", "使用的材料版本"],
         nextValidationAction: "补齐 1 条投递记录的材料版本",
       },

@@ -25,6 +25,27 @@ const sufficientDirectionInput = {
   interestsOrAcceptables: "不排斥信息整理",
 };
 
+const sufficientApplicationInput = {
+  applications: [
+    {
+      jobTitle: "内容运营实习",
+      companyOrPlatform: "A 公司",
+      submittedAt: "7 月 1 日",
+      feedbackStatus: "暂无反馈",
+      jdSummary: "负责内容整理",
+      materialVersion: "社团经历版",
+    },
+    {
+      jobTitle: "新媒体运营实习",
+      companyOrPlatform: "B 公司",
+      submittedAt: "7 月 3 日",
+      feedbackStatus: "已查看",
+      jdSummary: "负责选题和数据记录",
+      materialVersion: "项目经历版",
+    },
+  ],
+};
+
 describe("generateRouteOutput", () => {
   it("returns missing info action for incomplete JD route input", async () => {
     const result = await generateRouteOutput({
@@ -253,6 +274,137 @@ describe("generateRouteOutput", () => {
 
     expect(result.outputType).toBe("friendly_failure");
     expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts a grounded JD route with zero directly supported requirements", async () => {
+    const input = {
+      targetJobTitle: "数据运营实习生",
+      jdTextOrRequirements: "负责 SQL 数据分析",
+      userMaterial: "整理社团活动报名表",
+    };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "jd_to_revision", input });
+    const zeroSupportOutput = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        supportedByMaterial: [],
+        unclearFromMaterial: ["尚未提供 SQL 数据分析经历"],
+        minimalRevisionActions: ["核对是否有真实的数据整理动作可补充"],
+      },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(zeroSupportOutput) };
+
+    const result = await generateRouteOutput({ routeKey: "jd_to_revision", input, primary });
+
+    expect(result.outputType).toBe("route_result");
+    expect(result.routeResult?.supportedByMaterial).toEqual([]);
+    expect(result.routeResult?.unclearFromMaterial).toEqual(["尚未提供 SQL 数据分析经历"]);
+    expect(result.routeResult?.minimalRevisionActions).toHaveLength(1);
+    expect(primary.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("still rejects a non-empty JD support item that is not grounded in userMaterial", async () => {
+    const input = {
+      targetJobTitle: "数据运营实习生",
+      jdTextOrRequirements: "负责 SQL 数据分析",
+      userMaterial: "整理社团活动报名表",
+    };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "jd_to_revision", input });
+    const ungroundedSupportOutput = {
+      ...generated,
+      routeResult: { ...generated.routeResult, supportedByMaterial: ["完成 SQL 数据分析"] },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(ungroundedSupportOutput) };
+    const fallback = { generate: vi.fn().mockResolvedValue(generated) };
+
+    const result = await generateRouteOutput({ routeKey: "jd_to_revision", input, primary, fallback });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it.each(["主导", "负责", "独立负责", "独立完成"])(
+    "rejects an experience draft that adds the absent role marker %s without fallback",
+    async (roleMarker) => {
+      const generated = await makeValidExperienceOutput();
+      const upgraded = {
+        ...generated,
+        routeResult: { ...generated.routeResult, resumeSnippetDraft: `${roleMarker}社团推文发布。` },
+      };
+      const primary = { generate: vi.fn().mockResolvedValue(upgraded) };
+      const fallback = { generate: vi.fn().mockResolvedValue(generated) };
+
+      const result = await generateRouteOutput({
+        routeKey: "experience_to_resume",
+        input: sufficientExperienceInput,
+        primary,
+        fallback,
+      });
+
+      expect(result.outputType).toBe("friendly_failure");
+      expect(primary.generate).toHaveBeenCalledTimes(2);
+      expect(fallback.generate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("allows one retry to recover from an experience role-strength violation", async () => {
+    const generated = await makeValidExperienceOutput();
+    const upgraded = {
+      ...generated,
+      routeResult: { ...generated.routeResult, resumeSnippetDraft: "负责社团推文发布。" },
+    };
+    const primary = { generate: vi.fn().mockResolvedValueOnce(upgraded).mockResolvedValueOnce(generated) };
+    const fallback = { generate: vi.fn().mockResolvedValue(generated) };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("allows an experience draft role marker that exists in the allowlisted source input", async () => {
+    const input = { ...sufficientExperienceInput, actualActions: "负责整理信息并排版" };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "experience_to_resume", input });
+    const primary = { generate: vi.fn().mockResolvedValue(generated) };
+
+    const result = await generateRouteOutput({ routeKey: "experience_to_resume", input, primary });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an application clue when any item lacks an uncertainty marker", async () => {
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "applications_to_review",
+      input: sufficientApplicationInput,
+    });
+    const unlabeledClueOutput = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        possibleClues: ["可能需要继续核对", "材料版本影响了反馈"],
+      },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(unlabeledClueOutput) };
+    const fallback = { generate: vi.fn().mockResolvedValue(generated) };
+
+    const result = await generateRouteOutput({
+      routeKey: "applications_to_review",
+      input: sufficientApplicationInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
   });
 
   it("keeps friendly failure outside the 15-30 minute action contract", async () => {
@@ -1139,18 +1291,27 @@ describe("generateRouteOutput", () => {
     expect(fallback.generate).toHaveBeenCalledTimes(1);
   });
 
-  it("does not call any model for missing or placeholder input", async () => {
+  it.each([
+    [
+      "direction_to_jobs" as const,
+      { educationBackground: "不确定", realExperiences: "暂时没有", interestsOrAcceptables: "不知道" },
+    ],
+    [
+      "experience_to_resume" as const,
+      { targetDirection: "运营", rawExperience: "社团经历", actualActions: "还没整理", deliverableOrResult: "无" },
+    ],
+    [
+      "jd_to_revision" as const,
+      { targetJobTitle: "运营实习生", jdTextOrRequirements: "负责内容整理", userMaterial: "暂时没有" },
+    ],
+    ["applications_to_review" as const, { applications: "投了很多岗位但没有结构化记录" }],
+  ])("does not call any model for missing or placeholder $routeKey input", async (routeKey, input) => {
     const primary = { generate: vi.fn() };
     const fallback = { generate: vi.fn() };
 
     const result = await generateRouteOutput({
-      routeKey: "experience_to_resume",
-      input: {
-        targetDirection: "运营",
-        rawExperience: "社团经历",
-        actualActions: "还没整理",
-        deliverableOrResult: "暂无",
-      },
+      routeKey,
+      input,
       primary,
       fallback,
     });

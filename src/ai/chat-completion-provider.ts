@@ -179,6 +179,7 @@ function buildUserPrompt(input: AiProviderInput): string {
     "输入充分，必须输出当前路线的正常结果：不得选择 missing_info、light_review 或 friendly_failure。",
     "routeResult 必须是非 null 对象，missingInfo 必须是 null。",
     `固定映射：todayAction.actionType 必须为 ${config.actionType}，recordType: ${config.recordType}。`,
+    ...buildRouteSemanticRules(input.routeKey),
     "ACTIVE_ROUTE_CONTRACT_BEGIN",
     JSON.stringify(buildRouteContract(input.routeKey, config), null, 2),
     "ACTIVE_ROUTE_CONTRACT_END",
@@ -289,7 +290,7 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
     fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
     routeResult: {
       jdKeyRequirements: ["strict quote from jdTextOrRequirements (1-5 items)"],
-      supportedByMaterial: ["strict quote from userMaterial (1-5 items)"],
+      supportedByMaterial: ["strict quote from userMaterial (0-5 items; use [] when none directly supports the JD)"],
       unclearFromMaterial: ["string (1-5 items)"],
       minimalRevisionActions: ["string (1-2 items)"],
       afterSubmissionRecording: ["string (1-3 items)"],
@@ -317,7 +318,7 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
     routeResult: {
       reviewBasis: ["strict quote from applications (1-3 items)"],
       recordSufficiency: "string",
-      possibleClues: ["string (1-3 items)"],
+      possibleClues: ["string with an uncertainty or verification marker (1-3 items)"],
       informationGaps: ["string (1-3 items)"],
       nextValidationAction: "string",
     },
@@ -344,12 +345,32 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
     exampleRouteResult: {
       reviewBasis: ["内容运营实习", "新媒体运营实习", "已查看"],
       recordSufficiency: "两条记录都已包含复盘所需的六个字段。",
-      possibleClues: ["可继续观察不同岗位获得反馈的差异。"],
+      possibleClues: ["待验证线索：不同岗位的反馈状态存在差异。"],
       informationGaps: ["现有两条记录还不足以形成稳定结论。"],
       nextValidationAction: "下一轮新增真实投递后继续对比反馈状态。",
     },
   },
 };
+
+function buildRouteSemanticRules(routeKey: RouteKey): string[] {
+  if (routeKey === "jd_to_revision") {
+    return [
+      "supportedByMaterial 是 0-5 条 userMaterial 的严格逐字引用；没有直接支撑时必须返回空数组，不得为了满足结构而编造支撑。",
+    ];
+  }
+  if (routeKey === "experience_to_resume") {
+    return [
+      "resumeSnippetDraft 必须保留“参与”或“协助”的角色强度；来源没有相同角色标记时，不得改写成“负责”“独立负责”“主导”或“独立完成”。",
+    ];
+  }
+  if (routeKey === "applications_to_review") {
+    return [
+      "possibleClues 每一项必须包含不确定或待验证标记，例如“可能”“待验证”“需验证”“尚不确定”“无法确认”或“不能确认”。",
+      "userSuspicion 只能标注为用户自己的怀疑或待验证线索，不得改写成事实或失败原因。",
+    ];
+  }
+  return [];
+}
 
 function buildRouteContract(routeKey: RouteKey, config: RoutePromptConfig): Record<string, unknown> {
   return {

@@ -798,7 +798,8 @@ function hasGroundedRouteEvidence(
     };
     return (
       claimsAreGrounded(routeResult.confirmedFacts, evidenceSource) &&
-      claimsAreGrounded(routeResult.supportingFacts, evidenceSource)
+      claimsAreGrounded(routeResult.supportingFacts, evidenceSource) &&
+      hasGroundedExperienceRoleStrength(routeResult.resumeSnippetDraft, evidenceSource)
     );
   }
 
@@ -807,7 +808,7 @@ function hasGroundedRouteEvidence(
       claimsAreGrounded(routeResult.jdKeyRequirements, {
         jdTextOrRequirements: input.jdTextOrRequirements,
       }) &&
-      claimsAreGrounded(routeResult.supportedByMaterial, { userMaterial: input.userMaterial })
+      hasGroundedOptionalClaims(routeResult.supportedByMaterial, { userMaterial: input.userMaterial })
     );
   }
 
@@ -818,6 +819,20 @@ function hasGroundedRouteEvidence(
   }
 
   return true;
+}
+
+const EXPERIENCE_ROLE_MARKERS = ["独立负责", "独立完成", "主导", "负责"];
+
+function hasGroundedExperienceRoleStrength(draft: unknown, source: unknown): boolean {
+  if (typeof draft !== "string") return false;
+  const sourceTexts = collectSourceTexts(source);
+  return EXPERIENCE_ROLE_MARKERS.every(
+    (marker) => !draft.includes(marker) || sourceTexts.some((sourceText) => sourceText.includes(marker)),
+  );
+}
+
+function hasGroundedOptionalClaims(claims: unknown, source: unknown): boolean {
+  return Array.isArray(claims) && (claims.length === 0 || claimsAreGrounded(claims, source));
 }
 
 const APPLICATION_EVIDENCE_FIELDS = [

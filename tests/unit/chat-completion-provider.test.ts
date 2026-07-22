@@ -3,6 +3,7 @@ import { ChatCompletionProvider, createAiProviderFromEnv } from "@/ai/chat-compl
 import { AiProviderError, type AiProviderInput } from "@/ai/provider";
 import { MockAiProvider } from "@/ai/mock-provider";
 import type { RouteKey } from "@/domain/types";
+import { isRouteInputSufficient } from "@/domain/routes";
 
 const validOutput = {
   routeKey: "experience_to_resume",
@@ -192,11 +193,37 @@ describe("ChatCompletionProvider", () => {
     const canonicalFields = applicationCase.fieldsToRecord;
 
     expect(example.input.applications).toHaveLength(2);
+    expect(isRouteInputSufficient("applications_to_review", example.input)).toBe(true);
     for (const application of example.input.applications) {
       expect(Object.keys(application)).toEqual(canonicalFields);
       for (const field of canonicalFields) expect(application[field]).toEqual(expect.any(String));
     }
     expect(JSON.stringify(example.output.routeResult)).not.toMatch(/还缺投递时间|补齐.*投递.*时间|还缺.*材料版本/);
+  });
+
+  it("states that JD support may be empty and must never be invented", async () => {
+    const jdCase = routePromptCases[2];
+    const prompt = await capturePrompt({ routeKey: jdCase.routeKey, input: jdCase.input });
+
+    expect(prompt).toContain("supportedByMaterial 是 0-5 条 userMaterial 的严格逐字引用");
+    expect(prompt).toContain("没有直接支撑时必须返回空数组");
+  });
+
+  it("forbids upgrading participation or assistance into stronger experience roles", async () => {
+    const experienceCase = routePromptCases[1];
+    const prompt = await capturePrompt({ routeKey: experienceCase.routeKey, input: experienceCase.input });
+
+    expect(prompt).toContain("必须保留“参与”或“协助”的角色强度");
+    expect(prompt).toContain("不得改写成“负责”“独立负责”“主导”或“独立完成”");
+  });
+
+  it("keeps application suspicions visibly user-authored and verification-oriented", async () => {
+    const applicationCase = routePromptCases[3];
+    const prompt = await capturePrompt({ routeKey: applicationCase.routeKey, input: applicationCase.input });
+
+    expect(prompt).toContain("possibleClues 每一项必须包含不确定或待验证标记");
+    expect(prompt).toContain("userSuspicion 只能标注为用户自己的怀疑或待验证线索");
+    expect(prompt).toContain("不得改写成事实或失败原因");
   });
 
   it.each(routePromptCases)(

@@ -14,6 +14,7 @@ const VAGUE_ACTION_PATTERNS = [
   /optimi[sz]e|improve|enhance.*competitiveness/i,
 ];
 const CONCRETE_STEP_PATTERNS = [/保存|记录|复制|找到|打开|列出|标出|补|删|圈出|选择|填写|确认|搜索/];
+const UNCERTAINTY_MARKERS = /可能|待验证|需验证|尚不确定|无法确认|不能确认/;
 
 export function validateRouteOutput(output: RouteOutput): ValidationResult {
   const issues: string[] = [];
@@ -99,7 +100,7 @@ function validateRouteResultShape(output: RouteOutput): string[] {
 
   if (output.routeKey === "jd_to_revision") {
     return hasStringArray(result.jdKeyRequirements, 1, 5) &&
-      hasStringArray(result.supportedByMaterial, 1, 5) &&
+      hasStringArray(result.supportedByMaterial, 0, 5) &&
       hasStringArray(result.unclearFromMaterial, 1, 5) &&
       hasStringArray(result.minimalRevisionActions, 1, 2) &&
       hasStringArray(result.afterSubmissionRecording, 1, 3)
@@ -110,7 +111,7 @@ function validateRouteResultShape(output: RouteOutput): string[] {
   if (output.routeKey === "applications_to_review") {
     return hasStringArray(result.reviewBasis, 1, 3) &&
       hasText(result.recordSufficiency) &&
-      hasStringArray(result.possibleClues, 1, 3) &&
+      hasUncertainStringArray(result.possibleClues, 1, 3) &&
       hasStringArray(result.informationGaps, 1, 3) &&
       hasText(result.nextValidationAction)
       ? []
@@ -148,5 +149,13 @@ function hasStringArray(value: unknown, min: number, max: number): boolean {
     value.length >= min &&
     value.length <= max &&
     value.every((item) => typeof item === "string" && item.trim().length > 0)
+  );
+}
+
+function hasUncertainStringArray(value: unknown, min: number, max: number): boolean {
+  return (
+    Array.isArray(value) &&
+    hasStringArray(value, min, max) &&
+    value.every((item: unknown) => typeof item === "string" && UNCERTAINTY_MARKERS.test(item))
   );
 }
