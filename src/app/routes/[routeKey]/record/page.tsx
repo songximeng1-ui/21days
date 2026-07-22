@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import type { RouteKey, RouteOutput } from "@/domain/types";
-import { loadCurrentAction, mergeDraft, saveRecord, type CurrentAction } from "@/lib/local-store";
+import { loadCurrentAction, loadDraft, mergeDraft, saveRecord, type CurrentAction } from "@/lib/local-store";
 
 export default function RecordPage() {
   const router = useRouter();
@@ -15,8 +15,15 @@ export default function RecordPage() {
   const [confirmed, setConfirmed] = useState(false);
 
   useEffect(() => {
-    queueMicrotask(() => setOutput(loadCurrentAction()));
-  }, []);
+    queueMicrotask(() => {
+      const current = loadCurrentAction();
+      setOutput(current);
+      if (current?.routeKey === "applications_to_review" && current.outputType === "route_result") {
+        const draft = loadDraft(params.routeKey);
+        setPayload(pickFields(draft, applicationRecordFields));
+      }
+    });
+  }, [params.routeKey]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -93,16 +100,16 @@ export default function RecordPage() {
             <textarea value={actualDone} onChange={(event) => setActualDone(event.target.value)} />
           </label>
 
-          {output?.recordGuide.fieldsToRecord.map((field) => (
+          {output && recordFieldsForOutput(output).map((field) => (
             <label className="field" key={field}>
               <span>
                 {recordFieldLabels[field] ?? field}
-                {!requiredRecordFields(output).includes(field) && "（可先写“不确定”）"}
+                {!requiredRecordFields(output).includes(field) && "（第二层补充，可先不填）"}
               </span>
               <textarea
                 value={payload[field] ?? ""}
                 onChange={(event) => updatePayload(field, event.target.value)}
-                placeholder="只写你已经确认真实存在的信息。"
+                placeholder={recordFieldPlaceholder(field)}
               />
             </label>
           ))}
@@ -142,9 +149,10 @@ function isRecordableOutput(output: RouteOutput) {
 
 function requiredRecordFields(output: RouteOutput): string[] {
   if (output.recordGuide.recordType === "application") {
-    return ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"].filter((field) =>
-      output.recordGuide.fieldsToRecord.includes(field)
-    );
+    if (output.outputType === "missing_info") {
+      return applicationMinimumFields.filter((field) => output.recordGuide.fieldsToRecord.includes(field));
+    }
+    return applicationMinimumFields.slice(0, 4);
   }
 
   return output.recordGuide.fieldsToRecord;
@@ -157,7 +165,7 @@ function summarizeFillInfo(payload: Record<string, string>): string {
 
 function recordHelpText(output: RouteOutput | null) {
   if (output?.recordGuide.recordType === "application") {
-    return "先补可复盘字段：岗位、公司或平台、投递时间、反馈状态、JD 摘要和这次用的简历/材料版本。JD 摘要和材料版本需要写具体。";
+    return "岗位、公司或平台、投递时间、反馈状态是最低完成；JD 摘要、材料版本和怀疑点是第二层补充。";
   }
 
   return "确认勾选并补齐上面的记录字段后，才能保存并复盘。";
@@ -184,4 +192,58 @@ const recordFieldLabels: Record<string, string> = {
   missingFact: "要补充的事实",
   targetJobTitle: "目标岗位名称",
   jdTextOrRequirements: "真实 JD 或 3-5 条岗位要求",
+  userSuspicion: "自己怀疑的问题",
+  jobTitle2: "第 2 条投递：岗位名称",
+  companyOrPlatform2: "第 2 条投递：公司或平台",
+  submittedAt2: "第 2 条投递：投递时间",
+  feedbackStatus2: "第 2 条投递：反馈状态",
+  jdSummary2: "第 2 条投递：JD 摘要",
+  materialVersion2: "第 2 条投递：使用的材料版本",
+  userSuspicion2: "第 2 条投递：自己怀疑的问题",
 };
+
+const applicationRecordFields = [
+  "jobTitle",
+  "companyOrPlatform",
+  "submittedAt",
+  "feedbackStatus",
+  "jdSummary",
+  "materialVersion",
+  "userSuspicion",
+  "jobTitle2",
+  "companyOrPlatform2",
+  "submittedAt2",
+  "feedbackStatus2",
+  "jdSummary2",
+  "materialVersion2",
+  "userSuspicion2",
+];
+
+const applicationMinimumFields = [
+  "jobTitle",
+  "companyOrPlatform",
+  "submittedAt",
+  "feedbackStatus",
+  "jobTitle2",
+  "companyOrPlatform2",
+  "submittedAt2",
+  "feedbackStatus2",
+];
+
+function recordFieldsForOutput(output: RouteOutput): string[] {
+  if (output.routeKey === "applications_to_review" && output.outputType === "route_result") {
+    return applicationRecordFields;
+  }
+  return output.recordGuide.fieldsToRecord;
+}
+
+function recordFieldPlaceholder(field: string): string {
+  if (field.startsWith("jdSummary")) return "例如：负责内容整理、活动执行和数据记录。";
+  if (field.startsWith("materialVersion")) return "例如：社团经历版 V1。";
+  if (field.startsWith("userSuspicion")) return "例如：经历写得太泛，没有体现实际动作。";
+  return "只写你已经确认真实存在的信息。";
+}
+
+function pickFields(values: Record<string, string>, fields: string[]): Record<string, string> {
+  return Object.fromEntries(fields.flatMap((field) => values[field] === undefined ? [] : [[field, values[field]]]));
+}

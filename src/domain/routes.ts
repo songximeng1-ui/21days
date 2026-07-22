@@ -74,7 +74,8 @@ function hasApplicationReviewDetails(value: unknown): boolean {
 
 function hasMeaningfulValue(value: unknown): boolean {
   if (typeof value === "string") {
-    return value.trim().length > 0;
+    const cleaned = value.trim();
+    return cleaned.length > 0 && !isPlaceholderValue(cleaned);
   }
 
   if (Array.isArray(value)) {
@@ -84,12 +85,16 @@ function hasMeaningfulValue(value: unknown): boolean {
   return value !== null && value !== undefined;
 }
 
+export function isPlaceholderValue(value: string): boolean {
+  return /^(不确定|不知道|不清楚|暂时没有|还没整理|没有|无|无明确版本|unknown|not sure|none)$/i.test(
+    value.trim()
+  );
+}
+
 function hasSpecificReviewValue(value: unknown): boolean {
   if (!hasMeaningfulValue(value) || typeof value !== "string") {
     return false;
   }
 
-  return !/^(不确定|不知道|不清楚|暂时没有|还没整理|没有|无|无明确版本|unknown|not sure|none)$/i.test(
-    value.trim()
-  );
+  return !isPlaceholderValue(value) && !/^(无明确结果|no clear result)$/i.test(value.trim());
 }

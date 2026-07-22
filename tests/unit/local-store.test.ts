@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  clearAllLocalData,
   clearRecords,
   deleteRecord,
   loadHomeProgress,
@@ -80,6 +81,43 @@ describe("local record storage", () => {
     clearRecords();
 
     expect(loadRecords()).toEqual([]);
+  });
+
+  it("clears records, every route draft, current action, and reviews together", () => {
+    saveDraft("jd_to_revision", { userMaterial: "敏感简历片段" });
+    saveDraft("applications_to_review", { jobTitle: "敏感投递岗位" });
+    saveCurrentAction(routeOutput);
+    const record = saveRecord({
+      routeKey: "jd_to_revision",
+      recordType: "jd_compare",
+      actionTitle: "敏感行动",
+      actualDone: "敏感完成内容",
+      payload: { afterSnippet: "敏感修改后片段" },
+      userConfirmed: true,
+    });
+    saveReview({
+      basedOnRecordIds: [record.id],
+      routeKey: "jd_to_revision",
+      reviewBasis: ["敏感复盘依据"],
+      clues: ["敏感线索"],
+      missingInfo: ["敏感缺口"],
+      nextAction: "敏感下一步",
+    });
+
+    clearAllLocalData();
+
+    expect(loadRecords()).toEqual([]);
+    expect(loadDraft("jd_to_revision")).toEqual({});
+    expect(loadDraft("applications_to_review")).toEqual({});
+    expect(loadCurrentAction()).toBeNull();
+    expect(loadLatestReview()).toBeNull();
+    expect(loadHomeProgress()).toMatchObject({
+      currentAction: null,
+      latestRecord: null,
+      latestReview: null,
+      hasUnfinishedAction: false,
+      progressLabel: "第 1 次推进",
+    });
   });
 
   it("updates one local record", () => {

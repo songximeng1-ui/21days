@@ -127,6 +127,15 @@ export default function RouteInputPage() {
         <p className="muted">不用填完美。信息不够时，会先生成一个补信息行动。</p>
         <p className="status" role="status" aria-live="polite">{aiStatus || draftStatus}</p>
 
+        {routeKey === "applications_to_review" && (
+          <div className="notice">
+            <strong>前 4 项就是最低完成；下面 3 项是第二层补充，可先不填。</strong>
+            <p>JD 摘要示例：负责内容整理、活动执行和数据记录。</p>
+            <p>材料版本示例：社团经历版 V1。</p>
+            <p>怀疑点示例：经历写得太泛，没有体现实际动作。</p>
+          </div>
+        )}
+
         <form onSubmit={submit} className="form-stack" aria-busy={isSubmitting}>
           {routeFields[routeKey].map((field) => (
             <label key={field} className="field">
@@ -135,7 +144,7 @@ export default function RouteInputPage() {
                 name={field}
                 value={values[field] ?? ""}
                 onChange={(event) => updateValue(field, event.target.value)}
-                placeholder={inputPlaceholder(routeKey)}
+                placeholder={inputPlaceholder(routeKey, field)}
               />
             </label>
           ))}
@@ -150,7 +159,7 @@ export default function RouteInputPage() {
                       name={field}
                       value={values[field] ?? ""}
                       onChange={(event) => updateValue(field, event.target.value)}
-                      placeholder={inputPlaceholder(routeKey)}
+                      placeholder={inputPlaceholder(routeKey, field)}
                     />
                   </label>
                 ))
@@ -176,9 +185,12 @@ export default function RouteInputPage() {
   );
 }
 
-function inputPlaceholder(routeKey: RouteKey) {
+function inputPlaceholder(routeKey: RouteKey, field: string) {
   if (routeKey === "applications_to_review") {
-    return "只写你能确认的真实投递信息；如果 JD 摘要或材料版本还不具体，先去补齐后再提交。";
+    if (field.startsWith("jdSummary")) return "例如：负责内容整理、活动执行和数据记录。";
+    if (field.startsWith("materialVersion")) return "例如：社团经历版 V1。";
+    if (field.startsWith("userSuspicion")) return "例如：经历写得太泛，没有体现实际动作。";
+    return "只写你能确认的真实投递信息。";
   }
 
   return "可以写“不确定”或“暂时没有”。不要补不存在的经历、数据或结果。";

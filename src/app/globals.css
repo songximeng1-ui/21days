@@ -152,6 +152,21 @@ textarea {
   padding: 18px;
 }
 
+.action-card,
+.evidence-block,
+.route-result,
+.review-grid section,
+.timeline-item {
+  min-width: 0;
+}
+
+.panel :where(h1, h2, h3, p, li, span, strong, a),
+.panel textarea {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .back-link {
   display: inline-flex;
   margin-bottom: 14px;
@@ -270,6 +285,31 @@ textarea:focus {
   padding: 16px;
   background: var(--primary-soft);
   border-color: var(--primary-line);
+}
+
+.evidence-block,
+.route-result,
+.result-card,
+.result-block {
+  margin: 14px 0;
+}
+
+.route-result {
+  display: grid;
+  gap: 10px;
+}
+
+.result-card,
+.result-block {
+  padding: 14px;
+  border: 1px solid #e3e0d8;
+  border-radius: 8px;
+}
+
+.result-card h3,
+.result-block h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
 }
 
 .action-card h2,

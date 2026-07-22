@@ -42,4 +42,35 @@ describe("scanSafetyViolations", () => {
       ])
     );
   });
+
+  it("blocks internal workflow terms, absolute application conclusions, and ordinary fit judgments", () => {
+    const result = scanSafetyViolations(
+      "主模型重试失败，已切换副模型。你适合做产品，这份岗位不能投，主要卡在学历。",
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.blockedReasons).toEqual(
+      expect.arrayContaining([
+        "禁止暴露模型、prompt、token、fallback 或内部错误",
+        "禁止评价用户本人适合或不适合",
+        "禁止给出绝对投递结论",
+        "禁止猜测公司筛选规则或失败原因",
+      ]),
+    );
+  });
+
+  it("allows explicit safety reminders that tell users not to fabricate or exaggerate", () => {
+    expect(scanSafetyViolations("不要编造数据，也不要把参与写成主导。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("blocks reversed absolute-application wording and disguised failure attribution", () => {
+    const result = scanSafetyViolations("你可以直接投这个岗位；无反馈说明简历不行。");
+
+    expect(result.passed).toBe(false);
+    expect(result.blockedReasons).toEqual(expect.arrayContaining([
+      "禁止给出绝对投递结论",
+      "禁止猜测公司筛选规则或失败原因",
+    ]));
+  });
 });

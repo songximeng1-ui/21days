@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { ROUTE_KEYS, getRouteStrategy } from "@/domain/routes";
 import type { RouteKey, RouteOutput } from "@/domain/types";
-import { loadHomeProgress, saveCurrentAction, type HomeProgress } from "@/lib/local-store";
+import {
+  loadHomeProgress,
+  saveCurrentAction,
+  type HomeProgress,
+  type LocalReview,
+} from "@/lib/local-store";
 
 export default function Home() {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -106,7 +111,9 @@ function ReturnHomeState({
   }
 
   const routeKey = progress.latestReview?.routeKey ?? progress.latestRecord?.routeKey;
-  const reviewAction = progress.latestReview && routeKey ? makeReviewNextAction(routeKey, progress.latestReview.nextAction) : null;
+  const reviewAction = progress.latestReview && routeKey
+    ? makeReviewNextAction(routeKey, progress.latestReview)
+    : null;
   const shouldContinueFillingInfo = progress.latestRecord?.recordType === "fill_info" && routeKey;
   const primaryHref = reviewAction
     ? `/routes/${routeKey}/action`
@@ -181,7 +188,8 @@ function makeSmallerAction(output: RouteOutput): RouteOutput {
   };
 }
 
-function makeReviewNextAction(routeKey: RouteKey, nextAction: string): RouteOutput {
+function makeReviewNextAction(routeKey: RouteKey, review: LocalReview): RouteOutput {
+  const nextAction = review.nextAction;
   return {
     routeKey,
     outputType: "route_result",
@@ -200,11 +208,11 @@ function makeReviewNextAction(routeKey: RouteKey, nextAction: string): RouteOutp
       actionSteps: ["打开上次记录", "完成这一小步", "做完后保存结果"],
       estimatedTime: "15-30 分钟",
       recordAfterDone: "记录这次实际完成了什么。",
-      actionType: "fill_info",
+      actionType: review.nextActionType ?? "fill_info",
     },
     recordGuide: {
-      recordType: "fill_info",
-      fieldsToRecord: ["note"],
+      recordType: review.nextRecordType ?? "fill_info",
+      fieldsToRecord: review.nextFieldsToRecord ?? ["note"],
       requiresUserConfirmation: true,
     },
   };

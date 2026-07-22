@@ -25,43 +25,122 @@ export class MockAiProvider implements AiProvider {
       return makeLightReviewOutput(input);
     }
 
-    return makeSuccessfulOutput(input.routeKey);
+    return makeSuccessfulOutput(input);
   }
 }
 
 function makeLightReviewOutput(input: AiProviderInput): RouteOutput {
-  const record = input.input.record as { actualDone?: string } | undefined;
+  const record = input.input.record as {
+    actualDone?: string;
+    payload?: Record<string, unknown>;
+  } | undefined;
   const actualDone = record?.actualDone ?? "你保存了一条真实记录。";
+  const next = lightReviewNextStep(input.routeKey);
 
   return {
     routeKey: input.routeKey,
     outputType: "light_review",
     shortAssessment: "这条记录可以先做一次轻复盘。",
     routeResult: {
-      reviewBasis: [actualDone],
+      reviewBasis: collectLightReviewBasis(input.routeKey, actualDone, record?.payload),
       clues: ["这一步已经从模糊想法变成了一条可回看的记录"],
       missingInfo: ["还可以补一项更具体的材料版本或事实依据"],
-      nextAction: "下次先补这条记录里还缺的一项事实。",
+      nextAction: next.actionTitle,
     },
     missingInfo: null,
     todayAction: {
-      actionTitle: "下次先补这条记录里还缺的一项事实",
+      actionTitle: next.actionTitle,
       actionReason: "先让记录更完整，后续复盘才更可靠。",
-      actionSteps: ["打开这条记录", "补 1 项真实事实", "保存修改"],
+      actionSteps: next.actionSteps,
       estimatedTime: "15-30 分钟",
-      recordAfterDone: "记录补充的事实和仍不确定的地方。",
-      actionType: "fill_info",
+      recordAfterDone: next.recordAfterDone,
+      actionType: next.actionType,
     },
     recordGuide: {
-      recordType: "fill_info",
-      fieldsToRecord: ["missingFact"],
+      recordType: next.recordType,
+      fieldsToRecord: next.fieldsToRecord,
       requiresUserConfirmation: true,
     },
   };
 }
 
-function makeSuccessfulOutput(routeKey: AiProviderInput["routeKey"]): RouteOutput {
+function collectLightReviewBasis(
+  routeKey: AiProviderInput["routeKey"],
+  actualDone: string,
+  payload?: Record<string, unknown>,
+): string[] {
+  if (routeKey !== "applications_to_review" || !payload) {
+    return [actualDone];
+  }
+
+  const applications = ["", "2"]
+    .map((suffix) => {
+      const jobTitle = readText(payload[`jobTitle${suffix}`]);
+      const companyOrPlatform = readText(payload[`companyOrPlatform${suffix}`]);
+      return jobTitle && companyOrPlatform ? `${jobTitle} / ${companyOrPlatform}` : "";
+    })
+    .filter(Boolean);
+
+  return [actualDone, ...applications];
+}
+
+function lightReviewNextStep(routeKey: AiProviderInput["routeKey"]): {
+  actionTitle: string;
+  actionSteps: string[];
+  recordAfterDone: string;
+  actionType: RouteOutput["todayAction"]["actionType"];
+  recordType: RouteOutput["recordGuide"]["recordType"];
+  fieldsToRecord: string[];
+} {
   if (routeKey === "direction_to_jobs") {
+    return {
+      actionTitle: "下一步先保存 1 个真实岗位样本",
+      actionSteps: ["用已有关键词搜索", "保存 1 个看得懂的岗位", "记下 JD 摘要"],
+      recordAfterDone: "记录岗位名称、公司或平台和 JD 摘要。",
+      actionType: "job_sample",
+      recordType: "job_sample",
+      fieldsToRecord: ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"],
+    };
+  }
+  if (routeKey === "experience_to_resume") {
+    return {
+      actionTitle: "下一步先补这段经历的一项真实事实",
+      actionSteps: ["打开经历记录", "补 1 项动作或交付物", "保存修改"],
+      recordAfterDone: "记录实际动作、交付物和仍不确定的事实。",
+      actionType: "experience_fact",
+      recordType: "experience_fact",
+      fieldsToRecord: ["actualActions", "deliverable", "missingFacts"],
+    };
+  }
+  if (routeKey === "jd_to_revision") {
+    return {
+      actionTitle: "下一步先完成 1 条投递前最小修改",
+      actionSteps: ["打开 JD 和材料", "修改 1 条真实表达", "保存修改前后版本"],
+      recordAfterDone: "记录修改前后片段和对应 JD 要求。",
+      actionType: "jd_revision",
+      recordType: "jd_compare",
+      fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
+    };
+  }
+  return {
+    actionTitle: "下一步先补 1 条最低字段投递记录",
+    actionSteps: ["选最近一条投递", "补岗位、公司或平台、投递时间和反馈状态", "保存记录"],
+    recordAfterDone: "记录岗位、公司或平台、投递时间和反馈状态。",
+    actionType: "application_record",
+    recordType: "application",
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
+  };
+}
+
+function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
+  const { routeKey } = input;
+  if (routeKey === "direction_to_jobs") {
+    const directionName = readText(input.input.interestsOrAcceptables) || readText(input.input.educationBackground);
+    const basis = compactTextValues([
+      input.input.educationBackground,
+      input.input.realExperiences,
+      input.input.interestsOrAcceptables,
+    ]);
     return {
       routeKey,
       outputType: "route_result",
@@ -69,9 +148,9 @@ function makeSuccessfulOutput(routeKey: AiProviderInput["routeKey"]): RouteOutpu
       routeResult: {
         explorableDirections: [
           {
-            directionName: "内容运营",
-            searchKeywords: ["内容运营实习", "新媒体运营实习", "社群运营助理"],
-            basisFromUserMaterial: ["有内容整理或社团经历"],
+            directionName,
+            searchKeywords: [`${directionName}实习`, `${directionName}助理`],
+            basisFromUserMaterial: basis,
             riskOrGap: "还缺真实 JD 样本验证",
             validationFocus: "先观察岗位要求里反复出现的工具和交付物",
           },
@@ -95,16 +174,19 @@ function makeSuccessfulOutput(routeKey: AiProviderInput["routeKey"]): RouteOutpu
   }
 
   if (routeKey === "experience_to_resume") {
+    const rawExperience = readText(input.input.rawExperience);
+    const actualActions = readText(input.input.actualActions);
+    const deliverableOrResult = readText(input.input.deliverableOrResult);
     return {
       routeKey,
       outputType: "route_result",
       shortAssessment: "这段经历已经能先整理实际动作。",
       routeResult: {
-        confirmedFacts: ["已提供经历和实际动作"],
+        confirmedFacts: [rawExperience, actualActions],
         missingFacts: ["还可以补充对象或交付物"],
         doNotExaggerate: ["不要把协助写成负责"],
-        resumeSnippetDraft: "参与活动资料整理，协助完成报名信息汇总。",
-        supportingFacts: ["整理报名表"],
+        resumeSnippetDraft: `${rawExperience}；实际完成：${actualActions}；交付物或结果：${deliverableOrResult}。`,
+        supportingFacts: [actualActions, deliverableOrResult],
       },
       missingInfo: null,
       todayAction: {
@@ -124,13 +206,15 @@ function makeSuccessfulOutput(routeKey: AiProviderInput["routeKey"]): RouteOutpu
   }
 
   if (routeKey === "jd_to_revision") {
+    const requirements = splitSourceText(readText(input.input.jdTextOrRequirements));
+    const userMaterial = readText(input.input.userMaterial);
     return {
       routeKey,
       outputType: "route_result",
       shortAssessment: "这里先看材料和 JD 的支撑关系，不评价你本人适不适合。",
       routeResult: {
-        jdKeyRequirements: ["内容整理", "沟通协作", "基础数据记录"],
-        supportedByMaterial: ["材料里能看到内容整理经历"],
+        jdKeyRequirements: requirements,
+        supportedByMaterial: [userMaterial],
         unclearFromMaterial: ["还看不出具体交付物"],
         minimalRevisionActions: ["补 1 句具体做过的动作和交付物"],
         afterSubmissionRecording: ["记录材料版本和投递时间"],
@@ -153,12 +237,19 @@ function makeSuccessfulOutput(routeKey: AiProviderInput["routeKey"]): RouteOutpu
   }
 
   if (routeKey === "applications_to_review") {
+    const applications = Array.isArray(input.input.applications)
+      ? input.input.applications.filter(isRecord)
+      : [];
+    const reviewBasis = applications
+      .flatMap((application) => [application.jobTitle, application.companyOrPlatform])
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .slice(0, 3);
     return {
       routeKey,
       outputType: "route_result",
       shortAssessment: "先基于真实投递记录看一个可能线索。",
       routeResult: {
-        reviewBasis: ["最近补充的投递记录"],
+        reviewBasis,
         recordSufficiency: "enough",
         possibleClues: ["部分记录还缺材料版本，后续不好判断修改是否有效"],
         informationGaps: ["JD 摘要", "使用的材料版本"],
@@ -243,7 +334,54 @@ function makeMissingInfoOutput(routeKey: AiProviderInput["routeKey"]): RouteOutp
 
 function makeUnsafeOutput(routeKey: AiProviderInput["routeKey"]): RouteOutput {
   return {
-    ...makeSuccessfulOutput(routeKey),
+    ...makeSuccessfulOutput({ routeKey, input: sampleInputForUnsafeOutput(routeKey) }),
     shortAssessment: "匹配度 90%，录取概率很高。",
+  };
+}
+
+function readText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function compactTextValues(values: unknown[]): string[] {
+  return values.map(readText).filter((value) => value.length > 0);
+}
+
+function splitSourceText(value: string): string[] {
+  const parts = value
+    .split(/[\n；;。]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+  return parts.length > 0 ? parts : [value];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function sampleInputForUnsafeOutput(routeKey: AiProviderInput["routeKey"]): Record<string, unknown> {
+  if (routeKey === "direction_to_jobs") {
+    return {
+      educationBackground: "市场营销",
+      realExperiences: "课程调研项目",
+      interestsOrAcceptables: "活动执行",
+    };
+  }
+  if (routeKey === "experience_to_resume") {
+    return {
+      rawExperience: "社团活动",
+      actualActions: "整理信息",
+      deliverableOrResult: "活动清单",
+    };
+  }
+  if (routeKey === "jd_to_revision") {
+    return {
+      jdTextOrRequirements: "整理岗位信息",
+      userMaterial: "整理课程资料",
+    };
+  }
+  return {
+    applications: [{ jobTitle: "实习岗位", companyOrPlatform: "招聘平台" }],
   };
 }

@@ -87,6 +87,10 @@ describe("ChatCompletionProvider", () => {
     expect(body.max_tokens).toBe(1000);
     expect(body.response_format).toEqual({ type: "json_object" });
     expect(JSON.stringify(body.messages)).toContain("只返回 JSON");
+    expect(JSON.stringify(body.messages)).toContain("confirmedFacts");
+    expect(JSON.stringify(body.messages)).toContain("resumeSnippetDraft");
+    expect(JSON.stringify(body.messages)).toContain("supportingFacts");
+    expect(JSON.stringify(body.messages)).toContain("只能逐字引用用户输入中的事实");
   });
 
   it("adds dedicated light review constraints to light review requests", async () => {
@@ -139,6 +143,8 @@ describe("ChatCompletionProvider", () => {
     expect(messages).toContain("light_review");
     expect(messages).toContain("真实记录");
     expect(messages).toContain("reviewBasis");
+    expect(messages).toContain("application_record");
+    expect(messages).toContain("recordType: application");
   });
 
   it("uses DeepSeek env config before falling back to mock provider", () => {

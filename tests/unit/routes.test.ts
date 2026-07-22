@@ -38,6 +38,17 @@ describe("route strategies", () => {
     ).toBe(true);
   });
 
+  it("accepts an explicit no-clear-result statement as a real fact boundary", () => {
+    expect(
+      isRouteInputSufficient("experience_to_resume", {
+        targetDirection: "运营",
+        rawExperience: "社团推文发布",
+        actualActions: "整理信息并排版",
+        deliverableOrResult: "无明确结果",
+      }),
+    ).toBe(true);
+  });
+
   it("marks missing JD input insufficient for JD revision", () => {
     expect(
       isRouteInputSufficient("jd_to_revision", {
@@ -45,6 +56,36 @@ describe("route strategies", () => {
         userMaterial: "managed a student club account",
       })
     ).toBe(false);
+  });
+
+  it.each([
+    [
+      "direction_to_jobs",
+      {
+        educationBackground: "不确定",
+        realExperiences: "暂时没有",
+        interestsOrAcceptables: "不知道",
+      },
+    ],
+    [
+      "experience_to_resume",
+      {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "还没整理",
+        deliverableOrResult: "无",
+      },
+    ],
+    [
+      "jd_to_revision",
+      {
+        targetJobTitle: "运营实习生",
+        jdTextOrRequirements: "负责内容整理",
+        userMaterial: "暂时没有",
+      },
+    ],
+  ] as const)("treats placeholder-only %s input as insufficient", (routeKey, input) => {
+    expect(isRouteInputSufficient(routeKey, input)).toBe(false);
   });
 
   it("does not treat vague no-feedback application worry as sufficient review evidence", () => {
@@ -151,6 +192,31 @@ describe("route strategies", () => {
           },
         ],
       })
+    ).toBe(false);
+  });
+
+  it("does not accept an experience-only no-result boundary as an application review detail", () => {
+    expect(
+      isRouteInputSufficient("applications_to_review", {
+        applications: [
+          {
+            jobTitle: "内容运营实习",
+            companyOrPlatform: "A 公司",
+            submittedAt: "7 月 1 日",
+            feedbackStatus: "暂无反馈",
+            jdSummary: "无明确结果",
+            materialVersion: "社团经历版",
+          },
+          {
+            jobTitle: "新媒体运营实习",
+            companyOrPlatform: "B 公司",
+            submittedAt: "7 月 3 日",
+            feedbackStatus: "已查看",
+            jdSummary: "负责选题和数据记录",
+            materialVersion: "无明确结果",
+          },
+        ],
+      }),
     ).toBe(false);
   });
 

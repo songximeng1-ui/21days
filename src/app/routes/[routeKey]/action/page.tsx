@@ -43,7 +43,6 @@ export default function ActionPage() {
       <section className="panel">
         <p className="eyebrow">今天先推进这一步</p>
         <h1>{output.shortAssessment}</h1>
-        <EvidenceBlock output={output} />
 
         {output.outputType === "friendly_failure" && (
           <div className="notice">
@@ -66,6 +65,9 @@ export default function ActionPage() {
             </div>
           </article>
         )}
+
+        <EvidenceBlock output={output} />
+        {output.outputType === "route_result" && <RouteResultBlock output={output} />}
 
         {output.outputType === "missing_info" && (
           <div className="notice">
@@ -92,6 +94,92 @@ export default function ActionPage() {
   );
 }
 
+function RouteResultBlock({ output }: { output: RouteOutput }) {
+  const result = output.routeResult ?? {};
+
+  if (output.routeKey === "direction_to_jobs") {
+    const directions = Array.isArray(result.explorableDirections)
+      ? result.explorableDirections.filter(isRecord)
+      : [];
+    return (
+      <section className="route-result" aria-label="方向路线结果">
+        <h2>可以先探索的方向</h2>
+        {directions.map((direction, index) => (
+          <article className="result-card" key={`${String(direction.directionName)}-${index}`}>
+            <h3>{String(direction.directionName)}</h3>
+            <ResultList title="搜索关键词" values={asStringArray(direction.searchKeywords)} />
+            <ResultList title="来自你材料的依据" values={asStringArray(direction.basisFromUserMaterial)} />
+            <ResultText title="风险或缺口" value={direction.riskOrGap} />
+          </article>
+        ))}
+      </section>
+    );
+  }
+
+  if (output.routeKey === "experience_to_resume") {
+    return (
+      <section className="route-result" aria-label="经历路线结果">
+        <ResultList title="已经能确认的事实" values={asStringArray(result.confirmedFacts)} />
+        <ResultList title="还缺哪些事实" values={asStringArray(result.missingFacts)} />
+        <ResultList title="不要夸大的部分" values={asStringArray(result.doNotExaggerate)} />
+        <ResultText title="克制简历片段" value={result.resumeSnippetDraft} />
+      </section>
+    );
+  }
+
+  if (output.routeKey === "jd_to_revision") {
+    return (
+      <section className="route-result" aria-label="JD 路线结果">
+        <ResultList title="这个岗位最看重什么" values={asStringArray(result.jdKeyRequirements)} />
+        <ResultList title="你的材料目前能支撑什么" values={asStringArray(result.supportedByMaterial)} />
+        <ResultList title="当前还看不出来什么" values={asStringArray(result.unclearFromMaterial)} />
+        <ResultList title="投递前最小修改" values={asStringArray(result.minimalRevisionActions)} />
+      </section>
+    );
+  }
+
+  return (
+    <section className="route-result" aria-label="投递复盘路线结果">
+      <ResultList title="本次复盘依据" values={asStringArray(result.reviewBasis)} />
+      <ResultList title="能看到的线索" values={asStringArray(result.possibleClues)} />
+      <ResultList title="信息缺口" values={asStringArray(result.informationGaps)} />
+      <ResultText title="下一步行动" value={result.nextValidationAction} />
+    </section>
+  );
+}
+
+function ResultList({ title, values }: { title: string; values: string[] }) {
+  if (values.length === 0) return null;
+  return (
+    <section className="result-block">
+      <h2>{title}</h2>
+      <ul className="compact-list">
+        {values.map((value, index) => <li key={`${value}-${index}`}>{value}</li>)}
+      </ul>
+    </section>
+  );
+}
+
+function ResultText({ title, value }: { title: string; value: unknown }) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  return (
+    <section className="result-block">
+      <h2>{title}</h2>
+      <p>{value}</p>
+    </section>
+  );
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function EvidenceBlock({ output }: { output: RouteOutput }) {
   const evidence = collectEvidence(output);
   if (evidence.length === 0 || output.outputType === "friendly_failure") return null;
@@ -115,22 +203,26 @@ function collectEvidence(output: RouteOutput): string[] {
   }
 
   const result = output.routeResult ?? {};
+  const reviewClues = asStringArray(result.possibleClues).map(
+    (value) => `基于记录看到的可能线索：${limitEvidence(value)}`,
+  );
   const fields = [
     "supportingFacts",
     "supportedByMaterial",
     "confirmedFacts",
     "jdKeyRequirements",
-    "possibleClues",
   ];
 
-  return fields
+  const userProvidedEvidence = fields
     .flatMap((field) => {
       const value = result[field];
       return Array.isArray(value) ? value : [];
     })
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .slice(0, 3)
+    .filter((value, index, values) => values.indexOf(value) === index)
     .map((value) => `你提供的材料里有：${limitEvidence(value)}`);
+
+  return [...reviewClues, ...userProvidedEvidence].slice(0, 3);
 }
 
 function limitEvidence(value: string) {

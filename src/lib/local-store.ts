@@ -1,7 +1,6 @@
 "use client";
 
-import type { RouteOutput } from "@/domain/types";
-import type { RouteKey } from "@/domain/types";
+import type { ActionType, RecordType, RouteKey, RouteOutput } from "@/domain/types";
 import { ROUTE_KEYS } from "@/domain/routes";
 
 export type LocalRecord = {
@@ -24,6 +23,9 @@ export type LocalReview = {
   clues: string[];
   missingInfo: string[];
   nextAction: string;
+  nextActionType?: ActionType;
+  nextRecordType?: RecordType;
+  nextFieldsToRecord?: string[];
   aiGenerated: boolean;
   userSaved: boolean;
   createdAt: string;
@@ -193,6 +195,15 @@ export function updateRecord(
 
 export function clearRecords() {
   window.localStorage.removeItem(RECORDS_KEY);
+}
+
+export function clearAllLocalData() {
+  window.localStorage.removeItem(ACTION_KEY);
+  window.localStorage.removeItem(RECORDS_KEY);
+  window.localStorage.removeItem(REVIEWS_KEY);
+  for (const routeKey of ROUTE_KEYS) {
+    window.localStorage.removeItem(`${DRAFT_PREFIX}${routeKey}`);
+  }
 }
 
 export function saveReview(

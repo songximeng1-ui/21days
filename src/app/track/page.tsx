@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { clearRecords, deleteRecord, loadRecords, updateRecord, type LocalRecord } from "@/lib/local-store";
+import { clearAllLocalData, deleteRecord, loadRecords, updateRecord, type LocalRecord } from "@/lib/local-store";
 
 export default function TrackPage() {
   const [records, setRecords] = useState<LocalRecord[]>([]);
@@ -21,7 +21,7 @@ export default function TrackPage() {
   }
 
   function clearAll() {
-    clearRecords();
+    clearAllLocalData();
     refresh();
   }
 

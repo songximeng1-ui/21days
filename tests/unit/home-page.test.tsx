@@ -2,7 +2,13 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it } from "vitest";
 import Home from "@/app/page";
-import { markReviewSaved, saveCurrentAction, saveRecord, saveReview } from "@/lib/local-store";
+import {
+  loadCurrentAction,
+  markReviewSaved,
+  saveCurrentAction,
+  saveRecord,
+  saveReview,
+} from "@/lib/local-store";
 import type { RouteOutput } from "@/domain/types";
 
 const currentAction: RouteOutput = {
@@ -131,6 +137,45 @@ describe("Home", () => {
       "/routes/experience_to_resume/action",
     );
     expect(screen.queryByText("我不知道能投哪些岗位")).not.toBeInTheDocument();
+  });
+
+  it("continues a review with its source action type and record guide", async () => {
+    const record = saveRecord({
+      routeKey: "applications_to_review",
+      recordType: "application",
+      actionTitle: "确认两条投递记录",
+      actualDone: "确认了两条投递记录。",
+      payload: { jobTitle: "内容运营实习", jobTitle2: "新媒体运营实习" },
+      userConfirmed: true,
+    });
+    const review = saveReview({
+      basedOnRecordIds: [record.id],
+      routeKey: "applications_to_review",
+      reviewBasis: ["两条投递记录"],
+      clues: ["可以继续补材料版本"],
+      missingInfo: ["还缺材料版本"],
+      nextAction: "下一步先补一条最低字段投递记录",
+      nextActionType: "application_record",
+      nextRecordType: "application",
+      nextFieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
+    });
+    markReviewSaved(review.id);
+
+    render(<Home />);
+    const continueLink = await screen.findByRole("link", {
+      name: "继续：下一步先补一条最低字段投递记录",
+    });
+    continueLink.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(continueLink);
+
+    expect(loadCurrentAction()).toMatchObject({
+      routeKey: "applications_to_review",
+      todayAction: { actionType: "application_record" },
+      recordGuide: {
+        recordType: "application",
+        fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
+      },
+    });
   });
 
   it("sends the latest record to light review when it has not been reviewed", async () => {

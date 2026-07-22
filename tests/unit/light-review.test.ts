@@ -62,7 +62,32 @@ describe("light review workflow", () => {
     expect(output.outputType).toBe("light_review");
     expect(output.routeResult?.reviewBasis).toEqual(expect.arrayContaining([record.actualDone]));
     expect(output.todayAction.actionSteps.length).toBeGreaterThan(0);
+    expect(output.todayAction.actionType).toBe("application_record");
+    expect(output.recordGuide.recordType).toBe("application");
+    expect(output.recordGuide.fieldsToRecord).toEqual(
+      expect.arrayContaining(["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"]),
+    );
     expect(JSON.stringify(output)).not.toMatch(/You moved|Next time|基础版报告|匹配度/);
+  });
+
+  it("keeps both confirmed application entries in the light-review basis", async () => {
+    const output = await generateLightReviewOutput({
+      record: {
+        ...record,
+        actualDone: "确认了两条投递记录。",
+        payload: {
+          jobTitle: "内容运营实习",
+          companyOrPlatform: "A 公司",
+          jobTitle2: "新媒体运营实习",
+          companyOrPlatform2: "B 公司",
+        },
+      },
+      provider: new MockAiProvider("success"),
+    });
+
+    expect(output.routeResult?.reviewBasis).toEqual(
+      expect.arrayContaining(["内容运营实习 / A 公司", "新媒体运营实习 / B 公司"]),
+    );
   });
 
   it("saves and loads the latest light review locally", () => {

@@ -5,8 +5,9 @@ import Home from "@/app/page";
 import ReviewPage from "@/app/review/page";
 import RouteInputPage from "@/app/routes/[routeKey]/input/page";
 import RecordPage from "@/app/routes/[routeKey]/record/page";
+import TrackPage from "@/app/track/page";
 import type { RouteKey, RouteOutput } from "@/domain/types";
-import { loadRecords, saveCurrentAction, saveDraft } from "@/lib/local-store";
+import { loadRecords, saveCurrentAction, saveDraft, saveRecord, saveReview } from "@/lib/local-store";
 
 const push = vi.fn();
 let routeKeyParam: RouteKey = "jd_to_revision";
@@ -238,8 +239,10 @@ describe("MVP page state flow", () => {
     fireEvent.change(screen.getByLabelText("第 1 条投递：当前反馈状态"), {
       target: { value: "暂无反馈" },
     });
-    expect(screen.queryByLabelText(/可先写“不确定”/)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/可先不填/)).not.toBeInTheDocument();
+    expect(screen.getByText("前 4 项就是最低完成；下面 3 项是第二层补充，可先不填。")).toBeInTheDocument();
+    expect(screen.getByText(/示例：负责内容整理、活动执行和数据记录/)).toBeInTheDocument();
+    expect(screen.getByText(/示例：社团经历版 V1/)).toBeInTheDocument();
+    expect(screen.getByText(/示例：经历写得太泛/)).toBeInTheDocument();
     expect(screen.queryByLabelText("第 2 条投递：岗位名称")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("第 1 条投递：岗位要求摘要"), {
@@ -290,5 +293,38 @@ describe("MVP page state flow", () => {
         userSuspicion: "",
       },
     ]);
+  });
+
+  it("returns home without restoring sensitive state after clicking clear my records", async () => {
+    saveDraft("jd_to_revision", { userMaterial: "敏感旧简历片段" });
+    saveCurrentAction({
+      ...jdActionOutput,
+      todayAction: { ...jdActionOutput.todayAction, actionTitle: "敏感旧行动" },
+    });
+    const record = saveRecord({
+      routeKey: "jd_to_revision",
+      recordType: "jd_compare",
+      actionTitle: "敏感旧行动",
+      actualDone: "敏感旧完成内容",
+      payload: { afterSnippet: "敏感旧简历片段" },
+      userConfirmed: true,
+    });
+    saveReview({
+      basedOnRecordIds: [record.id],
+      routeKey: "jd_to_revision",
+      reviewBasis: ["敏感旧复盘依据"],
+      clues: ["敏感旧线索"],
+      missingInfo: ["敏感旧缺口"],
+      nextAction: "敏感旧下一步",
+    });
+
+    render(<TrackPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "清空我的记录" }));
+
+    cleanup();
+    render(<Home />);
+
+    expect(await screen.findByText("你现在最想先解决哪件事？")).toBeInTheDocument();
+    expect(screen.queryByText(/敏感旧/)).not.toBeInTheDocument();
   });
 });

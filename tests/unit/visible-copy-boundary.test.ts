@@ -38,10 +38,42 @@ describe("visible product copy boundaries", () => {
   });
 
   it("keeps mobile hero titles from being clipped on narrow screens", () => {
-    const css = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+    const cleanup = installProductStyles();
+    const hero = document.createElement("section");
+    hero.className = "home-hero";
+    const title = document.createElement("h1");
+    title.textContent = "SuperLongEnglishJobTitleWithoutAnySpaces";
+    hero.append(title);
+    document.body.append(hero);
 
-    expect(css).toContain("overflow-wrap: anywhere");
-    expect(css).toMatch(/\.home-hero h1,[\s\S]*?word-break: break-word/);
+    const style = getComputedStyle(title);
+    expect(style.maxWidth).toBe("100%");
+    expect(style.overflowWrap).toBe("anywhere");
+    expect(style.wordBreak).toBe("break-word");
+    cleanup();
+  });
+
+  it("forces every dynamic action, route-result, review, and record text node to wrap", () => {
+    const cleanup = installProductStyles();
+    const panel = document.createElement("section");
+    panel.className = "panel";
+    const dynamicText = document.createElement("p");
+    dynamicText.textContent = "https://example.com/a-very-long-url-without-breaks";
+    panel.append(dynamicText);
+    document.body.append(panel);
+
+    const textStyle = getComputedStyle(dynamicText);
+    expect(textStyle.maxWidth).toBe("100%");
+    expect(textStyle.overflowWrap).toBe("anywhere");
+    expect(textStyle.wordBreak).toBe("break-word");
+
+    for (const className of ["action-card", "evidence-block", "route-result", "timeline-item"]) {
+      const element = document.createElement("div");
+      element.className = className;
+      document.body.append(element);
+      expect(getComputedStyle(element).minWidth).toBe("0px");
+    }
+    cleanup();
   });
 
   it("declares a mobile viewport so narrow screens use the device width", () => {
@@ -52,3 +84,13 @@ describe("visible product copy boundaries", () => {
     expect(layout).toContain("initialScale: 1");
   });
 });
+
+function installProductStyles() {
+  const style = document.createElement("style");
+  style.textContent = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+  document.head.append(style);
+  return () => {
+    style.remove();
+    document.body.replaceChildren();
+  };
+}

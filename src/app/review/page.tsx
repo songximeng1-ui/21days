@@ -63,6 +63,9 @@ export default function ReviewPage() {
           clues: asStringArray(output.routeResult.clues, ["这条记录已经保存，可以用于下次继续。"]),
           missingInfo: asStringArray(output.routeResult.missingInfo, ["还可以补一项更具体的事实。"]),
           nextAction: String(output.routeResult.nextAction ?? output.todayAction.actionTitle),
+          nextActionType: output.todayAction.actionType,
+          nextRecordType: output.recordGuide.recordType,
+          nextFieldsToRecord: output.recordGuide.fieldsToRecord,
           aiGenerated: true,
           userSaved: false,
         });
