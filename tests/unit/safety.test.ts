@@ -31,6 +31,14 @@ describe("scanSafetyViolations", () => {
     expect(result).toEqual({ passed: true, blockedReasons: [] });
   });
 
+  it.each([
+    "公司拒绝你的原因可能是学历不符。",
+    "公司拒绝了你，原因是学历不符。",
+    "公司没有反馈，原因可能是简历太弱。",
+  ])("blocks explicit company failure attribution: %s", (text) => {
+    expect(scanSafetyViolations(text).blockedReasons).toContain("禁止猜测公司筛选规则或失败原因");
+  });
+
   it("allows user-provided factual percentages when they are not fit or outcome scores", () => {
     const result = scanSafetyViolations("用户记录里写到公众号阅读量提升 20%，今天先确认这个数据是否真实。");
 
