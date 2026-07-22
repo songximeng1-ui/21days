@@ -128,7 +128,7 @@ function lightReviewNextStep(routeKey: AiProviderInput["routeKey"]): {
     recordAfterDone: "记录岗位、公司或平台、投递时间和反馈状态。",
     actionType: "application_record",
     recordType: "application",
-    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"],
   };
 }
 
@@ -136,6 +136,7 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
   const { routeKey } = input;
   if (routeKey === "direction_to_jobs") {
     const directionName = readText(input.input.interestsOrAcceptables) || readText(input.input.educationBackground);
+    const secondaryDirectionName = readText(input.input.educationBackground) || `${directionName}支持`;
     const basis = compactTextValues([
       input.input.educationBackground,
       input.input.realExperiences,
@@ -149,10 +150,21 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
         explorableDirections: [
           {
             directionName,
-            searchKeywords: [`${directionName}实习`, `${directionName}助理`],
+            searchKeywords: [`${directionName}实习`, `${directionName}助理`, `${directionName}专员`],
             basisFromUserMaterial: basis,
             riskOrGap: "还缺真实 JD 样本验证",
             validationFocus: "先观察岗位要求里反复出现的工具和交付物",
+          },
+          {
+            directionName: secondaryDirectionName,
+            searchKeywords: [
+              `${secondaryDirectionName}实习`,
+              `${secondaryDirectionName}助理`,
+              `${secondaryDirectionName}专员`,
+            ],
+            basisFromUserMaterial: basis,
+            riskOrGap: "还缺真实 JD 样本验证",
+            validationFocus: "先观察岗位日常是否符合已知兴趣和限制",
           },
         ],
       },

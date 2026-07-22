@@ -218,11 +218,11 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
     evidenceMapping: "basisFromUserMaterial",
     actionType: "job_sample",
     recordType: "job_sample",
-    fieldsToRecord: ["jobTitle", "companyOrPlatform", "source", "whySaved"],
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"],
     routeResult: {
       explorableDirections: [{
-        directionName: "string",
-        searchKeywords: ["string (1-5 items)"],
+        directionName: "string; repeat this object for 2-3 direction items total",
+        searchKeywords: ["string (3-5 items)"],
         basisFromUserMaterial: ["strict quote from allowed evidence (1-5 items)"],
         riskOrGap: "string",
         validationFocus: "string",
@@ -234,13 +234,22 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
       interestsOrAcceptables: "不排斥信息整理",
     },
     exampleRouteResult: {
-      explorableDirections: [{
-        directionName: "运营支持",
-        searchKeywords: ["运营支持 实习"],
-        basisFromUserMaterial: ["整理社团报名表"],
-        riskOrGap: "还没有真实岗位样本。",
-        validationFocus: "岗位日常是否包含信息整理。",
-      }],
+      explorableDirections: [
+        {
+          directionName: "运营支持",
+          searchKeywords: ["运营支持 实习", "运营助理 实习", "用户运营 助理"],
+          basisFromUserMaterial: ["整理社团报名表"],
+          riskOrGap: "还没有真实岗位样本。",
+          validationFocus: "岗位日常是否包含信息整理。",
+        },
+        {
+          directionName: "内容运营",
+          searchKeywords: ["内容运营 实习", "新媒体运营 实习", "内容编辑 助理"],
+          basisFromUserMaterial: ["不排斥信息整理"],
+          riskOrGap: "还不清楚是否接受持续写作。",
+          validationFocus: "真实 JD 是否要求稳定产出内容。",
+        },
+      ],
     },
   },
   experience_to_resume: {
@@ -249,7 +258,7 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
     evidenceMapping: "confirmedFacts / supportingFacts",
     actionType: "experience_fact",
     recordType: "experience_fact",
-    fieldsToRecord: ["actualActions", "deliverableOrResult", "missingFacts"],
+    fieldsToRecord: ["actualActions", "deliverable", "missingFacts"],
     routeResult: {
       confirmedFacts: ["strict quote from allowed evidence (1-5 items)"],
       missingFacts: ["string (1-5 items)"],
@@ -277,7 +286,7 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
     evidenceMapping: "jdKeyRequirements <- jdTextOrRequirements; supportedByMaterial <- userMaterial",
     actionType: "jd_revision",
     recordType: "jd_compare",
-    fieldsToRecord: ["jdRequirement", "materialEvidence", "revisionMade"],
+    fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
     routeResult: {
       jdKeyRequirements: ["strict quote from jdTextOrRequirements (1-5 items)"],
       supportedByMaterial: ["strict quote from userMaterial (1-5 items)"],
@@ -313,19 +322,31 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
       nextValidationAction: "string",
     },
     exampleInput: {
-      applications: [{
-        jobTitle: "内容运营实习",
-        feedbackStatus: "暂无反馈",
-        jdSummary: "负责内容整理",
-        materialVersion: "社团经历版",
-      }],
+      applications: [
+        {
+          jobTitle: "内容运营实习",
+          companyOrPlatform: "A 公司",
+          submittedAt: "7 月 1 日",
+          feedbackStatus: "暂无反馈",
+          jdSummary: "负责内容整理",
+          materialVersion: "社团经历版",
+        },
+        {
+          jobTitle: "新媒体运营实习",
+          companyOrPlatform: "B 公司",
+          submittedAt: "7 月 3 日",
+          feedbackStatus: "已查看",
+          jdSummary: "负责选题和数据记录",
+          materialVersion: "项目经历版",
+        },
+      ],
     },
     exampleRouteResult: {
-      reviewBasis: ["内容运营实习", "暂无反馈"],
-      recordSufficiency: "已有岗位和反馈状态。",
-      possibleClues: ["可继续核对材料版本与岗位要求。"],
-      informationGaps: ["还缺投递时间。"],
-      nextValidationAction: "补齐这条投递的时间并保存。",
+      reviewBasis: ["内容运营实习", "新媒体运营实习", "已查看"],
+      recordSufficiency: "两条记录都已包含复盘所需的六个字段。",
+      possibleClues: ["可继续观察不同岗位获得反馈的差异。"],
+      informationGaps: ["现有两条记录还不足以形成稳定结论。"],
+      nextValidationAction: "下一轮新增真实投递后继续对比反馈状态。",
     },
   },
 };
@@ -393,7 +414,11 @@ function buildLightReviewPrompt(input: AiProviderInput): string {
     },
     missingInfo: null,
     todayAction: { estimatedTime: "15-30 分钟", actionType: config.actionType },
-    recordGuide: { recordType: config.recordType, requiresUserConfirmation: true },
+    recordGuide: {
+      recordType: config.recordType,
+      fieldsToRecord: config.fieldsToRecord,
+      requiresUserConfirmation: true,
+    },
   };
   return [
     `当前且唯一的路线：${input.routeKey}`,

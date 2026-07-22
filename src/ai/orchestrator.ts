@@ -254,21 +254,24 @@ function contentFailure(stage: AiFailureStage, code: string, durationMs: number)
 
 const HARD_ROUTE_CONTRACTS: Record<
   RouteKey,
-  { actionType: ActionType; recordType: RecordType; routeResultKeys: string[] }
+  { actionType: ActionType; recordType: RecordType; fieldsToRecord: string[]; routeResultKeys: string[] }
 > = {
   direction_to_jobs: {
     actionType: "job_sample",
     recordType: "job_sample",
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"],
     routeResultKeys: ["explorableDirections"],
   },
   experience_to_resume: {
     actionType: "experience_fact",
     recordType: "experience_fact",
+    fieldsToRecord: ["actualActions", "deliverable", "missingFacts"],
     routeResultKeys: ["confirmedFacts", "missingFacts", "doNotExaggerate", "resumeSnippetDraft", "supportingFacts"],
   },
   jd_to_revision: {
     actionType: "jd_revision",
     recordType: "jd_compare",
+    fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
     routeResultKeys: [
       "jdKeyRequirements",
       "supportedByMaterial",
@@ -280,6 +283,7 @@ const HARD_ROUTE_CONTRACTS: Record<
   applications_to_review: {
     actionType: "application_record",
     recordType: "application",
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"],
     routeResultKeys: [
       "reviewBasis",
       "recordSufficiency",
@@ -303,25 +307,29 @@ function validateHardRouteContract(
   output: RouteOutput,
   mode: "route" | "light_review",
 ): "route_shape" | "action" | undefined {
-  if (mode === "light_review") return undefined;
   const contract = HARD_ROUTE_CONTRACTS[routeKey];
-  if (
+  if (mode === "route" && (
     output.missingInfo !== null ||
     !output.routeResult ||
     !hasExactKeys(output.routeResult, contract.routeResultKeys) ||
     (routeKey === "direction_to_jobs" && !hasExactDirectionItems(output.routeResult.explorableDirections))
-  ) {
+  )) {
     return "route_shape";
   }
   if (
     output.todayAction.actionType !== contract.actionType ||
     output.recordGuide.recordType !== contract.recordType ||
     output.todayAction.estimatedTime !== "15-30 分钟" ||
+    !hasExactOrderedValues(output.recordGuide.fieldsToRecord, contract.fieldsToRecord) ||
     output.recordGuide.requiresUserConfirmation !== true
   ) {
     return "action";
   }
   return undefined;
+}
+
+function hasExactOrderedValues(actual: string[], expected: string[]): boolean {
+  return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 }
 
 function hasExactDirectionItems(value: unknown): boolean {

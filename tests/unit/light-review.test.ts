@@ -64,9 +64,14 @@ describe("light review workflow", () => {
     expect(output.todayAction.actionSteps.length).toBeGreaterThan(0);
     expect(output.todayAction.actionType).toBe("application_record");
     expect(output.recordGuide.recordType).toBe("application");
-    expect(output.recordGuide.fieldsToRecord).toEqual(
-      expect.arrayContaining(["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"]),
-    );
+    expect(output.recordGuide.fieldsToRecord).toEqual([
+      "jobTitle",
+      "companyOrPlatform",
+      "submittedAt",
+      "feedbackStatus",
+      "jdSummary",
+      "materialVersion",
+    ]);
     expect(JSON.stringify(output)).not.toMatch(/You moved|Next time|基础版报告|匹配度/);
   });
 

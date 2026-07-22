@@ -58,12 +58,19 @@ async function capturePrompt(input: AiProviderInput): Promise<string> {
   return body.messages.map((message) => message.content).join("\n");
 }
 
+function parsePromptSection(prompt: string, begin: string, end: string): Record<string, unknown> {
+  const section = prompt.split(begin)[1]?.split(end)[0]?.trim();
+  if (!section) throw new Error(`Missing prompt section: ${begin}`);
+  return JSON.parse(section) as Record<string, unknown>;
+}
+
 const routePromptCases: Array<{
   routeKey: RouteKey;
   input: Record<string, unknown>;
   routeResultFields: string[];
   actionType: string;
   recordType: string;
+  fieldsToRecord: string[];
 }> = [
   {
     routeKey: "direction_to_jobs",
@@ -76,6 +83,7 @@ const routePromptCases: Array<{
     routeResultFields: ["explorableDirections", "directionName", "searchKeywords", "basisFromUserMaterial", "riskOrGap", "validationFocus"],
     actionType: "job_sample",
     recordType: "job_sample",
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"],
   },
   {
     routeKey: "experience_to_resume",
@@ -88,6 +96,7 @@ const routePromptCases: Array<{
     routeResultFields: ["confirmedFacts", "missingFacts", "doNotExaggerate", "resumeSnippetDraft", "supportingFacts"],
     actionType: "experience_fact",
     recordType: "experience_fact",
+    fieldsToRecord: ["actualActions", "deliverable", "missingFacts"],
   },
   {
     routeKey: "jd_to_revision",
@@ -99,6 +108,7 @@ const routePromptCases: Array<{
     routeResultFields: ["jdKeyRequirements", "supportedByMaterial", "unclearFromMaterial", "minimalRevisionActions", "afterSubmissionRecording"],
     actionType: "jd_revision",
     recordType: "jd_compare",
+    fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
   },
   {
     routeKey: "applications_to_review",
@@ -125,14 +135,21 @@ const routePromptCases: Array<{
     routeResultFields: ["reviewBasis", "recordSufficiency", "possibleClues", "informationGaps", "nextValidationAction"],
     actionType: "application_record",
     recordType: "application",
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"],
   },
 ];
 
 describe("ChatCompletionProvider", () => {
   it.each(routePromptCases)(
     "sends the complete forced result contract for $routeKey",
-    async ({ routeKey, input, routeResultFields, actionType, recordType }) => {
+    async ({ routeKey, input, routeResultFields, actionType, recordType, fieldsToRecord }) => {
       const prompt = await capturePrompt({ routeKey, input });
+      const contract = parsePromptSection(prompt, "ACTIVE_ROUTE_CONTRACT_BEGIN", "ACTIVE_ROUTE_CONTRACT_END") as {
+        recordGuide: { fieldsToRecord: string[] };
+      };
+      const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
+        output: { recordGuide: { fieldsToRecord: string[] } };
+      };
 
       expect(prompt).toContain("ACTIVE_ROUTE_CONTRACT_BEGIN");
       expect(prompt).toContain(`\"routeKey\": \"${routeKey}\"`);
@@ -145,8 +162,42 @@ describe("ChatCompletionProvider", () => {
       expect(prompt).toContain('\"estimatedTime\": \"15-30 分钟\"');
       expect(prompt).toContain('\"requiresUserConfirmation\": true');
       expect(prompt).toContain("不得选择 missing_info、light_review 或 friendly_failure");
+      expect(contract.recordGuide.fieldsToRecord).toEqual(fieldsToRecord);
+      expect(example.output.recordGuide.fieldsToRecord).toEqual(fieldsToRecord);
     },
   );
+
+  it("teaches the exact direction count and keyword bounds in the contract and example", async () => {
+    const directionCase = routePromptCases[0];
+    const prompt = await capturePrompt({ routeKey: directionCase.routeKey, input: directionCase.input });
+    const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
+      output: { routeResult: { explorableDirections: Array<{ searchKeywords: string[] }> } };
+    };
+
+    expect(prompt).toContain("2-3 direction items");
+    expect(prompt).toContain("3-5 items");
+    expect(example.output.routeResult.explorableDirections).toHaveLength(2);
+    for (const direction of example.output.routeResult.explorableDirections) {
+      expect(direction.searchKeywords).toHaveLength(3);
+    }
+  });
+
+  it("uses two complete sufficient application records without teaching a time or material gap", async () => {
+    const applicationCase = routePromptCases[3];
+    const prompt = await capturePrompt({ routeKey: applicationCase.routeKey, input: applicationCase.input });
+    const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
+      input: { applications: Array<Record<string, unknown>> };
+      output: { routeResult: { recordSufficiency: string; informationGaps: string[]; nextValidationAction: string } };
+    };
+    const canonicalFields = applicationCase.fieldsToRecord;
+
+    expect(example.input.applications).toHaveLength(2);
+    for (const application of example.input.applications) {
+      expect(Object.keys(application)).toEqual(canonicalFields);
+      for (const field of canonicalFields) expect(application[field]).toEqual(expect.any(String));
+    }
+    expect(JSON.stringify(example.output.routeResult)).not.toMatch(/还缺投递时间|补齐.*投递.*时间|还缺.*材料版本/);
+  });
 
   it.each(routePromptCases)(
     "includes exactly one active-route contract/example for $routeKey",
@@ -401,6 +452,28 @@ describe("ChatCompletionProvider", () => {
     expect(messages).toContain("application_record");
     expect(messages).toContain("recordType: application");
   });
+
+  it.each(routePromptCases)(
+    "uses the exact source-route action and record contract for $routeKey light review prompts",
+    async ({ routeKey, actionType, recordType, fieldsToRecord }) => {
+      const prompt = await capturePrompt({
+        routeKey,
+        input: {
+          mode: "light_review",
+          record: { actualDone: "保存了一个真实行动", payload: { note: "已确认" } },
+        },
+      });
+      const contract = parsePromptSection(prompt, "ACTIVE_ROUTE_CONTRACT_BEGIN", "ACTIVE_ROUTE_CONTRACT_END") as {
+        routeKey: RouteKey;
+        todayAction: { actionType: string; estimatedTime: string };
+        recordGuide: { recordType: string; fieldsToRecord: string[]; requiresUserConfirmation: boolean };
+      };
+
+      expect(contract.routeKey).toBe(routeKey);
+      expect(contract.todayAction).toEqual({ estimatedTime: "15-30 分钟", actionType });
+      expect(contract.recordGuide).toEqual({ recordType, fieldsToRecord, requiresUserConfirmation: true });
+    },
+  );
 
   it.each([
     {

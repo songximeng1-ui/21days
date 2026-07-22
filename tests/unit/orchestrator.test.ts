@@ -199,6 +199,15 @@ describe("generateRouteOutput", () => {
       }),
     },
     {
+      name: "non-canonical fieldsToRecord",
+      routeKey: "experience_to_resume" as const,
+      input: sufficientExperienceInput,
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        recordGuide: { ...output.recordGuide, fieldsToRecord: ["actualActions", "missingFacts", "deliverable"] },
+      }),
+    },
+    {
       name: "missing direction validationFocus",
       routeKey: "direction_to_jobs" as const,
       input: sufficientDirectionInput,
@@ -376,15 +385,78 @@ describe("generateRouteOutput", () => {
     );
   });
 
+  it.each([
+    {
+      name: "wrong source routeKey",
+      mutate: (output: RouteOutput) => ({ ...output, routeKey: "jd_to_revision" as const }),
+    },
+    {
+      name: "wrong source actionType",
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        todayAction: { ...output.todayAction, actionType: "jd_revision" as const },
+      }),
+    },
+    {
+      name: "wrong source recordType",
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        recordGuide: { ...output.recordGuide, recordType: "jd_compare" as const },
+      }),
+    },
+    {
+      name: "non-literal estimatedTime",
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        todayAction: { ...output.todayAction, estimatedTime: "15 - 30 分钟" },
+      }),
+    },
+    {
+      name: "requiresUserConfirmation false",
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        recordGuide: { ...output.recordGuide, requiresUserConfirmation: false },
+      }),
+    },
+    {
+      name: "non-canonical fieldsToRecord",
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        recordGuide: { ...output.recordGuide, fieldsToRecord: ["missingFacts", "actualActions", "deliverable"] },
+      }),
+    },
+  ])("rejects light_review candidates with $name", async ({ mutate }) => {
+    const record = {
+      id: "record-light-contract",
+      routeKey: "experience_to_resume" as const,
+      recordType: "experience_fact" as const,
+      actionTitle: "补一条真实经历",
+      actualDone: "整理了社团报名表",
+      payload: { actualActions: "整理报名信息" },
+      userConfirmed: true,
+      createdAt: "2026-07-21T00:00:00.000Z",
+    };
+    const validOutput = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const primary = { generate: vi.fn().mockResolvedValue(mutate(validOutput)) };
+
+    const result = await generateLightReviewOutput({ record, primary });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps route-specific mock outputs for every route", async () => {
     const cases = [
-      ["direction_to_jobs", "job_sample"],
-      ["experience_to_resume", "experience_fact"],
-      ["jd_to_revision", "jd_revision"],
-      ["applications_to_review", "application_record"],
+      ["direction_to_jobs", "job_sample", ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"]],
+      ["experience_to_resume", "experience_fact", ["actualActions", "deliverable", "missingFacts"]],
+      ["jd_to_revision", "jd_revision", ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"]],
+      ["applications_to_review", "application_record", ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"]],
     ] as const;
 
-    for (const [routeKey, actionType] of cases) {
+    for (const [routeKey, actionType, fieldsToRecord] of cases) {
       const result = await generateRouteOutput({
         routeKey,
         input:
@@ -426,6 +498,13 @@ describe("generateRouteOutput", () => {
 
       expect(result.outputType).toBe("route_result");
       expect(result.todayAction.actionType).toBe(actionType);
+      expect(result.recordGuide.fieldsToRecord).toEqual(fieldsToRecord);
+
+      if (routeKey === "direction_to_jobs") {
+        const directions = result.routeResult?.explorableDirections as Array<{ searchKeywords: string[] }>;
+        expect(directions).toHaveLength(2);
+        for (const direction of directions) expect(direction.searchKeywords).toHaveLength(3);
+      }
 
       if (routeKey === "applications_to_review") {
         expect(result.recordGuide.fieldsToRecord).toEqual([
@@ -440,6 +519,37 @@ describe("generateRouteOutput", () => {
         expect(result.todayAction.actionSteps.join("\n")).toContain("材料版本");
         expect(result.todayAction.actionSteps.join("\n")).not.toContain("不确定");
       }
+    }
+  });
+
+  it("keeps exact source-route canonical fields for every mock light review", async () => {
+    const cases = [
+      ["direction_to_jobs", "job_sample", "job_sample", ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"]],
+      ["experience_to_resume", "experience_fact", "experience_fact", ["actualActions", "deliverable", "missingFacts"]],
+      ["jd_to_revision", "jd_revision", "jd_compare", ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"]],
+      ["applications_to_review", "application_record", "application", ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"]],
+    ] as const;
+
+    for (const [routeKey, actionType, recordType, fieldsToRecord] of cases) {
+      const output = await generateLightReviewOutput({
+        record: {
+          id: `record-${routeKey}`,
+          routeKey,
+          recordType,
+          actionTitle: "保存真实行动",
+          actualDone: "保存了一个真实行动",
+          payload: {},
+          userConfirmed: true,
+          createdAt: "2026-07-21T00:00:00.000Z",
+        },
+        provider: new MockAiProvider("success"),
+      });
+
+      expect(output.outputType).toBe("light_review");
+      expect(output.routeKey).toBe(routeKey);
+      expect(output.todayAction.actionType).toBe(actionType);
+      expect(output.todayAction.estimatedTime).toBe("15-30 分钟");
+      expect(output.recordGuide).toEqual({ recordType, fieldsToRecord, requiresUserConfirmation: true });
     }
   });
 

@@ -71,7 +71,7 @@ function validateRouteResultShape(output: RouteOutput): string[] {
 
   if (output.routeKey === "direction_to_jobs") {
     const directions = result.explorableDirections;
-    if (!Array.isArray(directions) || directions.length < 1) {
+    if (!Array.isArray(directions) || directions.length < 2 || directions.length > 3) {
       return ["方向路线必须包含可探索方向和搜索关键词"];
     }
 
@@ -79,7 +79,7 @@ function validateRouteResultShape(output: RouteOutput): string[] {
       if (!isRecord(direction)) return false;
       return (
         hasText(direction.directionName) &&
-        hasStringArray(direction.searchKeywords, 1, 5) &&
+        hasStringArray(direction.searchKeywords, 3, 5) &&
         hasStringArray(direction.basisFromUserMaterial, 1, 5) &&
         hasText(direction.riskOrGap)
       );
