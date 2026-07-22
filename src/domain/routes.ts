@@ -4,6 +4,7 @@ export { ROUTE_KEYS };
 
 type RouteStrategy = {
   routeKey: RouteKey;
+  routeName: string;
   label: string;
   recordType: RecordType;
   requiredFields: string[];
@@ -12,24 +13,28 @@ type RouteStrategy = {
 const ROUTE_STRATEGIES: Record<RouteKey, RouteStrategy> = {
   direction_to_jobs: {
     routeKey: "direction_to_jobs",
+    routeName: "方向 -> 岗位样本",
     label: "我不知道能投哪些岗位",
     recordType: "job_sample",
     requiredFields: ["educationBackground", "realExperiences", "interestsOrAcceptables"],
   },
   experience_to_resume: {
     routeKey: "experience_to_resume",
+    routeName: "经历 -> 简历材料",
     label: "我的经历不知道怎么写进简历",
     recordType: "experience_fact",
     requiredFields: ["targetDirection", "rawExperience", "actualActions", "deliverableOrResult"],
   },
   jd_to_revision: {
     routeKey: "jd_to_revision",
+    routeName: "JD -> 投递前最小修改",
     label: "我看到岗位了，不知道投递前怎么改",
     recordType: "jd_compare",
     requiredFields: ["targetJobTitle", "jdTextOrRequirements", "userMaterial"],
   },
   applications_to_review: {
     routeKey: "applications_to_review",
+    routeName: "投递记录 -> 轻复盘",
     label: "我投了一些，但没什么反馈",
     recordType: "application",
     requiredFields: ["applications"],

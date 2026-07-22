@@ -15,7 +15,7 @@ describe("generateRouteOutput", () => {
     expect(result.todayAction.actionTitle).toContain("JD");
   });
 
-  it("asks for two concrete application records when review evidence is incomplete", async () => {
+  it("asks for one concrete first application record while preserving review evidence requirements", async () => {
     const result = await generateRouteOutput({
       routeKey: "applications_to_review",
       input: { applications: {} },
@@ -23,9 +23,10 @@ describe("generateRouteOutput", () => {
     });
 
     expect(result.outputType).toBe("missing_info");
-    expect(result.todayAction.actionTitle).toContain("2 条");
+    expect(result.todayAction.actionTitle).toContain("1 条");
     expect(result.todayAction.actionSteps.join("\n")).toContain("JD 摘要");
     expect(result.todayAction.actionSteps.join("\n")).toContain("材料版本");
+    expect(result.todayAction.actionSteps.join("\n")).toContain("补完这一条后");
     expect(result.todayAction.actionSteps.join("\n")).not.toContain("不确定");
     expect(result.missingInfo?.missingFields).toEqual(
       expect.arrayContaining(["第 1 条完整投递记录", "第 2 条完整投递记录", "JD 摘要", "材料版本"])
@@ -223,6 +224,20 @@ describe("generateRouteOutput", () => {
 
       expect(result.outputType).toBe("route_result");
       expect(result.todayAction.actionType).toBe(actionType);
+
+      if (routeKey === "applications_to_review") {
+        expect(result.recordGuide.fieldsToRecord).toEqual([
+          "jobTitle",
+          "companyOrPlatform",
+          "submittedAt",
+          "feedbackStatus",
+          "jdSummary",
+          "materialVersion",
+        ]);
+        expect(result.todayAction.actionSteps.join("\n")).toContain("JD 摘要");
+        expect(result.todayAction.actionSteps.join("\n")).toContain("材料版本");
+        expect(result.todayAction.actionSteps.join("\n")).not.toContain("不确定");
+      }
     }
   });
 });

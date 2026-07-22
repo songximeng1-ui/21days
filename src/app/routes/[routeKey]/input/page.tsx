@@ -39,23 +39,18 @@ const routeFields: Record<RouteKey, string[]> = {
   experience_to_resume: ["targetDirection", "rawExperience", "actualActions", "deliverableOrResult"],
   jd_to_revision: ["targetJobTitle", "jdTextOrRequirements", "userMaterial"],
   direction_to_jobs: ["educationBackground", "realExperiences", "interestsOrAcceptables", "constraints"],
-  applications_to_review: [
-    "jobTitle",
-    "companyOrPlatform",
-    "submittedAt",
-    "feedbackStatus",
-    "jdSummary",
-    "materialVersion",
-    "userSuspicion",
-    "jobTitle2",
-    "companyOrPlatform2",
-    "submittedAt2",
-    "feedbackStatus2",
-    "jdSummary2",
-    "materialVersion2",
-    "userSuspicion2",
-  ],
+  applications_to_review: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion", "userSuspicion"],
 };
+
+const secondApplicationFields = [
+  "jobTitle2",
+  "companyOrPlatform2",
+  "submittedAt2",
+  "feedbackStatus2",
+  "jdSummary2",
+  "materialVersion2",
+  "userSuspicion2",
+];
 
 export default function RouteInputPage() {
   const router = useRouter();
@@ -64,11 +59,16 @@ export default function RouteInputPage() {
   const strategy = getRouteStrategy(routeKey);
   const [draftStatus, setDraftStatus] = useState("已保存草稿");
   const [values, setValues] = useState<Record<string, string>>({});
+  const [showSecondApplication, setShowSecondApplication] = useState(false);
   const [aiStatus, setAiStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    queueMicrotask(() => setValues(loadDraft(routeKey)));
+    queueMicrotask(() => {
+      const draft = loadDraft(routeKey);
+      setValues(draft);
+      setShowSecondApplication(secondApplicationFields.some((field) => Boolean(draft[field]?.trim())));
+    });
   }, [routeKey]);
 
   function updateValue(field: string, value: string) {
@@ -139,6 +139,32 @@ export default function RouteInputPage() {
               />
             </label>
           ))}
+
+          {routeKey === "applications_to_review" && (
+            <>
+              {showSecondApplication ? (
+                secondApplicationFields.map((field) => (
+                  <label key={field} className="field">
+                    <span>{fieldLabels[field]}</span>
+                    <textarea
+                      name={field}
+                      value={values[field] ?? ""}
+                      onChange={(event) => updateValue(field, event.target.value)}
+                      placeholder={inputPlaceholder(routeKey)}
+                    />
+                  </label>
+                ))
+              ) : (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => setShowSecondApplication(true)}
+                >
+                  再补第 2 条投递记录
+                </button>
+              )}
+            </>
+          )}
 
           <button className="primary-button" type="submit" disabled={isSubmitting}>
             {isSubmitting ? "正在生成..." : "生成今天先做的一步"}

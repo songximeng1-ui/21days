@@ -18,6 +18,15 @@ describe("route strategies", () => {
     expect(new Set(recordTypes).size).toBe(4);
   });
 
+  it("keeps product route names stable in the domain layer", () => {
+    expect(ROUTE_KEYS.map((routeKey) => getRouteStrategy(routeKey).routeName)).toEqual([
+      "方向 -> 岗位样本",
+      "经历 -> 简历材料",
+      "JD -> 投递前最小修改",
+      "投递记录 -> 轻复盘",
+    ]);
+  });
+
   it("marks complete experience input sufficient", () => {
     expect(
       isRouteInputSufficient("experience_to_resume", {

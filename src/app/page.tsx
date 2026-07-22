@@ -107,8 +107,17 @@ function ReturnHomeState({
 
   const routeKey = progress.latestReview?.routeKey ?? progress.latestRecord?.routeKey;
   const reviewAction = progress.latestReview && routeKey ? makeReviewNextAction(routeKey, progress.latestReview.nextAction) : null;
-  const primaryHref = reviewAction ? `/routes/${routeKey}/action` : "/review";
-  const primaryLabel = reviewAction ? `继续：${reviewAction.todayAction.actionTitle}` : "基于这条记录轻复盘";
+  const shouldContinueFillingInfo = progress.latestRecord?.recordType === "fill_info" && routeKey;
+  const primaryHref = reviewAction
+    ? `/routes/${routeKey}/action`
+    : shouldContinueFillingInfo
+      ? `/routes/${routeKey}/input`
+      : "/review";
+  const primaryLabel = reviewAction
+    ? `继续：${reviewAction.todayAction.actionTitle}`
+    : shouldContinueFillingInfo
+      ? "继续补信息"
+      : "基于这条记录轻复盘";
 
   return (
     <div className="notice">

@@ -170,16 +170,23 @@ function makeSuccessfulOutput(routeKey: AiProviderInput["routeKey"]): RouteOutpu
         actionReason: "先让这条记录可复盘，再判断下一轮怎么调整。",
         actionSteps: [
           "选最近一条投递",
-          "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态",
-          "JD 摘要和这次用的简历或材料版本不确定也可以先写“不确定”",
+          "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态 / JD 摘要 / 材料版本",
+          "只写能确认的真实信息，先把这条记录补到可以复盘",
         ],
         estimatedTime: "15-30 分钟",
-        recordAfterDone: "先记录岗位、公司或平台、投递时间和反馈状态；其他不确定的字段之后再补。",
+        recordAfterDone: "记录岗位、公司或平台、投递时间、反馈状态、JD 摘要和材料版本。",
         actionType: "application_record",
       },
       recordGuide: {
         recordType: "application",
-        fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "materialVersion", "feedbackStatus"],
+        fieldsToRecord: [
+          "jobTitle",
+          "companyOrPlatform",
+          "submittedAt",
+          "feedbackStatus",
+          "jdSummary",
+          "materialVersion",
+        ],
         requiresUserConfirmation: true,
       },
     };

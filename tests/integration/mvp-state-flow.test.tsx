@@ -240,6 +240,7 @@ describe("MVP page state flow", () => {
     });
     expect(screen.queryByLabelText(/可先写“不确定”/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/可先不填/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("第 2 条投递：岗位名称")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("第 1 条投递：岗位要求摘要"), {
       target: { value: "负责内容整理" },
@@ -247,6 +248,7 @@ describe("MVP page state flow", () => {
     fireEvent.change(screen.getByLabelText("第 1 条投递：使用的材料版本"), {
       target: { value: "社团经历版" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "再补第 2 条投递记录" }));
     fireEvent.change(screen.getByLabelText("第 2 条投递：岗位名称"), {
       target: { value: "新媒体运营实习" },
     });

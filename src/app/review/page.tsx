@@ -27,6 +27,11 @@ export default function ReviewPage() {
         return;
       }
 
+      if (latestRecord.recordType === "fill_info") {
+        setStatus("这条补充信息已经保存。");
+        return;
+      }
+
       const latestReview = loadLatestReview();
       if (latestReview?.basedOnRecordIds.includes(latestRecord.id)) {
         setReview(latestReview);
@@ -95,7 +100,11 @@ export default function ReviewPage() {
           </section>
         </div>
 
-        {review ? (
+        {latest?.recordType === "fill_info" ? (
+          <Link className="primary-button" href={`/routes/${latest.routeKey}/input`}>
+            继续补信息
+          </Link>
+        ) : review ? (
           <Link
             className="primary-button"
             href="/"

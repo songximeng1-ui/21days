@@ -150,6 +150,26 @@ describe("Home", () => {
     expect(screen.queryByText("我不知道能投哪些岗位")).not.toBeInTheDocument();
   });
 
+  it("returns fill-info records to the route input instead of light review", async () => {
+    saveRecord({
+      routeKey: "jd_to_revision",
+      recordType: "fill_info",
+      actionTitle: "今天先补 JD 原文",
+      actualDone: "补了岗位职责和任职要求。",
+      payload: { jdTextOrRequirements: "负责内容整理和沟通协作" },
+      userConfirmed: true,
+    });
+
+    render(<Home />);
+
+    expect(await screen.findByText("最近推进：补了岗位职责和任职要求。")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "继续补信息" })).toHaveAttribute(
+      "href",
+      "/routes/jd_to_revision/input",
+    );
+    expect(screen.queryByRole("link", { name: "基于这条记录轻复盘" })).not.toBeInTheDocument();
+  });
+
   it("does not attach an older review to a newer record", async () => {
     const oldRecord = saveRecord({
       routeKey: "experience_to_resume",
