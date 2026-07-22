@@ -25,6 +25,12 @@ describe("scanSafetyViolations", () => {
     expect(result).toEqual({ passed: true, blockedReasons: [] });
   });
 
+  it("allows neutral application-record field instructions", () => {
+    const result = scanSafetyViolations("记录岗位名称、公司、来源和保存原因。");
+
+    expect(result).toEqual({ passed: true, blockedReasons: [] });
+  });
+
   it("allows user-provided factual percentages when they are not fit or outcome scores", () => {
     const result = scanSafetyViolations("用户记录里写到公众号阅读量提升 20%，今天先确认这个数据是否真实。");
 
