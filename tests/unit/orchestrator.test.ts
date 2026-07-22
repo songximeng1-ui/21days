@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ChatCompletionProvider } from "@/ai/chat-completion-provider";
 import { MockAiProvider } from "@/ai/mock-provider";
 import { AiProviderError } from "@/ai/provider";
 import { generateLightReviewOutput, generateRouteOutput } from "@/ai/orchestrator";
@@ -17,6 +18,12 @@ async function makeValidExperienceOutput(): Promise<RouteOutput> {
     input: sufficientExperienceInput,
   });
 }
+
+const sufficientDirectionInput = {
+  educationBackground: "信息管理专业",
+  realExperiences: "整理社团报名信息",
+  interestsOrAcceptables: "不排斥信息整理",
+};
 
 describe("generateRouteOutput", () => {
   it("returns missing info action for incomplete JD route input", async () => {
@@ -145,6 +152,100 @@ describe("generateRouteOutput", () => {
     expect(JSON.stringify(result)).not.toContain("model controlled failure");
   });
 
+  it.each([
+    {
+      name: "non-null missingInfo",
+      routeKey: "experience_to_resume" as const,
+      input: sufficientExperienceInput,
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        missingInfo: { cannotJudge: "x", alreadyKnown: [], missingFields: ["x"] },
+      }),
+    },
+    {
+      name: "wrong actionType",
+      routeKey: "experience_to_resume" as const,
+      input: sufficientExperienceInput,
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        todayAction: { ...output.todayAction, actionType: "jd_revision" as const },
+      }),
+    },
+    {
+      name: "wrong recordType",
+      routeKey: "experience_to_resume" as const,
+      input: sufficientExperienceInput,
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        recordGuide: { ...output.recordGuide, recordType: "jd_compare" as const },
+      }),
+    },
+    {
+      name: "non-literal estimatedTime",
+      routeKey: "experience_to_resume" as const,
+      input: sufficientExperienceInput,
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        todayAction: { ...output.todayAction, estimatedTime: "15 - 30 分钟" },
+      }),
+    },
+    {
+      name: "requiresUserConfirmation false",
+      routeKey: "experience_to_resume" as const,
+      input: sufficientExperienceInput,
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        recordGuide: { ...output.recordGuide, requiresUserConfirmation: false },
+      }),
+    },
+    {
+      name: "missing direction validationFocus",
+      routeKey: "direction_to_jobs" as const,
+      input: sufficientDirectionInput,
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        routeResult: {
+          explorableDirections: (output.routeResult?.explorableDirections as Array<Record<string, unknown>>).map(
+            ({ validationFocus: _removed, ...direction }) => {
+              void _removed;
+              return direction;
+            },
+          ),
+        },
+      }),
+    },
+    {
+      name: "unexpected routeResult key",
+      routeKey: "experience_to_resume" as const,
+      input: sufficientExperienceInput,
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        routeResult: { ...output.routeResult, unexpectedRouteField: "not allowed" },
+      }),
+    },
+    {
+      name: "unexpected nested direction key",
+      routeKey: "direction_to_jobs" as const,
+      input: sufficientDirectionInput,
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        routeResult: {
+          explorableDirections: (output.routeResult?.explorableDirections as Array<Record<string, unknown>>).map(
+            (direction) => ({ ...direction, unexpectedDirectionField: "not allowed" }),
+          ),
+        },
+      }),
+    },
+  ])("rejects route_result candidates with $name", async ({ routeKey, input, mutate }) => {
+    const validOutput = await new MockAiProvider("success").generate({ routeKey, input });
+    const primary = { generate: vi.fn().mockResolvedValue(mutate(validOutput)) };
+
+    const result = await generateRouteOutput({ routeKey, input, primary });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps friendly failure outside the 15-30 minute action contract", async () => {
     const result = await generateRouteOutput({
       routeKey: "experience_to_resume",
@@ -220,6 +321,59 @@ describe("generateRouteOutput", () => {
     for (const output of [routeResult, missingInfo, lightReview]) {
       expect(output.todayAction.estimatedTime).toMatch(/15\s*-\s*30|15-30/);
     }
+  });
+
+  it("adds the same sanitized retry section to the second light-review primary request", async () => {
+    const record = {
+      id: "record-light-retry",
+      routeKey: "experience_to_resume" as const,
+      recordType: "experience_fact" as const,
+      actionTitle: "补一条真实经历",
+      actualDone: "整理了社团报名表",
+      payload: { actualActions: "整理报名信息" },
+      userConfirmed: true,
+      createdAt: "2026-07-21T00:00:00.000Z",
+      privateNotes: "COMPLETE_LIGHT_INPUT_SECRET",
+    };
+    const validOutput = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    let call = 0;
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
+      void _url;
+      void _init;
+      call += 1;
+      const content = call === 1
+        ? JSON.stringify({
+            broken: "FIRST_LIGHT_CANDIDATE DeepSeek Qwen fallback prompt token API key stack trace 内部错误",
+            providerName: "PROVIDER_SECRET",
+          })
+        : JSON.stringify(validOutput);
+      return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
+    });
+    const primary = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.example.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+
+    const result = await generateLightReviewOutput({ record, primary });
+
+    expect(result.outputType).toBe("light_review");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondBody = JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string) as {
+      messages: Array<{ content: string }>;
+    };
+    const secondPrompt = secondBody.messages.map((message) => message.content).join("\n");
+    const retrySection = secondPrompt.split("RETRY_CORRECTION_BEGIN")[1]?.split("RETRY_CORRECTION_END")[0] ?? "";
+    expect(retrySection).toContain('\"stage\": \"candidate_schema\"');
+    expect(retrySection).toContain('\"code\": \"candidate_zod\"');
+    expect(retrySection).toContain("routeKey");
+    expect(retrySection).not.toMatch(
+      /FIRST_LIGHT_CANDIDATE|PROVIDER_SECRET|secret-test-key|COMPLETE_LIGHT_INPUT_SECRET|DeepSeek|Qwen|fallback|prompt|token|API key|stack trace|内部错误/i,
+    );
   });
 
   it("keeps route-specific mock outputs for every route", async () => {
@@ -387,6 +541,125 @@ describe("generateRouteOutput", () => {
 
     expect(result.outputType).toBe("friendly_failure");
     expect(JSON.stringify(result)).not.toContain("PRIVATE_NOT_ALLOWLISTED");
+  });
+
+  it("rejects application evidence from undocumented nested fields while allowing userSuspicion", async () => {
+    const input = {
+      applications: [
+        {
+          jobTitle: "内容运营实习",
+          companyOrPlatform: "A 公司",
+          submittedAt: "7 月 1 日",
+          feedbackStatus: "暂无反馈",
+          jdSummary: "负责内容整理",
+          materialVersion: "社团经历版",
+          userSuspicion: "可能需要核对材料版本",
+          privateNotes: "PRIVATE_APPLICATION_NOTE",
+        },
+        {
+          jobTitle: "新媒体运营实习",
+          companyOrPlatform: "B 公司",
+          submittedAt: "7 月 3 日",
+          feedbackStatus: "已查看",
+          jdSummary: "负责选题和数据记录",
+          materialVersion: "项目经历版",
+          userSuspicion: "可能需要核对投递时间",
+          privateNotes: "SECOND_PRIVATE_APPLICATION_NOTE",
+        },
+      ],
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "applications_to_review",
+      input,
+    });
+    const privateEvidence = {
+      ...generated,
+      routeResult: { ...generated.routeResult, reviewBasis: ["PRIVATE_APPLICATION_NOTE"] },
+    };
+    const suspicionEvidence = {
+      ...generated,
+      routeResult: { ...generated.routeResult, reviewBasis: ["可能需要核对材料版本"] },
+    };
+
+    const rejected = await generateRouteOutput({
+      routeKey: "applications_to_review",
+      input,
+      provider: { generate: vi.fn().mockResolvedValue(privateEvidence) },
+    });
+    const accepted = await generateRouteOutput({
+      routeKey: "applications_to_review",
+      input,
+      provider: { generate: vi.fn().mockResolvedValue(suspicionEvidence) },
+    });
+
+    expect(rejected.outputType).toBe("friendly_failure");
+    expect(JSON.stringify(rejected)).not.toContain("PRIVATE_APPLICATION_NOTE");
+    expect(accepted.outputType).toBe("route_result");
+    expect(accepted.routeResult?.reviewBasis).toEqual(["可能需要核对材料版本"]);
+  });
+
+  it.each([
+    {
+      name: "case changes",
+      rawExperience: "真实经历",
+      actualActions: "CaseSensitiveFact",
+      claim: "casesensitivefact",
+    },
+    {
+      name: "whitespace removal",
+      rawExperience: "真实经历",
+      actualActions: "整理 报名 表",
+      claim: "整理报名表",
+    },
+    {
+      name: "whitespace addition",
+      rawExperience: "真实经历",
+      actualActions: "整理报名表",
+      claim: "整理 报名 表",
+    },
+    {
+      name: "a prefix",
+      rawExperience: "真实经历",
+      actualActions: "整理报名表",
+      claim: "前缀整理报名表",
+    },
+    {
+      name: "a suffix",
+      rawExperience: "真实经历",
+      actualActions: "整理报名表",
+      claim: "整理报名表后缀",
+    },
+    {
+      name: "cross-field construction",
+      rawExperience: "LEFT_PART",
+      actualActions: "RIGHT_PART",
+      claim: "LEFT_PARTRIGHT_PART",
+    },
+  ])("rejects evidence changed by $name instead of using one literal source substring", async ({ rawExperience, actualActions, claim }) => {
+    const input = {
+      targetDirection: "运营",
+      rawExperience,
+      actualActions,
+      deliverableOrResult: "形成一份记录",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "experience_to_resume",
+      input,
+    });
+    const invalidOutput = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        confirmedFacts: [claim],
+        supportingFacts: [claim],
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(invalidOutput) };
+
+    const result = await generateRouteOutput({ routeKey: "experience_to_resume", input, provider });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("retries once when the first structured output violates safety boundaries", async () => {

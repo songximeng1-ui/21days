@@ -14,7 +14,7 @@ import {
 import { validateRouteOutput } from "@/domain/action-card";
 import { getRouteStrategy, isPlaceholderValue, isRouteInputSufficient } from "@/domain/routes";
 import { scanRouteSafety } from "@/domain/safety";
-import type { RouteKey, RouteOutput } from "@/domain/types";
+import type { ActionType, RecordType, RouteKey, RouteOutput } from "@/domain/types";
 import type { LocalRecord } from "@/lib/local-store";
 import { routeOutputSchema } from "@/schemas/route-output";
 
@@ -195,6 +195,17 @@ async function generateAndValidate(
     return { failure: contentFailure("route_shape", "unexpected_output_type", durationMs) };
   }
 
+  const hardContractIssue = validateHardRouteContract(options.routeKey, output, options.mode);
+  if (hardContractIssue) {
+    return {
+      failure: contentFailure(
+        hardContractIssue,
+        hardContractIssue === "action" ? "action_contract" : "route_shape",
+        durationMs,
+      ),
+    };
+  }
+
   const validation = validateRouteOutput(output);
   const safety = scanRouteSafety(output.routeKey, output);
   const nonSafetyIssues = validation.issues.filter((issue) => !safety.blockedReasons.includes(issue));
@@ -239,6 +250,97 @@ function providerFailure(error: unknown, durationMs: number): AttemptFailure {
 
 function contentFailure(stage: AiFailureStage, code: string, durationMs: number): AttemptFailure {
   return { stage, code, retryPrimary: true, allowFallback: false, durationMs };
+}
+
+const HARD_ROUTE_CONTRACTS: Record<
+  RouteKey,
+  { actionType: ActionType; recordType: RecordType; routeResultKeys: string[] }
+> = {
+  direction_to_jobs: {
+    actionType: "job_sample",
+    recordType: "job_sample",
+    routeResultKeys: ["explorableDirections"],
+  },
+  experience_to_resume: {
+    actionType: "experience_fact",
+    recordType: "experience_fact",
+    routeResultKeys: ["confirmedFacts", "missingFacts", "doNotExaggerate", "resumeSnippetDraft", "supportingFacts"],
+  },
+  jd_to_revision: {
+    actionType: "jd_revision",
+    recordType: "jd_compare",
+    routeResultKeys: [
+      "jdKeyRequirements",
+      "supportedByMaterial",
+      "unclearFromMaterial",
+      "minimalRevisionActions",
+      "afterSubmissionRecording",
+    ],
+  },
+  applications_to_review: {
+    actionType: "application_record",
+    recordType: "application",
+    routeResultKeys: [
+      "reviewBasis",
+      "recordSufficiency",
+      "possibleClues",
+      "informationGaps",
+      "nextValidationAction",
+    ],
+  },
+};
+
+const DIRECTION_RESULT_KEYS = [
+  "directionName",
+  "searchKeywords",
+  "basisFromUserMaterial",
+  "riskOrGap",
+  "validationFocus",
+];
+
+function validateHardRouteContract(
+  routeKey: RouteKey,
+  output: RouteOutput,
+  mode: "route" | "light_review",
+): "route_shape" | "action" | undefined {
+  if (mode === "light_review") return undefined;
+  const contract = HARD_ROUTE_CONTRACTS[routeKey];
+  if (
+    output.missingInfo !== null ||
+    !output.routeResult ||
+    !hasExactKeys(output.routeResult, contract.routeResultKeys) ||
+    (routeKey === "direction_to_jobs" && !hasExactDirectionItems(output.routeResult.explorableDirections))
+  ) {
+    return "route_shape";
+  }
+  if (
+    output.todayAction.actionType !== contract.actionType ||
+    output.recordGuide.recordType !== contract.recordType ||
+    output.todayAction.estimatedTime !== "15-30 分钟" ||
+    output.recordGuide.requiresUserConfirmation !== true
+  ) {
+    return "action";
+  }
+  return undefined;
+}
+
+function hasExactDirectionItems(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (direction) =>
+        isRecord(direction) &&
+        hasExactKeys(direction, DIRECTION_RESULT_KEYS) &&
+        typeof direction.validationFocus === "string" &&
+        direction.validationFocus.trim().length > 0,
+    )
+  );
+}
+
+function hasExactKeys(value: Record<string, unknown>, expectedKeys: string[]): boolean {
+  const actualKeys = Object.keys(value);
+  return actualKeys.length === expectedKeys.length && expectedKeys.every((key) => Object.hasOwn(value, key));
 }
 
 function toRetryFeedback(failure: AttemptFailure): AiRetryFeedback {
@@ -702,10 +804,33 @@ function hasGroundedRouteEvidence(
   }
 
   if (routeKey === "applications_to_review") {
-    return claimsAreGrounded(routeResult.reviewBasis, { applications: input.applications });
+    return claimsAreGrounded(routeResult.reviewBasis, {
+      applications: pickApplicationEvidence(input.applications),
+    });
   }
 
   return true;
+}
+
+const APPLICATION_EVIDENCE_FIELDS = [
+  "jobTitle",
+  "companyOrPlatform",
+  "submittedAt",
+  "feedbackStatus",
+  "jdSummary",
+  "materialVersion",
+  "userSuspicion",
+];
+
+function pickApplicationEvidence(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).map((application) =>
+    Object.fromEntries(
+      APPLICATION_EVIDENCE_FIELDS
+        .filter((field) => application[field] !== undefined)
+        .map((field) => [field, application[field]]),
+    )
+  );
 }
 
 function claimsAreGrounded(claims: unknown, source: unknown): boolean {
@@ -715,7 +840,7 @@ function claimsAreGrounded(claims: unknown, source: unknown): boolean {
     (claim) =>
       typeof claim === "string" &&
       claim.trim().length > 0 &&
-      sourceTexts.some((sourceText) => normalizeGroundingText(sourceText).includes(normalizeGroundingText(claim)))
+      sourceTexts.some((sourceText) => sourceText.includes(claim))
   );
 }
 
@@ -724,10 +849,6 @@ function collectSourceTexts(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(collectSourceTexts);
   if (isRecord(value)) return Object.values(value).flatMap(collectSourceTexts);
   return [];
-}
-
-function normalizeGroundingText(value: string): string {
-  return value.replace(/\s+/g, "").toLowerCase();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

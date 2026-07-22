@@ -172,8 +172,7 @@ function buildUserPrompt(input: AiProviderInput): string {
   }
 
   const config = ROUTE_PROMPT_CONFIG[input.routeKey];
-  const routeInput = pickFields(input.input, config.inputFields);
-  const retryFeedback = sanitizeRetryFeedback(input.retryFeedback);
+  const routeInput = pickRouteInput(input.routeKey, input.input, config.inputFields);
 
   return [
     `当前且唯一的路线：${input.routeKey}`,
@@ -191,19 +190,12 @@ function buildUserPrompt(input: AiProviderInput): string {
     "ACTIVE_ROUTE_INPUT_END",
     "ALLOWED_EVIDENCE_BEGIN",
     `证据字段映射：${config.evidenceMapping}`,
-    JSON.stringify(collectAllowedEvidence(input.input, config.evidenceFields), null, 2),
+    JSON.stringify(collectAllowedEvidence(routeInput, config.evidenceFields), null, 2),
     "证据字段只能逐字引用用户输入中的事实，并且必须严格连续逐字引用同一个白名单来源值。",
     "不得添加前缀或后缀；不得跨字段拼接；不得用同义词改写。",
     "非证据摘要与行动字段可以谨慎改写，但不得引入新事实。",
     "ALLOWED_EVIDENCE_END",
-    ...(retryFeedback
-      ? [
-          "RETRY_CORRECTION_BEGIN",
-          JSON.stringify(retryFeedback, null, 2),
-          "只修正该代码指出的问题，仍须服从当前路线契约和证据白名单。",
-          "RETRY_CORRECTION_END",
-        ]
-      : []),
+    ...buildRetryCorrection(input.retryFeedback),
   ].join("\n");
 }
 
@@ -418,6 +410,7 @@ function buildLightReviewPrompt(input: AiProviderInput): string {
     JSON.stringify(collectEvidenceLeaves(pickFields(record, ["actualDone", "payload"]), "record"), null, 2),
     "证据必须严格连续逐字引用同一个白名单来源值，不得添加前缀或后缀；不得跨字段拼接；不得用同义词改写。",
     "ALLOWED_EVIDENCE_END",
+    ...buildRetryCorrection(input.retryFeedback),
     "clues 只能写可继续验证的线索，不能写失败原因、公司筛选规则或用户能力判断。",
     "禁止输出报告、基础版报告、匹配率、匹配度、录取概率、适合/不适合、能投/不能投。",
   ].join("\n");
@@ -425,6 +418,31 @@ function buildLightReviewPrompt(input: AiProviderInput): string {
 
 function pickFields(input: Record<string, unknown>, fields: string[]): Record<string, unknown> {
   return Object.fromEntries(fields.filter((field) => input[field] !== undefined).map((field) => [field, input[field]]));
+}
+
+const APPLICATION_INPUT_FIELDS = [
+  "jobTitle",
+  "companyOrPlatform",
+  "submittedAt",
+  "feedbackStatus",
+  "jdSummary",
+  "materialVersion",
+  "userSuspicion",
+];
+
+function pickRouteInput(
+  routeKey: RouteKey,
+  input: Record<string, unknown>,
+  fields: string[],
+): Record<string, unknown> {
+  const picked = pickFields(input, fields);
+  if (routeKey !== "applications_to_review") return picked;
+  const applications = Array.isArray(picked.applications) ? picked.applications : [];
+  return {
+    applications: applications
+      .filter(isRecord)
+      .map((application) => pickFields(application, APPLICATION_INPUT_FIELDS)),
+  };
 }
 
 function collectAllowedEvidence(input: Record<string, unknown>, fields: string[]): Array<{ path: string; value: string }> {
@@ -447,6 +465,17 @@ const RETRY_CODES = new Set<AiRetryFeedback["code"]>([
   "candidate_zod", "route_mismatch", "unexpected_output_type", "route_shape", "action_contract",
   "safety_boundary", "grounding_failure", "provider_retryable",
 ]);
+
+function buildRetryCorrection(feedback: AiProviderInput["retryFeedback"]): string[] {
+  const sanitized = sanitizeRetryFeedback(feedback);
+  if (!sanitized) return [];
+  return [
+    "RETRY_CORRECTION_BEGIN",
+    JSON.stringify(sanitized, null, 2),
+    "只修正该代码指出的问题，仍须服从当前路线契约和证据白名单。",
+    "RETRY_CORRECTION_END",
+  ];
+}
 
 function sanitizeRetryFeedback(feedback: AiProviderInput["retryFeedback"]): AiRetryFeedback | undefined {
   if (!feedback || !RETRY_CODES.has(feedback.code)) return undefined;

@@ -257,6 +257,38 @@ describe("ChatCompletionProvider", () => {
     );
   });
 
+  it("deep-picks only documented application fields for route input and evidence", async () => {
+    const prompt = await capturePrompt({
+      routeKey: "applications_to_review",
+      input: {
+        applications: [{
+          jobTitle: "ALLOW_APP_TITLE",
+          companyOrPlatform: "ALLOW_APP_COMPANY",
+          submittedAt: "ALLOW_APP_TIME",
+          feedbackStatus: "ALLOW_APP_STATUS",
+          jdSummary: "ALLOW_APP_JD",
+          materialVersion: "ALLOW_APP_VERSION",
+          userSuspicion: "ALLOW_APP_SUSPICION",
+          privateNotes: "DENY_APP_PRIVATE_NOTES",
+          internalScore: "DENY_APP_INTERNAL_SCORE",
+        }],
+      },
+    });
+    const inputSection = prompt.split("ACTIVE_ROUTE_INPUT_BEGIN")[1]?.split("ACTIVE_ROUTE_INPUT_END")[0] ?? "";
+    const evidenceSection = prompt.split("ALLOWED_EVIDENCE_BEGIN")[1]?.split("ALLOWED_EVIDENCE_END")[0] ?? "";
+
+    for (const section of [inputSection, evidenceSection]) {
+      expect(section).toContain("ALLOW_APP_TITLE");
+      expect(section).toContain("ALLOW_APP_COMPANY");
+      expect(section).toContain("ALLOW_APP_TIME");
+      expect(section).toContain("ALLOW_APP_STATUS");
+      expect(section).toContain("ALLOW_APP_JD");
+      expect(section).toContain("ALLOW_APP_VERSION");
+      expect(section).toContain("ALLOW_APP_SUSPICION");
+      expect(section).not.toMatch(/DENY_APP_PRIVATE_NOTES|DENY_APP_INTERNAL_SCORE|privateNotes|internalScore/);
+    }
+  });
+
   it("sends a JSON-only chat completion request and parses the model response", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
       void _url;
