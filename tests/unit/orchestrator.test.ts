@@ -1,6 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MockAiProvider } from "@/ai/mock-provider";
+import { AiProviderError } from "@/ai/provider";
 import { generateLightReviewOutput, generateRouteOutput } from "@/ai/orchestrator";
+import type { RouteOutput } from "@/domain/types";
+
+const sufficientExperienceInput = {
+  targetDirection: "运营",
+  rawExperience: "社团推文发布",
+  actualActions: "整理信息并排版",
+  deliverableOrResult: "发布 2 篇推文",
+};
+
+async function makeValidExperienceOutput(): Promise<RouteOutput> {
+  return new MockAiProvider("success").generate({
+    routeKey: "experience_to_resume",
+    input: sufficientExperienceInput,
+  });
+}
 
 describe("generateRouteOutput", () => {
   it("returns missing info action for incomplete JD route input", async () => {
@@ -362,5 +378,248 @@ describe("generateRouteOutput", () => {
 
     expect(calls).toBe(2);
     expect(result.outputType).toBe("route_result");
+  });
+
+  it("retries primary once when candidate Zod parsing fails and can recover", async () => {
+    const validOutput = await makeValidExperienceOutput();
+    const primary = {
+      generate: vi.fn()
+        .mockResolvedValueOnce({ broken: true })
+        .mockResolvedValueOnce(validOutput),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["route mismatch", (output: RouteOutput) => ({ ...output, routeKey: "jd_to_revision" }) as RouteOutput],
+    ["route shape", (output: RouteOutput) => ({ ...output, routeResult: null })],
+    [
+      "action",
+      (output: RouteOutput) => ({
+        ...output,
+        todayAction: { ...output.todayAction, estimatedTime: "later" },
+      }),
+    ],
+    ["safety", (output: RouteOutput) => ({ ...output, shortAssessment: "匹配度 90%" })],
+    [
+      "grounding",
+      (output: RouteOutput) => ({
+        ...output,
+        routeResult: { ...output.routeResult, supportingFacts: ["从未提供的敏感虚构事实"] },
+      }),
+    ],
+  ])("retries primary once after a %s failure and can recover", async (_name, makeInvalid) => {
+    const validOutput = await makeValidExperienceOutput();
+    const primary = {
+      generate: vi.fn()
+        .mockResolvedValueOnce(makeInvalid(validOutput))
+        .mockResolvedValueOnce(validOutput),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["transport", "retryable_http", "envelope_json", "empty_content", "model_json"] as const)(
+    "calls fallback once after two primary %s failures",
+    async (kind) => {
+      const validOutput = await makeValidExperienceOutput();
+      const primary = { generate: vi.fn().mockRejectedValue(new AiProviderError(kind)) };
+      const fallback = { generate: vi.fn().mockResolvedValue(validOutput) };
+
+      const result = await generateRouteOutput({
+        routeKey: "experience_to_resume",
+        input: sufficientExperienceInput,
+        primary,
+        fallback,
+      });
+
+      expect(result.outputType).toBe("route_result");
+      expect(primary.generate).toHaveBeenCalledTimes(2);
+      expect(fallback.generate).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("calls fallback once when candidate Zod parsing is exhausted on primary", async () => {
+    const validOutput = await makeValidExperienceOutput();
+    const primary = { generate: vi.fn().mockResolvedValue({ broken: true }) };
+    const fallback = { generate: vi.fn().mockResolvedValue(validOutput) };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["route mismatch", (output: RouteOutput) => ({ ...output, routeKey: "jd_to_revision" }) as RouteOutput],
+    ["route shape", (output: RouteOutput) => ({ ...output, routeResult: null })],
+    [
+      "action",
+      (output: RouteOutput) => ({
+        ...output,
+        todayAction: { ...output.todayAction, estimatedTime: "later" },
+      }),
+    ],
+    ["safety", (output: RouteOutput) => ({ ...output, shortAssessment: "录取概率 90%" })],
+    [
+      "grounding",
+      (output: RouteOutput) => ({
+        ...output,
+        routeResult: { ...output.routeResult, confirmedFacts: ["虚构事实"] },
+      }),
+    ],
+  ])("never calls fallback for exhausted %s failures", async (_name, makeInvalid) => {
+    const validOutput = await makeValidExperienceOutput();
+    const primary = { generate: vi.fn().mockResolvedValue(makeInvalid(validOutput)) };
+    const fallback = { generate: vi.fn().mockResolvedValue(validOutput) };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Zod", () => ({ broken: true }) as unknown as RouteOutput],
+    ["route", (output: RouteOutput) => ({ ...output, routeKey: "jd_to_revision" }) as RouteOutput],
+    [
+      "action",
+      (output: RouteOutput) => ({
+        ...output,
+        todayAction: { ...output.todayAction, estimatedTime: "later" },
+      }),
+    ],
+    ["safety", (output: RouteOutput) => ({ ...output, shortAssessment: "适合你，匹配度 90%" })],
+    [
+      "grounding",
+      (output: RouteOutput) => ({
+        ...output,
+        routeResult: { ...output.routeResult, supportingFacts: ["fallback 虚构事实"] },
+      }),
+    ],
+  ])("validates fallback output through %s checks", async (_name, makeInvalidFallback) => {
+    const validOutput = await makeValidExperienceOutput();
+    const primary = { generate: vi.fn().mockRejectedValue(new AiProviderError("transport")) };
+    const fallback = { generate: vi.fn().mockResolvedValue(makeInvalidFallback(validOutput)) };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("never exceeds two primary calls plus one fallback call", async () => {
+    const primary = { generate: vi.fn().mockRejectedValue(new AiProviderError("transport")) };
+    const fallback = { generate: vi.fn().mockRejectedValue(new AiProviderError("retryable_http", "5xx")) };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call any model for missing or placeholder input", async () => {
+    const primary = { generate: vi.fn() };
+    const fallback = { generate: vi.fn() };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团经历",
+        actualActions: "还没整理",
+        deliverableOrResult: "暂无",
+      },
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("missing_info");
+    expect(primary.generate).not.toHaveBeenCalled();
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("reports only allowlisted diagnostics and keeps internal stages and codes out of user output", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const sensitiveValue = "secret input and prompt value";
+    const primary = {
+      generate: vi.fn()
+        .mockRejectedValueOnce(new AiProviderError("retryable_http", "5xx"))
+        .mockRejectedValueOnce(new AiProviderError("retryable_http", "5xx")),
+    };
+    const fallback = { generate: vi.fn().mockResolvedValue({ broken: sensitiveValue }) };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: { ...sufficientExperienceInput, rawExperience: sensitiveValue },
+      primary,
+      fallback,
+      requestId: "request-123",
+      reporter: {
+        report: (event) => {
+          events.push(event);
+        },
+      },
+    });
+
+    const allowedKeys = new Set([
+      "requestId",
+      "routeKey",
+      "mode",
+      "providerRole",
+      "attempt",
+      "stage",
+      "code",
+      "durationBucket",
+      "schemaPaths",
+      "httpStatusClass",
+    ]);
+    expect(events.length).toBe(3);
+    for (const event of events) {
+      expect(Object.keys(event).every((key) => allowedKeys.has(key))).toBe(true);
+    }
+    expect(JSON.stringify(events)).not.toMatch(/secret input|prompt value|Authorization|Bearer|api\.example|stack/i);
+    expect(JSON.stringify(result)).not.toMatch(
+      /provider_http|retryable_http|candidate_schema|schema|fallback|transport|stage|code/i,
+    );
   });
 });

@@ -1,6 +1,18 @@
-import type { AiProvider } from "@/ai/provider";
+import {
+  AiProviderError,
+  type AiProvider,
+  type AiProviderErrorKind,
+  type AiProviderSet,
+} from "@/ai/provider";
+import {
+  noopAiFailureReporter,
+  type AiFailureEvent,
+  type AiFailureReporter,
+  type AiFailureStage,
+} from "@/ai/failure-diagnostics";
 import { validateRouteOutput } from "@/domain/action-card";
 import { getRouteStrategy, isPlaceholderValue, isRouteInputSufficient } from "@/domain/routes";
+import { scanRouteSafety } from "@/domain/safety";
 import type { RouteKey, RouteOutput } from "@/domain/types";
 import type { LocalRecord } from "@/lib/local-store";
 import { routeOutputSchema } from "@/schemas/route-output";
@@ -8,12 +20,20 @@ import { routeOutputSchema } from "@/schemas/route-output";
 type GenerateRouteOutputInput = {
   routeKey: RouteKey;
   input: Record<string, unknown>;
-  provider: AiProvider;
+  provider?: AiProvider;
+  primary?: AiProvider;
+  fallback?: AiProvider;
+  reporter?: AiFailureReporter;
+  requestId?: string;
 };
 
 type GenerateLightReviewInput = {
   record: LocalRecord;
-  provider: AiProvider;
+  provider?: AiProvider;
+  primary?: AiProvider;
+  fallback?: AiProvider;
+  reporter?: AiFailureReporter;
+  requestId?: string;
 };
 
 export function makeFriendlyFailureOutput(routeKey: RouteKey): RouteOutput {
@@ -43,63 +63,285 @@ export async function generateRouteOutput({
   routeKey,
   input,
   provider,
+  primary,
+  fallback,
+  reporter,
+  requestId,
 }: GenerateRouteOutputInput): Promise<RouteOutput> {
   if (!isRouteInputSufficient(routeKey, input)) {
     return makeMissingInfoOutput(routeKey, input);
   }
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const rawOutput = await provider.generate({ routeKey, input });
-      const output = routeOutputSchema.parse(rawOutput);
-      const validation = validateRouteOutput(output);
-
-      if (output.outputType === "friendly_failure") {
-        return makeFriendlyFailureOutput(routeKey);
-      }
-
-      if (
-        output.routeKey === routeKey &&
-        validation.passed &&
-        hasGroundedRouteEvidence(routeKey, output.routeResult, input)
-      ) {
-        return output;
-      }
-    } catch {
-      return makeFriendlyFailureOutput(routeKey);
-    }
-  }
-
-  return makeFriendlyFailureOutput(routeKey);
+  return orchestrateOutput({
+    routeKey,
+    input,
+    mode: "route",
+    ...resolveProviders(provider, primary, fallback),
+    reporter: reporter ?? noopAiFailureReporter,
+    requestId: requestId ?? createRequestId(),
+  });
 }
 
 export async function generateLightReviewOutput({
   record,
   provider,
+  primary,
+  fallback,
+  reporter,
+  requestId,
 }: GenerateLightReviewInput): Promise<RouteOutput> {
   if (!record.userConfirmed || !record.actualDone.trim()) {
     return makeFriendlyFailureOutput(record.routeKey as RouteKey);
   }
 
-  try {
-    const rawOutput = await provider.generate({
-      routeKey: record.routeKey as RouteKey,
-      input: {
-        mode: "light_review",
-        record,
-      },
-    });
-    const output = routeOutputSchema.parse(rawOutput);
-    const validation = validateRouteOutput(output);
+  const routeKey = record.routeKey as RouteKey;
+  return orchestrateOutput({
+    routeKey,
+    input: { mode: "light_review", record },
+    mode: "light_review",
+    ...resolveProviders(provider, primary, fallback),
+    reporter: reporter ?? noopAiFailureReporter,
+    requestId: requestId ?? createRequestId(),
+  });
+}
 
-    if (!validation.passed || output.outputType !== "light_review" || output.routeKey !== record.routeKey) {
-      return makeFriendlyFailureOutput(record.routeKey as RouteKey);
-    }
+type OrchestrateOutputInput = {
+  routeKey: RouteKey;
+  input: Record<string, unknown>;
+  mode: "route" | "light_review";
+  primary?: AiProvider;
+  fallback?: AiProvider;
+  reporter: AiFailureReporter;
+  requestId: string;
+};
 
-    return output;
-  } catch {
-    return makeFriendlyFailureOutput(record.routeKey as RouteKey);
+type AttemptFailure = {
+  stage: AiFailureStage;
+  code: string;
+  retryPrimary: boolean;
+  allowFallback: boolean;
+  durationMs: number;
+  schemaPaths?: string[];
+  httpStatusClass?: AiProviderError["httpStatusClass"];
+};
+
+type AttemptResult =
+  | { output: RouteOutput; failure?: never }
+  | { output?: never; failure: AttemptFailure };
+
+async function orchestrateOutput(options: OrchestrateOutputInput): Promise<RouteOutput> {
+  if (!options.primary) return makeFriendlyFailureOutput(options.routeKey);
+
+  let exhaustedFailure: AttemptFailure | undefined;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const result = await generateAndValidate(options.primary, options);
+    if (result.output) return result.output;
+
+    exhaustedFailure = result.failure;
+    await reportAttemptFailure(options, "primary", attempt, result.failure);
+    if (!result.failure.retryPrimary) return makeFriendlyFailureOutput(options.routeKey);
   }
+
+  if (exhaustedFailure?.allowFallback && options.fallback) {
+    const result = await generateAndValidate(options.fallback, options);
+    if (result.output) return result.output;
+    await reportAttemptFailure(options, "fallback", 1, result.failure);
+  }
+
+  return makeFriendlyFailureOutput(options.routeKey);
+}
+
+async function generateAndValidate(
+  provider: AiProvider,
+  options: Pick<OrchestrateOutputInput, "routeKey" | "input" | "mode">,
+): Promise<AttemptResult> {
+  const startedAt = nowMs();
+  let rawOutput: RouteOutput;
+
+  try {
+    rawOutput = await provider.generate({ routeKey: options.routeKey, input: options.input });
+  } catch (error) {
+    return { failure: providerFailure(error, nowMs() - startedAt) };
+  }
+
+  const durationMs = nowMs() - startedAt;
+  const parsed = routeOutputSchema.safeParse(rawOutput);
+  if (!parsed.success) {
+    return {
+      failure: {
+        stage: "candidate_schema",
+        code: "candidate_zod",
+        retryPrimary: true,
+        allowFallback: true,
+        durationMs,
+        schemaPaths: collectSchemaPaths(parsed.error.issues),
+      },
+    };
+  }
+
+  const output = parsed.data as RouteOutput;
+  if (output.routeKey !== options.routeKey) {
+    return { failure: contentFailure("route_mismatch", "route_mismatch", durationMs) };
+  }
+
+  const expectedOutputType = options.mode === "light_review" ? "light_review" : "route_result";
+  if (output.outputType !== expectedOutputType) {
+    return { failure: contentFailure("route_shape", "unexpected_output_type", durationMs) };
+  }
+
+  const validation = validateRouteOutput(output);
+  const safety = scanRouteSafety(output.routeKey, output);
+  const nonSafetyIssues = validation.issues.filter((issue) => !safety.blockedReasons.includes(issue));
+  const routeShapeIssues = nonSafetyIssues.filter((issue) => !isActionIssue(issue));
+  if (routeShapeIssues.length > 0) {
+    return { failure: contentFailure("route_shape", "route_shape", durationMs) };
+  }
+  if (nonSafetyIssues.some(isActionIssue)) {
+    return { failure: contentFailure("action", "action_contract", durationMs) };
+  }
+  if (safety.blockedReasons.length > 0) {
+    return { failure: contentFailure("safety", "safety_boundary", durationMs) };
+  }
+  if (!hasGroundedOutput(options.routeKey, output, options.input, options.mode)) {
+    return { failure: contentFailure("grounding", "grounding_failure", durationMs) };
+  }
+
+  return { output };
+}
+
+function providerFailure(error: unknown, durationMs: number): AttemptFailure {
+  if (!(error instanceof AiProviderError)) {
+    return {
+      stage: "provider_transport",
+      code: "unexpected_provider_error",
+      retryPrimary: false,
+      allowFallback: false,
+      durationMs,
+    };
+  }
+
+  const eligible = isProviderFailureRetryable(error.kind);
+  return {
+    stage: providerStage(error.kind),
+    code: error.kind,
+    retryPrimary: eligible,
+    allowFallback: eligible,
+    durationMs,
+    httpStatusClass: error.httpStatusClass,
+  };
+}
+
+function contentFailure(stage: AiFailureStage, code: string, durationMs: number): AttemptFailure {
+  return { stage, code, retryPrimary: true, allowFallback: false, durationMs };
+}
+
+function isProviderFailureRetryable(kind: AiProviderErrorKind): boolean {
+  return kind !== "non_retryable_http";
+}
+
+function providerStage(kind: AiProviderErrorKind): AiFailureStage {
+  if (kind === "transport") return "provider_transport";
+  if (kind === "retryable_http" || kind === "non_retryable_http") return "provider_http";
+  if (kind === "envelope_json") return "provider_envelope";
+  return "provider_content";
+}
+
+function isActionIssue(issue: string): boolean {
+  return issue.startsWith("今日行动") || issue.includes("预计时间");
+}
+
+function hasGroundedOutput(
+  routeKey: RouteKey,
+  output: RouteOutput,
+  input: Record<string, unknown>,
+  mode: "route" | "light_review",
+): boolean {
+  if (mode === "route") return hasGroundedRouteEvidence(routeKey, output.routeResult, input);
+  const record = asRecord(input.record);
+  return lightReviewBasisIsGrounded(output.routeResult?.reviewBasis, {
+    actualDone: record.actualDone,
+    payload: record.payload,
+  });
+}
+
+function lightReviewBasisIsGrounded(claims: unknown, source: unknown): boolean {
+  if (!Array.isArray(claims) || claims.length === 0) return false;
+  return claims.every(
+    (claim) =>
+      typeof claim === "string" &&
+      claim
+        .split("/")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .every((part) => claimsAreGrounded([part], source)),
+  );
+}
+
+function collectSchemaPaths(issues: Array<{ path: PropertyKey[] }>): string[] {
+  return Array.from(
+    new Set(
+      issues.map((issue) =>
+        (issue.path.length > 0 ? issue.path.map(String).join(".") : "$").replace(/[^a-zA-Z0-9_.[\]-]/g, "?"),
+      ),
+    ),
+  ).slice(0, 10);
+}
+
+async function reportAttemptFailure(
+  options: OrchestrateOutputInput,
+  providerRole: AiFailureEvent["providerRole"],
+  attempt: number,
+  failure: AttemptFailure,
+): Promise<void> {
+  const event: AiFailureEvent = {
+    requestId: options.requestId,
+    routeKey: options.routeKey,
+    mode: options.mode,
+    providerRole,
+    attempt,
+    stage: failure.stage,
+    code: failure.code,
+    durationBucket: durationBucket(failure.durationMs),
+    ...(failure.schemaPaths ? { schemaPaths: failure.schemaPaths } : {}),
+    ...(failure.httpStatusClass ? { httpStatusClass: failure.httpStatusClass } : {}),
+  };
+
+  try {
+    await options.reporter.report(event);
+  } catch {
+    // Diagnostics must never change the user-visible orchestration result.
+  }
+}
+
+function durationBucket(durationMs: number): AiFailureEvent["durationBucket"] {
+  if (durationMs < 100) return "lt_100ms";
+  if (durationMs < 500) return "100_499ms";
+  if (durationMs < 2000) return "500_1999ms";
+  return "gte_2000ms";
+}
+
+function nowMs(): number {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+function createRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? "untracked-request";
+}
+
+function resolveProviders(
+  legacyProvider?: AiProvider,
+  primary?: AiProvider,
+  fallback?: AiProvider,
+): { primary?: AiProvider; fallback?: AiProvider } {
+  if (primary) return { primary, fallback };
+  if (legacyProvider && isProviderSet(legacyProvider)) {
+    return { primary: legacyProvider.primary, fallback: fallback ?? legacyProvider.fallback };
+  }
+  return { primary: legacyProvider, fallback };
+}
+
+function isProviderSet(provider: AiProvider): provider is AiProviderSet {
+  return "primary" in provider && isRecord(provider.primary) && typeof provider.primary.generate === "function";
 }
 
 function makeMissingInfoOutput(routeKey: RouteKey, input: Record<string, unknown>): RouteOutput {

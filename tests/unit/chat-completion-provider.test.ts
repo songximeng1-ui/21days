@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  ChatCompletionProvider,
-  RetryFallbackAiProvider,
-  createAiProviderFromEnv,
-} from "@/ai/chat-completion-provider";
+import { ChatCompletionProvider, createAiProviderFromEnv } from "@/ai/chat-completion-provider";
+import { AiProviderError } from "@/ai/provider";
 import { MockAiProvider } from "@/ai/mock-provider";
 
 const validOutput = {
@@ -147,62 +144,82 @@ describe("ChatCompletionProvider", () => {
     expect(messages).toContain("recordType: application");
   });
 
-  it("uses DeepSeek env config before falling back to mock provider", () => {
-    const provider = createAiProviderFromEnv({
-      DEEPSEEK_API_KEY: "deepseek-key",
-      DEEPSEEK_MODEL: "deepseek-chat",
-    });
-
-    expect(provider).toBeInstanceOf(RetryFallbackAiProvider);
-  });
-
-  it("calls Qwen only after the DeepSeek primary model fails after retry", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("primary failure", { status: 500 }))
-      .mockResolvedValueOnce(new Response("primary retry failure", { status: 503 }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: JSON.stringify(validOutput) } }],
-          }),
-          { status: 200 },
+  it.each([
+    {
+      name: "transport",
+      response: () => Promise.reject(new Error("network includes secret-test-key")),
+      kind: "transport",
+    },
+    {
+      name: "retryable HTTP",
+      response: () => Promise.resolve(new Response("sensitive response body", { status: 503 })),
+      kind: "retryable_http",
+    },
+    {
+      name: "non-retryable HTTP",
+      response: () => Promise.resolve(new Response("sensitive response body", { status: 400 })),
+      kind: "non_retryable_http",
+    },
+    {
+      name: "provider-envelope JSON",
+      response: () => Promise.resolve(new Response("sensitive response body", { status: 200 })),
+      kind: "envelope_json",
+    },
+    {
+      name: "empty content",
+      response: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ choices: [{ message: { content: "   " } }] }), { status: 200 }),
         ),
-      );
-    const provider = createAiProviderFromEnv(
-      {
-        DEEPSEEK_API_KEY: "deepseek-key",
-        DEEPSEEK_BASE_URL: "https://deepseek.example.com",
-        DEEPSEEK_MODEL: "deepseek-chat",
-        QWEN_API_KEY: "qwen-key",
-        QWEN_BASE_URL: "https://qwen.example.com/compatible-mode/v1",
-        QWEN_MODEL: "qwen-plus",
-      },
-      fetchMock,
-    );
-
-    const result = await provider.generate({
-      routeKey: "experience_to_resume",
-      input: {
-        targetDirection: "运营",
-        rawExperience: "社团活动",
-        actualActions: "整理报名表",
-        deliverableOrResult: "报名名单",
-      },
+      kind: "empty_content",
+    },
+    {
+      name: "model-content JSON",
+      response: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ choices: [{ message: { content: "sensitive response body" } }] }), {
+            status: 200,
+          }),
+        ),
+      kind: "model_json",
+    },
+  ])("makes one HTTP request and exposes a sanitized $name error", async ({ response, kind }) => {
+    const fetchMock = vi.fn(response);
+    const provider = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.example.com?secret=query-value",
+      model: "test-model",
+      fetchFn: fetchMock,
     });
+    const sensitiveInput = "sensitive user input";
 
-    expect(result.todayAction.actionType).toBe("experience_fact");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[0][0]).toBe("https://deepseek.example.com/chat/completions");
-    expect(fetchMock.mock.calls[1][0]).toBe("https://deepseek.example.com/chat/completions");
-    expect(fetchMock.mock.calls[2][0]).toBe("https://qwen.example.com/compatible-mode/v1/chat/completions");
+    const error = await provider
+      .generate({
+        routeKey: "experience_to_resume",
+        input: {
+          targetDirection: sensitiveInput,
+          rawExperience: "sensitive prompt material",
+          actualActions: "整理报名表",
+          deliverableOrResult: "报名名单",
+        },
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(error).toBeInstanceOf(AiProviderError);
+    expect((error as AiProviderError).kind).toBe(kind);
+    const serialized = JSON.stringify({
+      ...(error as object),
+      name: (error as Error).name,
+      message: (error as Error).message,
+    });
+    expect(serialized).not.toMatch(
+      /secret-test-key|sensitive user input|sensitive prompt material|Authorization|sensitive response body|query-value/i,
+    );
   });
 
-  it("does not call Qwen for primary model bad request responses", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("bad request", { status: 400 }))
-      .mockResolvedValueOnce(new Response("bad request again", { status: 400 }));
+  it("returns an explicit primary/fallback provider set whose generate call is single-attempt", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("primary failure", { status: 503 }));
     const provider = createAiProviderFromEnv(
       {
         DEEPSEEK_API_KEY: "deepseek-key",
@@ -223,129 +240,10 @@ describe("ChatCompletionProvider", () => {
           deliverableOrResult: "报名名单",
         },
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ kind: "retryable_http" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls.every((call) => String(call[0]).includes("deepseek.example.com"))).toBe(true);
-  });
-
-  it("does not call fallback for unexpected primary errors that are not service availability failures", async () => {
-    const primary = {
-      generate: vi.fn().mockRejectedValue(new Error("unexpected primary bug")),
-    };
-    const fallback = {
-      generate: vi.fn().mockResolvedValue(validOutput),
-    };
-    const provider = new RetryFallbackAiProvider({
-      primary,
-      fallback,
-      primaryAttempts: 2,
-    });
-
-    await expect(
-      provider.generate({
-        routeKey: "experience_to_resume",
-        input: {
-          targetDirection: "运营",
-          rawExperience: "社团活动",
-          actualActions: "整理报名表",
-          deliverableOrResult: "报名名单",
-        },
-      }),
-    ).rejects.toThrow("unexpected primary bug");
-
-    expect(primary.generate).toHaveBeenCalledTimes(2);
-    expect(fallback.generate).not.toHaveBeenCalled();
-  });
-
-  it("calls Qwen after the primary model returns invalid JSON twice", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: "not json" } }],
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: "still not json" } }],
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: JSON.stringify(validOutput) } }],
-          }),
-          { status: 200 },
-        ),
-      );
-    const provider = createAiProviderFromEnv(
-      {
-        DEEPSEEK_API_KEY: "deepseek-key",
-        DEEPSEEK_BASE_URL: "https://deepseek.example.com",
-        QWEN_API_KEY: "qwen-key",
-        QWEN_BASE_URL: "https://qwen.example.com/compatible-mode/v1",
-      },
-      fetchMock,
-    );
-
-    const result = await provider.generate({
-      routeKey: "experience_to_resume",
-      input: {
-        targetDirection: "运营",
-        rawExperience: "社团活动",
-        actualActions: "整理报名表",
-        deliverableOrResult: "报名名单",
-      },
-    });
-
-    expect(result.todayAction.actionType).toBe("experience_fact");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[2][0]).toBe("https://qwen.example.com/compatible-mode/v1/chat/completions");
-  });
-
-  it("calls Qwen after the primary provider returns an invalid JSON response body twice", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("not a json body", { status: 200 }))
-      .mockResolvedValueOnce(new Response("still not a json body", { status: 200 }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: JSON.stringify(validOutput) } }],
-          }),
-          { status: 200 },
-        ),
-      );
-    const provider = createAiProviderFromEnv(
-      {
-        DEEPSEEK_API_KEY: "deepseek-key",
-        DEEPSEEK_BASE_URL: "https://deepseek.example.com",
-        QWEN_API_KEY: "qwen-key",
-        QWEN_BASE_URL: "https://qwen.example.com/compatible-mode/v1",
-      },
-      fetchMock,
-    );
-
-    const result = await provider.generate({
-      routeKey: "experience_to_resume",
-      input: {
-        targetDirection: "运营",
-        rawExperience: "社团活动",
-        actualActions: "整理报名表",
-        deliverableOrResult: "报名名单",
-      },
-    });
-
-    expect(result.todayAction.actionType).toBe("experience_fact");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[2][0]).toBe("https://qwen.example.com/compatible-mode/v1/chat/completions");
+    expect(provider).toMatchObject({ primary: expect.anything(), fallback: expect.anything() });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to mock provider in non-production when DeepSeek is not configured", () => {

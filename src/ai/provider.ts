@@ -16,13 +16,27 @@ export interface AiProvider {
   generate(input: AiProviderInput): Promise<RouteOutput>;
 }
 
+export interface AiProviderSet extends AiProvider {
+  readonly primary: AiProvider;
+  readonly fallback?: AiProvider;
+}
+
+export type AiProviderErrorKind =
+  | "transport"
+  | "retryable_http"
+  | "non_retryable_http"
+  | "envelope_json"
+  | "empty_content"
+  | "model_json";
+
+export type AiHttpStatusClass = "3xx" | "4xx" | "5xx";
+
 export class AiProviderError extends Error {
   constructor(
-    message = "AI provider unavailable",
-    readonly kind: "service_unavailable" | "invalid_json" | "empty_response" | "invalid_request" =
-      "service_unavailable",
+    readonly kind: AiProviderErrorKind = "transport",
+    readonly httpStatusClass?: AiHttpStatusClass,
   ) {
-    super(message);
+    super("AI provider request failed");
     this.name = "AiProviderError";
   }
 }

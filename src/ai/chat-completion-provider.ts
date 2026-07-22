@@ -1,4 +1,10 @@
-import { AiProviderError, type AiProvider, type AiProviderInput } from "@/ai/provider";
+import {
+  AiProviderError,
+  type AiHttpStatusClass,
+  type AiProvider,
+  type AiProviderInput,
+  type AiProviderSet,
+} from "@/ai/provider";
 import { MockAiProvider } from "@/ai/mock-provider";
 import type { RouteOutput } from "@/domain/types";
 
@@ -12,12 +18,6 @@ type ChatCompletionProviderOptions = {
 };
 
 type ProviderEnv = Record<string, string | undefined>;
-type RetryFallbackAiProviderOptions = {
-  primary: AiProvider;
-  fallback?: AiProvider;
-  primaryAttempts?: number;
-};
-
 export class ChatCompletionProvider implements AiProvider {
   private readonly fetchFn: FetchLike;
   private readonly completionsUrl: string;
@@ -55,12 +55,12 @@ export class ChatCompletionProvider implements AiProvider {
         }),
       });
     } catch {
-      throw new AiProviderError("AI provider request failed", "service_unavailable");
+      throw new AiProviderError("transport");
     }
 
     if (!response.ok) {
-      const kind = isRetryableProviderStatus(response.status) ? "service_unavailable" : "invalid_request";
-      throw new AiProviderError(`AI provider returned ${response.status}`, kind);
+      const kind = isRetryableProviderStatus(response.status) ? "retryable_http" : "non_retryable_http";
+      throw new AiProviderError(kind, getHttpStatusClass(response.status));
     }
 
     let payload: {
@@ -72,18 +72,18 @@ export class ChatCompletionProvider implements AiProvider {
         choices?: Array<{ message?: { content?: string } }>;
       };
     } catch {
-      throw new AiProviderError("AI provider returned invalid JSON body", "invalid_json");
+      throw new AiProviderError("envelope_json");
     }
     const content = payload.choices?.[0]?.message?.content;
 
-    if (!content) {
-      throw new AiProviderError("AI provider returned an empty response", "empty_response");
+    if (!content?.trim()) {
+      throw new AiProviderError("empty_content");
     }
 
     try {
       return JSON.parse(stripJsonFence(content)) as RouteOutput;
     } catch {
-      throw new AiProviderError("AI provider returned invalid JSON", "invalid_json");
+      throw new AiProviderError("model_json");
     }
   }
 }
@@ -92,38 +92,22 @@ function isRetryableProviderStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
 }
 
-export class RetryFallbackAiProvider implements AiProvider {
-  private readonly primaryAttempts: number;
+class ConfiguredAiProviderSet implements AiProviderSet {
+  constructor(
+    readonly primary: AiProvider,
+    readonly fallback?: AiProvider,
+  ) {}
 
-  constructor(private readonly options: RetryFallbackAiProviderOptions) {
-    this.primaryAttempts = options.primaryAttempts ?? 2;
-  }
-
-  async generate(input: AiProviderInput): Promise<RouteOutput> {
-    let lastError: unknown;
-
-    for (let attempt = 0; attempt < this.primaryAttempts; attempt += 1) {
-      try {
-        return await this.options.primary.generate(input);
-      } catch (error) {
-        lastError = error;
-      }
-    }
-
-    if (this.options.fallback) {
-      if (lastError instanceof AiProviderError && isFallbackEligible(lastError)) {
-        return this.options.fallback.generate(input);
-      }
-
-      throw lastError instanceof Error ? lastError : new AiProviderError("AI provider failed", "invalid_request");
-    }
-
-    throw lastError instanceof Error ? lastError : new AiProviderError();
+  generate(input: AiProviderInput): Promise<RouteOutput> {
+    return this.primary.generate(input);
   }
 }
 
-function isFallbackEligible(error: AiProviderError): boolean {
-  return error.kind === "service_unavailable" || error.kind === "invalid_json" || error.kind === "empty_response";
+function getHttpStatusClass(status: number): AiHttpStatusClass | undefined {
+  if (status >= 300 && status < 400) return "3xx";
+  if (status >= 400 && status < 500) return "4xx";
+  if (status >= 500 && status < 600) return "5xx";
+  return undefined;
 }
 
 export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?: FetchLike): AiProvider {
@@ -144,11 +128,7 @@ export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?
         })
       : undefined;
 
-    return new RetryFallbackAiProvider({
-      primary,
-      fallback,
-      primaryAttempts: 2,
-    });
+    return new ConfiguredAiProviderSet(primary, fallback);
   }
 
   return new MockAiProvider(env.NODE_ENV === "production" ? "provider_failure" : "success");
