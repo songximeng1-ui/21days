@@ -943,6 +943,42 @@ describe("generateRouteOutput", () => {
   });
 
   it.each([
+    [
+      "safety then model JSON",
+      (output: RouteOutput) => ({ ...output, shortAssessment: "match rate 90%" }),
+      "model_json" as const,
+    ],
+    [
+      "model JSON then safety",
+      (output: RouteOutput) => ({ ...output, shortAssessment: "match rate 90%" }),
+      "model_json" as const,
+    ],
+  ])(
+    "does not call fallback after mixed primary failures: %s",
+    async (_name, makeSafetyFailure, machineFailure) => {
+      const validOutput = await makeValidExperienceOutput();
+      const primary = {
+        generate:
+          _name === "safety then model JSON"
+            ? vi.fn().mockResolvedValueOnce(makeSafetyFailure(validOutput)).mockRejectedValueOnce(new AiProviderError(machineFailure))
+            : vi.fn().mockRejectedValueOnce(new AiProviderError(machineFailure)).mockResolvedValueOnce(makeSafetyFailure(validOutput)),
+      };
+      const fallback = { generate: vi.fn().mockResolvedValue(validOutput) };
+
+      const result = await generateRouteOutput({
+        routeKey: "experience_to_resume",
+        input: sufficientExperienceInput,
+        primary,
+        fallback,
+      });
+
+      expect(result.outputType).toBe("friendly_failure");
+      expect(primary.generate).toHaveBeenCalledTimes(2);
+      expect(fallback.generate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     ["Zod", () => ({ broken: true }) as unknown as RouteOutput],
     ["route", (output: RouteOutput) => ({ ...output, routeKey: "jd_to_revision" }) as RouteOutput],
     [

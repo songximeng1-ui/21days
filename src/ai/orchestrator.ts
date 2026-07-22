@@ -131,19 +131,19 @@ type AttemptResult =
 async function orchestrateOutput(options: OrchestrateOutputInput): Promise<RouteOutput> {
   if (!options.primary) return makeFriendlyFailureOutput(options.routeKey);
 
-  let exhaustedFailure: AttemptFailure | undefined;
+  let primaryFailuresAllowFallback = true;
   let retryFeedback: AiRetryFeedback | undefined;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const result = await generateAndValidate(options.primary, options, retryFeedback);
     if (result.output) return result.output;
 
-    exhaustedFailure = result.failure;
+    primaryFailuresAllowFallback = primaryFailuresAllowFallback && result.failure.allowFallback;
     await reportAttemptFailure(options, "primary", attempt, result.failure);
     if (!result.failure.retryPrimary) return makeFriendlyFailureOutput(options.routeKey);
     retryFeedback = toRetryFeedback(result.failure);
   }
 
-  if (exhaustedFailure?.allowFallback && options.fallback) {
+  if (primaryFailuresAllowFallback && options.fallback) {
     const result = await generateAndValidate(options.fallback, options);
     if (result.output) return result.output;
     await reportAttemptFailure(options, "fallback", 1, result.failure);
