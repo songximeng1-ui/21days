@@ -64,6 +64,27 @@ describe("scanSafetyViolations", () => {
     );
   });
 
+  it.each([
+    "经历写得太泛导致没有反馈。",
+    "材料问题造成未通过。",
+    "学历不符所以被拒绝。",
+  ])("blocks reversed causal failure attribution: %s", (text) => {
+    expect(scanSafetyViolations(text).blockedReasons).toContain("禁止猜测公司筛选规则或失败原因");
+  });
+
+  it("allows explicitly uncertain, non-causal application clues", () => {
+    expect(
+      scanSafetyViolations("两条记录使用了同一材料版本，这是待验证线索，当前记录不能确认原因。"),
+    ).toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it.each(["建议海投", "建议大量投递", "apply to as many jobs as possible"])(
+    "blocks blind mass-application advice: %s",
+    (text) => {
+      expect(scanSafetyViolations(text).blockedReasons).toContain("禁止鼓励盲目海投");
+    },
+  );
+
   it("blocks internal workflow terms, absolute application conclusions, and ordinary fit judgments", () => {
     const result = scanSafetyViolations(
       "主模型重试失败，已切换副模型。你适合做产品，这份岗位不能投，主要卡在学历。",
