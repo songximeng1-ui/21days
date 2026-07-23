@@ -149,6 +149,10 @@ describe("scanSafetyViolations", () => {
       text: "不输出能投结论却可以直接投这个岗位",
       reasons: ["禁止给出绝对投递结论"],
     },
+    {
+      text: "不得输出模糊判断而是你能投这个岗位",
+      reasons: ["禁止给出绝对投递结论"],
+    },
   ])("preserves affirmative violations after a compliant reminder: $text", ({ text, reasons }) => {
     const result = scanSafetyViolations(text);
 
