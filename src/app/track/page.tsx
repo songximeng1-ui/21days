@@ -56,9 +56,7 @@ export default function TrackPage() {
         </div>
 
         <Link className="primary-button" href="/">回到今天的行动</Link>
-        {records.length > 0 && (
-          <button className="danger-button" onClick={clearAll}>清空我的记录</button>
-        )}
+        <button className="danger-button" onClick={clearAll}>清空我的记录</button>
       </section>
     </main>
   );
