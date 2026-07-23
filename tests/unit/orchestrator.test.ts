@@ -313,6 +313,71 @@ describe("generateRouteOutput", () => {
     expect(fallback.generate).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "direction_to_jobs" as const,
+      {
+        educationBackground: "市场营销专业",
+        realExperiences: ["不确定"],
+        interestsOrAcceptables: "不排斥活动执行",
+      },
+    ],
+    [
+      "experience_to_resume" as const,
+      {
+        targetDirection: "运营",
+        rawExperience: "社团经历",
+        actualActions: {},
+        deliverableOrResult: "形成报名表",
+      },
+    ],
+    [
+      "jd_to_revision" as const,
+      {
+        targetJobTitle: "运营实习生",
+        jdTextOrRequirements: "负责内容整理",
+        userMaterial: { value: "暂时没有" },
+      },
+    ],
+    [
+      "applications_to_review" as const,
+      {
+        applications: [
+          {
+            jobTitle: ["不确定"],
+            companyOrPlatform: "A 公司",
+            submittedAt: "7 月 1 日",
+            feedbackStatus: "暂无反馈",
+            jdSummary: "负责内容整理",
+            materialVersion: "社团经历版",
+          },
+          {
+            jobTitle: "新媒体运营实习",
+            companyOrPlatform: "B 公司",
+            submittedAt: "7 月 3 日",
+            feedbackStatus: "已查看",
+            jdSummary: "负责选题和数据记录",
+            materialVersion: "项目经历版",
+          },
+        ],
+      },
+    ],
+  ])("does not call providers for non-concrete structured $routeKey input", async (routeKey, input) => {
+    const primary = { generate: vi.fn() };
+    const fallback = { generate: vi.fn() };
+
+    const result = await generateRouteOutput({
+      routeKey,
+      input,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("missing_info");
+    expect(primary.generate).not.toHaveBeenCalled();
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
   it("retries the primary direction route and accepts the exact tentative phrase on the second attempt", async () => {
     const generated = await new MockAiProvider("success").generate({
       routeKey: "direction_to_jobs",

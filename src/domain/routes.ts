@@ -73,21 +73,17 @@ function hasApplicationReviewDetails(value: unknown): boolean {
 }
 
 function hasMeaningfulValue(value: unknown): boolean {
-  if (typeof value === "string") {
-    const cleaned = value.trim();
-    return cleaned.length > 0 && !isPlaceholderValue(cleaned);
+  if (typeof value !== "string") {
+    return false;
   }
 
-  if (Array.isArray(value)) {
-    return value.length > 0;
-  }
-
-  return value !== null && value !== undefined;
+  const cleaned = value.trim();
+  return cleaned.length > 0 && !isPlaceholderValue(cleaned);
 }
 
 export function isPlaceholderValue(value: string): boolean {
-  return /^(不确定|不知道|不清楚|暂时没有|还没整理|没有|无|无明确版本|unknown|not sure|none)$/i.test(
-    value.trim()
+  return /^(不确定|暂时不确定|不知道|还不知道|不清楚|暂时没有|目前没有|还没整理|尚未整理|没有|无|无明确版本|unknown|not sure|none)[。.!！]?$/i.test(
+    value.trim(),
   );
 }
 
