@@ -146,6 +146,19 @@ describe("scanSafetyViolations", () => {
     expect(result.blockedReasons).toEqual(expect.arrayContaining(reasons));
   });
 
+  it.each([
+    "不要编造经历然后主导整个项目",
+    "不要把参与写成主导接着全权负责项目",
+    "不要编造经历随后包装成全权负责项目",
+    "不要把参与写成主导再主导预算规划",
+    "不要编造经历进而包装成全权负责项目",
+  ])("retains a sequential strong-role violation after a compliant reminder: %s", (text) => {
+    const result = scanSafetyViolations(text);
+
+    expect(result.passed).toBe(false);
+    expect(result.blockedReasons).toContain("禁止夸大职责或成果");
+  });
+
   it("blocks reversed absolute-application wording and disguised failure attribution", () => {
     const result = scanSafetyViolations("你可以直接投这个岗位；无反馈说明简历不行。");
 
