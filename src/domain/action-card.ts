@@ -15,6 +15,7 @@ const VAGUE_ACTION_PATTERNS = [
 ];
 const CONCRETE_STEP_PATTERNS = [/保存|记录|复制|找到|打开|列出|标出|补|删|圈出|选择|填写|确认|搜索/];
 const UNCERTAINTY_MARKERS = /可能|待验证|需验证|尚不确定|无法确认|不能确认/;
+const NEGATED_POSSIBILITY_MARKERS = /不可能|绝无可能|没有可能|不太可能/;
 
 export function validateRouteOutput(output: RouteOutput): ValidationResult {
   const issues: string[] = [];
@@ -156,6 +157,11 @@ function hasUncertainStringArray(value: unknown, min: number, max: number): bool
   return (
     Array.isArray(value) &&
     hasStringArray(value, min, max) &&
-    value.every((item: unknown) => typeof item === "string" && UNCERTAINTY_MARKERS.test(item))
+    value.every(
+      (item: unknown) =>
+        typeof item === "string" &&
+        !NEGATED_POSSIBILITY_MARKERS.test(item) &&
+        UNCERTAINTY_MARKERS.test(item),
+    )
   );
 }

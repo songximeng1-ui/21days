@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scanSafetyViolations } from "@/domain/safety";
+import { scanRouteSafety, scanSafetyViolations } from "@/domain/safety";
 
 describe("scanSafetyViolations", () => {
   it("blocks outcome promises, fit scoring, fabricated evidence, and internal terms", () => {
@@ -114,5 +114,50 @@ describe("scanSafetyViolations", () => {
       "禁止给出绝对投递结论",
       "禁止猜测公司筛选规则或失败原因",
     ]));
+  });
+
+  it("allows a grounded experience leadership marker only with allowlisted route provenance", () => {
+    const output = {
+      routeResult: {
+        confirmedFacts: ["主导整理信息并排版"],
+        resumeSnippetDraft: "主导整理信息并排版。",
+        supportingFacts: ["主导整理信息并排版"],
+      },
+    };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: { actualActions: "主导整理信息并排版" },
+      }),
+    ).toEqual({ passed: true, blockedReasons: [] });
+    expect(scanRouteSafety("experience_to_resume", output).blockedReasons).toContain("禁止夸大职责或成果");
+  });
+
+  it("does not exempt an ungrounded leadership claim outside the resume draft", () => {
+    const output = {
+      shortAssessment: "你主导了整体工作。",
+      routeResult: { resumeSnippetDraft: "主导整理信息并排版。" },
+    };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: { actualActions: "主导整理信息并排版" },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
+
+  it("does not use non-allowlisted provenance or provenance from another route", () => {
+    const output = { routeResult: { resumeSnippetDraft: "主导整理信息并排版。" } };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: { privateNotes: "主导整理信息并排版" },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+    expect(
+      scanRouteSafety("jd_to_revision", output, {
+        routeInput: { actualActions: "主导整理信息并排版" },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
   });
 });

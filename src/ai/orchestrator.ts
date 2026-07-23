@@ -207,8 +207,15 @@ async function generateAndValidate(
   }
 
   const validation = validateRouteOutput(output);
-  const safety = scanRouteSafety(output.routeKey, output);
-  const nonSafetyIssues = validation.issues.filter((issue) => !safety.blockedReasons.includes(issue));
+  const safetyWithoutProvenance = scanRouteSafety(output.routeKey, output);
+  const safety = scanRouteSafety(
+    output.routeKey,
+    output,
+    options.mode === "route" ? { routeInput: options.input } : undefined,
+  );
+  const nonSafetyIssues = validation.issues.filter(
+    (issue) => !safetyWithoutProvenance.blockedReasons.includes(issue),
+  );
   const routeShapeIssues = nonSafetyIssues.filter((issue) => !isActionIssue(issue));
   if (routeShapeIssues.length > 0) {
     return { failure: contentFailure("route_shape", "route_shape", durationMs) };

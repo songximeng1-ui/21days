@@ -3,6 +3,12 @@ type SafetyScanResult = {
   blockedReasons: string[];
 };
 
+type RouteSafetyContext = {
+  routeInput?: Record<string, unknown>;
+};
+
+const EXAGGERATION_REASON = "禁止夸大职责或成果";
+
 const BLOCKERS: Array<{ reason: string; patterns: RegExp[] }> = [
   {
     reason: "禁止输出匹配度、录取概率或适合度评分",
@@ -79,10 +85,18 @@ function stripCompliantGuardrailReminders(text: string): string {
     .replace(/(?:不输出|不能输出|不得输出|不给出|不能给出|不得给出)[^。；，,.]*(?:能投|不能投|匹配度|录取概率)[^。；，,.]*[。；，,.]?/gi, "");
 }
 
-export function scanRouteSafety(routeKey: string, output: unknown): SafetyScanResult {
+export function scanRouteSafety(
+  routeKey: string,
+  output: unknown,
+  context?: RouteSafetyContext,
+): SafetyScanResult {
   const text = JSON.stringify(output);
   const base = scanSafetyViolations(text);
-  const blockedReasons = [...base.blockedReasons];
+  const blockedReasons = base.blockedReasons.filter(
+    (reason) =>
+      reason !== EXAGGERATION_REASON ||
+      !canExemptGroundedExperienceLeadership(routeKey, output, context?.routeInput),
+  );
 
   if (routeKey === "jd_to_revision" && /没有 JD 却|no JD but/i.test(text)) {
     blockedReasons.push("没有真实 JD 时不能做深度岗位判断");
@@ -96,4 +110,40 @@ export function scanRouteSafety(routeKey: string, output: unknown): SafetyScanRe
     passed: blockedReasons.length === 0,
     blockedReasons: Array.from(new Set(blockedReasons)),
   };
+}
+
+function canExemptGroundedExperienceLeadership(
+  routeKey: string,
+  output: unknown,
+  routeInput?: Record<string, unknown>,
+): boolean {
+  if (routeKey !== "experience_to_resume" || !isRecord(output) || !routeInput) return false;
+  const routeResult = output.routeResult;
+  if (!isRecord(routeResult) || typeof routeResult.resumeSnippetDraft !== "string") return false;
+
+  const sourceTexts = ["targetDirection", "rawExperience", "actualActions", "deliverableOrResult"]
+    .map((field) => routeInput[field])
+    .filter((value): value is string => typeof value === "string" && value.includes("主导"));
+  if (sourceTexts.length === 0 || !routeResult.resumeSnippetDraft.includes("主导")) return false;
+
+  const sanitizedResult = {
+    ...routeResult,
+    resumeSnippetDraft: routeResult.resumeSnippetDraft.replaceAll("主导", ""),
+    confirmedFacts: stripGroundedLeadershipClaims(routeResult.confirmedFacts, sourceTexts),
+    supportingFacts: stripGroundedLeadershipClaims(routeResult.supportingFacts, sourceTexts),
+  };
+  const remainingOutput = { ...output, routeResult: sanitizedResult };
+  return !scanSafetyViolations(JSON.stringify(remainingOutput)).blockedReasons.includes(EXAGGERATION_REASON);
+}
+
+function stripGroundedLeadershipClaims(value: unknown, sourceTexts: string[]): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((claim) => {
+    if (typeof claim !== "string" || !sourceTexts.some((sourceText) => sourceText.includes(claim))) return claim;
+    return claim.replaceAll("主导", "");
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

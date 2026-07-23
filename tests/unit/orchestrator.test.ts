@@ -369,16 +369,19 @@ describe("generateRouteOutput", () => {
     expect(fallback.generate).not.toHaveBeenCalled();
   });
 
-  it("allows an experience draft role marker that exists in the allowlisted source input", async () => {
-    const input = { ...sufficientExperienceInput, actualActions: "负责整理信息并排版" };
-    const generated = await new MockAiProvider("success").generate({ routeKey: "experience_to_resume", input });
-    const primary = { generate: vi.fn().mockResolvedValue(generated) };
+  it.each(["主导", "负责", "独立负责", "独立完成"])(
+    "allows the grounded experience role marker %s from allowlisted source input",
+    async (roleMarker) => {
+      const input = { ...sufficientExperienceInput, actualActions: `${roleMarker}整理信息并排版` };
+      const generated = await new MockAiProvider("success").generate({ routeKey: "experience_to_resume", input });
+      const primary = { generate: vi.fn().mockResolvedValue(generated) };
 
-    const result = await generateRouteOutput({ routeKey: "experience_to_resume", input, primary });
+      const result = await generateRouteOutput({ routeKey: "experience_to_resume", input, primary });
 
-    expect(result.outputType).toBe("route_result");
-    expect(primary.generate).toHaveBeenCalledTimes(1);
-  });
+      expect(result.outputType).toBe("route_result");
+      expect(primary.generate).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("rejects an application clue when any item lacks an uncertainty marker", async () => {
     const generated = await new MockAiProvider("success").generate({
@@ -405,6 +408,63 @@ describe("generateRouteOutput", () => {
     expect(result.outputType).toBe("friendly_failure");
     expect(primary.generate).toHaveBeenCalledTimes(2);
     expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "不可能是材料版本造成的差异，仍待验证",
+    "绝无可能需要继续验证",
+    "没有可能与反馈状态相关",
+    "不太可能是记录差异",
+  ])("rejects a negated possibility as an application uncertainty clue: %s", async (possibleClue) => {
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "applications_to_review",
+      input: sufficientApplicationInput,
+    });
+    const invalidOutput = {
+      ...generated,
+      routeResult: { ...generated.routeResult, possibleClues: [possibleClue] },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(invalidOutput) };
+    const fallback = { generate: vi.fn().mockResolvedValue(generated) };
+
+    const result = await generateRouteOutput({
+      routeKey: "applications_to_review",
+      input: sufficientApplicationInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "可能需要继续核对",
+    "待验证线索：反馈状态不同",
+    "需验证材料版本差异",
+    "尚不确定是否存在差异",
+    "无法确认具体原因",
+    "不能确认具体原因",
+  ])("allows a genuinely uncertain application clue: %s", async (possibleClue) => {
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "applications_to_review",
+      input: sufficientApplicationInput,
+    });
+    const validOutput = {
+      ...generated,
+      routeResult: { ...generated.routeResult, possibleClues: [possibleClue] },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(validOutput) };
+
+    const result = await generateRouteOutput({
+      routeKey: "applications_to_review",
+      input: sufficientApplicationInput,
+      primary,
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
   });
 
   it("keeps friendly failure outside the 15-30 minute action contract", async () => {
