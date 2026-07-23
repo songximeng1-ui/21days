@@ -731,9 +731,17 @@ function buildStageSpecificRetryGuidance(
   isLightReview: boolean,
 ): string[] {
   if (feedback.stage === "safety" && feedback.code === "safety_boundary") {
-    return routeKey === "direction_to_jobs" && !isLightReview
-      ? ["删除违规结论，只重新生成使用“可以先探索”表达、且有证据支撑的路线内容。"]
-      : ["删除违规结论，重新生成有证据支撑、符合当前路线契约的内容。"];
+    if (routeKey === "direction_to_jobs" && !isLightReview) {
+      return ["删除违规结论，只重新生成使用“可以先探索”表达、且有证据支撑的路线内容。"];
+    }
+    if (routeKey === "experience_to_resume" && !isLightReview) {
+      return [
+        "删除违规结论，重新生成有证据支撑、符合当前路线契约的内容。",
+        "resumeSnippetDraft 及所有角色表述只能使用来源中逐字肯定的角色强度。",
+        "没有完全相同的肯定强角色事实时，只能使用“参与”或“协助”，并删除所有角色升级表述。",
+      ];
+    }
+    return ["删除违规结论，重新生成有证据支撑、符合当前路线契约的内容。"];
   }
   if (feedback.stage === "grounding" && feedback.code === "grounding_failure") {
     return [

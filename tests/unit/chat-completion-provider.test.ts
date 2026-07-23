@@ -393,6 +393,66 @@ describe("ChatCompletionProvider", () => {
     expect(retrySection).not.toMatch(/UNSAFE_CANDIDATE_SECRET|PROVIDER_SECRET|DIRECTION_INPUT_SECRET/);
   });
 
+  it("adds source-strength guidance for a normal experience safety retry without replaying sensitive context", async () => {
+    const prompt = await capturePrompt({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "EXPERIENCE_INPUT_SECRET",
+        actualActions: "参与整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+      retryFeedback: {
+        stage: "safety",
+        code: "safety_boundary",
+        previousOutput: "EXPERIENCE_CANDIDATE_SECRET",
+        providerName: "EXPERIENCE_PROVIDER_SECRET",
+      },
+    } as AiProviderInput);
+    const retrySection = prompt.split("RETRY_CORRECTION_BEGIN")[1]?.split("RETRY_CORRECTION_END")[0] ?? "";
+
+    expect(retrySection).toContain("resumeSnippetDraft 及所有角色表述只能使用来源中逐字肯定的角色强度");
+    expect(retrySection).toContain(
+      "没有完全相同的肯定强角色事实时，只能使用“参与”或“协助”，并删除所有角色升级表述",
+    );
+    expect(retrySection).not.toMatch(
+      /EXPERIENCE_CANDIDATE_SECRET|EXPERIENCE_PROVIDER_SECRET|EXPERIENCE_INPUT_SECRET/,
+    );
+  });
+
+  it.each([
+    routePromptCases[0],
+    routePromptCases[2],
+    routePromptCases[3],
+    {
+      routeKey: "experience_to_resume" as const,
+      input: {
+        mode: "light_review",
+        record: {
+          actualDone: "确认了参与整理报名表",
+          payload: { actualActions: "参与整理报名表" },
+          userConfirmed: true,
+        },
+      },
+    },
+  ])("keeps experience role-strength guidance out of $routeKey non-target retries", async ({ routeKey, input }) => {
+    const prompt = await capturePrompt({
+      routeKey,
+      input,
+      retryFeedback: {
+        stage: "safety",
+        code: "safety_boundary",
+        previousOutput: "NON_TARGET_CANDIDATE_SECRET",
+        providerName: "NON_TARGET_PROVIDER_SECRET",
+      },
+    } as AiProviderInput);
+    const retrySection = prompt.split("RETRY_CORRECTION_BEGIN")[1]?.split("RETRY_CORRECTION_END")[0] ?? "";
+
+    expect(retrySection).not.toContain("resumeSnippetDraft 及所有角色表述");
+    expect(retrySection).not.toContain("没有完全相同的肯定强角色事实时");
+    expect(retrySection).not.toMatch(/NON_TARGET_CANDIDATE_SECRET|NON_TARGET_PROVIDER_SECRET/);
+  });
+
   it.each(routePromptCases.slice(1))(
     "keeps direction-only wording out of $routeKey safety retries",
     async ({ routeKey, input }) => {
