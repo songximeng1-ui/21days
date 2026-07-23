@@ -111,6 +111,16 @@ describe("scanSafetyViolations", () => {
   });
 
   it.each([
+    "不要编造经历",
+    "不要把参与写成主导",
+    "不要把协助写成负责",
+    "不评价你本人适不适合",
+    "不输出能投、不能投、匹配度或录取概率",
+  ])("allows a pure safety reminder without later affirmative content: %s", (text) => {
+    expect(scanSafetyViolations(text)).toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it.each([
     {
       text: "不要编造经历而应包装成全权负责项目",
       reasons: ["禁止编造经历、JD、数据、结果或反馈", "禁止夸大职责或成果"],
@@ -152,6 +162,8 @@ describe("scanSafetyViolations", () => {
     "不要编造经历随后包装成全权负责项目",
     "不要把参与写成主导再主导预算规划",
     "不要编造经历进而包装成全权负责项目",
+    "不要编造经历之后主导整个项目",
+    "不要编造经历接下来全权负责项目",
   ])("retains a sequential strong-role violation after a compliant reminder: %s", (text) => {
     const result = scanSafetyViolations(text);
 

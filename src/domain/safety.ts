@@ -78,24 +78,12 @@ export function scanSafetyViolations(text: string): SafetyScanResult {
 
 function stripCompliantGuardrailReminders(text: string): string {
   return text
+    .replace(/(?:不要|不能|不得|请勿|避免)编造/gi, "")
+    .replace(/(?:不要|不能|不得|请勿|避免)把参与写成主导/gi, "")
+    .replace(/(?:不要|不能|不得|请勿|避免)把协助写成负责/gi, "")
+    .replace(/(?:不评价|不能评价|不得评价)你本人适不适合/gi, "")
     .replace(
-      /(?:不要|不能|不得|请勿|避免)编造(?:(?!(?:而|但是|但|却|同时|改为|包装成|然后|接着|随后|再|进而|继而|but|however|instead|while|then|next))[^。；，,.])*[。；，,.]?/gi,
-      "",
-    )
-    .replace(
-      /(?:不要|不能|不得|请勿|避免)把参与写成主导(?:(?!(?:而|但是|但|却|同时|改为|包装成|然后|接着|随后|再|进而|继而|but|however|instead|while|then|next))[^。；，,.])*[。；，,.]?/gi,
-      "",
-    )
-    .replace(
-      /(?:不要|不能|不得|请勿|避免)把协助写成负责(?:(?!(?:而|但是|但|却|同时|改为|包装成|然后|接着|随后|再|进而|继而|but|however|instead|while|then|next))[^。；，,.])*[。；，,.]?/gi,
-      "",
-    )
-    .replace(
-      /(?:不评价|不能评价|不得评价)你本人适不适合(?:(?!(?:而|但是|但|却|同时|改为|包装成|然后|接着|随后|再|进而|继而|but|however|instead|while|then|next))[^。；，,.])*[。；，,.]?/gi,
-      "",
-    )
-    .replace(
-      /(?:不输出|不能输出|不得输出|不给出|不能给出|不得给出)(?:(?!(?:而|但是|但|却|同时|改为|包装成|然后|接着|随后|再|进而|继而|but|however|instead|while|then|next))[^。；，,.])*(?:能投|不能投|匹配度|录取概率)(?:(?!(?:而|但是|但|却|同时|改为|包装成|然后|接着|随后|再|进而|继而|but|however|instead|while|then|next))[^。；，,.])*[。；，,.]?/gi,
+      /(?:不输出|不能输出|不得输出|不给出|不能给出|不得给出)[^。；，,.]*?(?:能投|不能投|匹配度|录取概率)(?:\s*(?:或|和|、|\/)\s*(?:能投|不能投|匹配度|录取概率))*/gi,
       "",
     );
 }
