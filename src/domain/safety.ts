@@ -149,7 +149,7 @@ function stripGroundedLeadershipClaims(value: unknown, sourceTexts: string[]): u
       typeof claim !== "string" ||
       !hasAffirmativeRoleMarker(claim, "主导") ||
       !sourceTexts.some(
-        (sourceText) => sourceText.includes(claim) && hasAffirmativeRoleMarker(sourceText, "主导"),
+        (sourceText) => hasAffirmativeRoleClaim(sourceText, claim, "主导"),
       )
     ) return claim;
     return claim.replaceAll("主导", "");
@@ -164,11 +164,19 @@ export function hasGroundedExperienceRoleStrength(
 ): boolean {
   if (typeof draft !== "string") return false;
   const sourceTexts = routeInput ? collectExperienceRoleProvenance(routeInput) : [];
-  return EXPERIENCE_ROLE_MARKERS.every(
-    (marker) =>
-      !draft.includes(marker) ||
-      sourceTexts.some((sourceText) => hasAffirmativeRoleMarker(sourceText, marker)),
-  );
+  return EXPERIENCE_ROLE_MARKERS.every((marker) => {
+    let markerIndex = draft.indexOf(marker);
+    while (markerIndex >= 0) {
+      const comparableClaim = readComparableRoleClaim(draft, markerIndex);
+      const matchingSources = sourceTexts.filter((sourceText) => sourceText.includes(comparableClaim));
+      const grounded = matchingSources.length > 0
+        ? matchingSources.some((sourceText) => hasAffirmativeRoleClaim(sourceText, comparableClaim, marker))
+        : sourceTexts.some((sourceText) => hasAffirmativeRoleMarker(sourceText, marker));
+      if (!grounded) return false;
+      markerIndex = draft.indexOf(marker, markerIndex + marker.length);
+    }
+    return true;
+  });
 }
 
 function collectExperienceRoleProvenance(routeInput: Record<string, unknown>): string[] {
@@ -195,38 +203,61 @@ function hasAffirmativeRoleMarker(text: string, marker: string): boolean {
   while (fromIndex < text.length) {
     const markerIndex = text.indexOf(marker, fromIndex);
     if (markerIndex < 0) return false;
-    const clauseStart = Math.max(
-      text.lastIndexOf("。", markerIndex - 1),
-      text.lastIndexOf("；", markerIndex - 1),
-      text.lastIndexOf("，", markerIndex - 1),
-      text.lastIndexOf(".", markerIndex - 1),
-      text.lastIndexOf(";", markerIndex - 1),
-      text.lastIndexOf(",", markerIndex - 1),
-      text.lastIndexOf("！", markerIndex - 1),
-      text.lastIndexOf("？", markerIndex - 1),
-      text.lastIndexOf("!", markerIndex - 1),
-      text.lastIndexOf("?", markerIndex - 1),
-    ) + 1;
-    const prefix = text.slice(clauseStart, markerIndex);
-    const markerEnd = markerIndex + marker.length;
-    const sentenceEnd = ["。", "；", ".", ";", "！", "？", "!", "?"]
-      .map((separator) => text.indexOf(separator, markerEnd))
-      .filter((index) => index >= 0)
-      .reduce((nearest, index) => Math.min(nearest, index), text.length);
-    const suffix = text.slice(markerEnd, sentenceEnd);
-    const prefixedNonAffirmativeContext =
-      /没有|并未|未曾|不是|并非|不要|不能|不得|请勿|避免|不确定|无法(?:确认|判断)|尚未(?:确认|明确)|未(?:确认|明确)|待(?:确认|核实)|是否/;
-    const postfixedNonAffirmativeContext =
-      /[（(][^）)]*(?:尚未确认|未确认|待核实|无法确认|不确定|not confirmed|unverified|uncertain)[^）)]*[）)]|(?:真实性|该事实|该说法|这一点)[^。；.!;!?]{0,12}(?:尚未确认|待核实|无法确认|不确定)|(?:^|[，,\s])(?:尚未确认|未确认|待核实|无法确认|not confirmed|unverified)(?:$|[，,\s）)])/i;
-    if (
-      !prefixedNonAffirmativeContext.test(prefix) &&
-      !postfixedNonAffirmativeContext.test(suffix)
-    ) {
-      return true;
-    }
-    fromIndex = markerEnd;
+    if (isAffirmativeRoleMarkerAt(text, marker, markerIndex)) return true;
+    fromIndex = markerIndex + marker.length;
   }
   return false;
+}
+
+function hasAffirmativeRoleClaim(sourceText: string, claim: string, marker: string): boolean {
+  let claimIndex = sourceText.indexOf(claim);
+  while (claimIndex >= 0) {
+    let markerOffset = claim.indexOf(marker);
+    while (markerOffset >= 0) {
+      if (isAffirmativeRoleMarkerAt(sourceText, marker, claimIndex + markerOffset)) return true;
+      markerOffset = claim.indexOf(marker, markerOffset + marker.length);
+    }
+    claimIndex = sourceText.indexOf(claim, claimIndex + claim.length);
+  }
+  return false;
+}
+
+function readComparableRoleClaim(text: string, markerIndex: number): string {
+  const claimEnd = ["。", "；", "，", ".", ";", ",", "！", "？", "!", "?", "（", "("]
+    .map((separator) => text.indexOf(separator, markerIndex))
+    .filter((index) => index >= 0)
+    .reduce((nearest, index) => Math.min(nearest, index), text.length);
+  return text.slice(markerIndex, claimEnd).trim();
+}
+
+function isAffirmativeRoleMarkerAt(text: string, marker: string, markerIndex: number): boolean {
+  const clauseStart = Math.max(
+    text.lastIndexOf("。", markerIndex - 1),
+    text.lastIndexOf("；", markerIndex - 1),
+    text.lastIndexOf("，", markerIndex - 1),
+    text.lastIndexOf(".", markerIndex - 1),
+    text.lastIndexOf(";", markerIndex - 1),
+    text.lastIndexOf(",", markerIndex - 1),
+    text.lastIndexOf("！", markerIndex - 1),
+    text.lastIndexOf("？", markerIndex - 1),
+    text.lastIndexOf("!", markerIndex - 1),
+    text.lastIndexOf("?", markerIndex - 1),
+  ) + 1;
+  const prefix = text.slice(clauseStart, markerIndex);
+  const markerEnd = markerIndex + marker.length;
+  const sentenceEnd = ["。", "；", ".", ";", "！", "？", "!", "?"]
+    .map((separator) => text.indexOf(separator, markerEnd))
+    .filter((index) => index >= 0)
+    .reduce((nearest, index) => Math.min(nearest, index), text.length);
+  const suffix = text.slice(markerEnd, sentenceEnd);
+  const prefixedNonAffirmativeContext =
+    /没有|并未|未曾|不是|并非|不要|不能|不得|请勿|避免|不确定|无法(?:确认|判断)|尚未(?:确认|明确)|未(?:确认|明确)|待(?:确认|核实)|是否/;
+  const postfixedNonAffirmativeContext =
+    /[（(][^）)]*(?:尚未确认|未确认|待核实|无法确认|不确定|not confirmed|unverified|uncertain)[^）)]*[）)]|(?:真实性|该事实|该说法|这一点)[^。；.!;!?]{0,12}(?:尚未确认|待核实|无法确认|不确定)|(?:^|[，,\s])(?:尚未确认|未确认|待核实|无法确认|not confirmed|unverified)(?:$|[，,\s）)])/i;
+  return (
+    !prefixedNonAffirmativeContext.test(prefix) &&
+    !postfixedNonAffirmativeContext.test(suffix)
+  );
 }
 
 function collectStringLeaves(value: unknown): string[] {

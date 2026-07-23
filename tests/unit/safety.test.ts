@@ -233,6 +233,28 @@ describe("scanSafetyViolations", () => {
     ).toContain("禁止夸大职责或成果");
   });
 
+  it("binds normal-route role provenance to the specific source occurrence", () => {
+    const sourceText = "主导整理信息并排版（尚未确认）；后来主导摆放桌椅";
+    const makeOutput = (claim: string) => ({
+      routeResult: {
+        confirmedFacts: [claim],
+        resumeSnippetDraft: `${claim}。`,
+        supportingFacts: [claim],
+      },
+    });
+
+    expect(
+      scanRouteSafety("experience_to_resume", makeOutput("主导整理信息并排版"), {
+        routeInput: { actualActions: sourceText },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+    expect(
+      scanRouteSafety("experience_to_resume", makeOutput("后来主导摆放桌椅"), {
+        routeInput: { actualActions: sourceText },
+      }),
+    ).toEqual({ passed: true, blockedReasons: [] });
+  });
+
   it.each([
     "不确定是否参与前期讨论，后来主导整理信息并排版",
     "无法确认是否参与前期讨论；后来主导整理信息并排版",
@@ -332,6 +354,31 @@ describe("scanSafetyViolations", () => {
         },
       }).blockedReasons,
     ).toContain("禁止夸大职责或成果");
+  });
+
+  it("binds confirmed light-review provenance to the specific quoted occurrence", () => {
+    const context = {
+      routeInput: {
+        mode: "light_review",
+        record: {
+          routeKey: "experience_to_resume",
+          actualDone: "主导整理信息并排版（尚未确认）；后来主导摆放桌椅",
+          payload: {},
+          userConfirmed: true,
+        },
+      },
+    };
+
+    expect(
+      scanRouteSafety("experience_to_resume", {
+        routeResult: { reviewBasis: ["主导整理信息并排版"] },
+      }, context).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+    expect(
+      scanRouteSafety("experience_to_resume", {
+        routeResult: { reviewBasis: ["后来主导摆放桌椅"] },
+      }, context),
+    ).toEqual({ passed: true, blockedReasons: [] });
   });
 
   it.each([

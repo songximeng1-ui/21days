@@ -411,6 +411,45 @@ describe("generateRouteOutput", () => {
     expect(primary.generate).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    {
+      name: "rejects the earlier unconfirmed occurrence",
+      claim: "主导整理信息并排版",
+      expectedType: "friendly_failure",
+      expectedCalls: 2,
+    },
+    {
+      name: "accepts the later affirmative occurrence",
+      claim: "后来主导摆放桌椅",
+      expectedType: "route_result",
+      expectedCalls: 1,
+    },
+  ])("$name in a mixed-provenance experience source", async ({ claim, expectedType, expectedCalls }) => {
+    const input = {
+      ...sufficientExperienceInput,
+      actualActions: "主导整理信息并排版（尚未确认）；后来主导摆放桌椅",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "experience_to_resume",
+      input,
+    });
+    const candidate = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        confirmedFacts: [claim],
+        resumeSnippetDraft: `${claim}。`,
+        supportingFacts: [claim],
+      },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(candidate) };
+
+    const result = await generateRouteOutput({ routeKey: "experience_to_resume", input, primary });
+
+    expect(result.outputType).toBe(expectedType);
+    expect(primary.generate).toHaveBeenCalledTimes(expectedCalls);
+  });
+
   it("rejects an application clue when any item lacks an uncertainty marker", async () => {
     const generated = await new MockAiProvider("success").generate({
       routeKey: "applications_to_review",
@@ -770,6 +809,46 @@ describe("generateRouteOutput", () => {
 
     expect(result.outputType).toBe("friendly_failure");
     expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      name: "rejects the earlier unconfirmed light-review quote",
+      reviewBasis: "主导整理信息并排版",
+      expectedType: "friendly_failure",
+      expectedCalls: 2,
+    },
+    {
+      name: "accepts the later affirmative light-review quote",
+      reviewBasis: "后来主导摆放桌椅",
+      expectedType: "light_review",
+      expectedCalls: 1,
+    },
+  ])("$name from a mixed-provenance confirmed record", async ({ reviewBasis, expectedType, expectedCalls }) => {
+    const record = {
+      id: "record-mixed-role-review",
+      routeKey: "experience_to_resume" as const,
+      recordType: "experience_fact" as const,
+      actionTitle: "保存真实经历",
+      actualDone: "主导整理信息并排版（尚未确认）；后来主导摆放桌椅",
+      payload: {},
+      userConfirmed: true,
+      createdAt: "2026-07-21T00:00:00.000Z",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const candidate = {
+      ...generated,
+      routeResult: { ...generated.routeResult, reviewBasis: [reviewBasis] },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(candidate) };
+
+    const result = await generateLightReviewOutput({ record, primary });
+
+    expect(result.outputType).toBe(expectedType);
+    expect(primary.generate).toHaveBeenCalledTimes(expectedCalls);
   });
 
   it("keeps route-specific mock outputs for every route", async () => {
