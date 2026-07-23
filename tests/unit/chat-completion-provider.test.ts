@@ -4,6 +4,7 @@ import { AiProviderError, type AiProviderInput } from "@/ai/provider";
 import { MockAiProvider } from "@/ai/mock-provider";
 import type { RouteKey } from "@/domain/types";
 import { isRouteInputSufficient } from "@/domain/routes";
+import { routeOutputSchema } from "@/schemas/route-output";
 
 const validOutput = {
   routeKey: "experience_to_resume",
@@ -540,7 +541,7 @@ describe("ChatCompletionProvider", () => {
   });
 
   it.each(routePromptCases)(
-    "uses the exact source-route action and record contract for $routeKey light review prompts",
+    "uses a schema-complete source-route contract for $routeKey light review prompts",
     async ({ routeKey, actionType, recordType, fieldsToRecord }) => {
       const prompt = await capturePrompt({
         routeKey,
@@ -551,13 +552,64 @@ describe("ChatCompletionProvider", () => {
       });
       const contract = parsePromptSection(prompt, "ACTIVE_ROUTE_CONTRACT_BEGIN", "ACTIVE_ROUTE_CONTRACT_END") as {
         routeKey: RouteKey;
-        todayAction: { actionType: string; estimatedTime: string };
+        outputType: string;
+        shortAssessment: string;
+        routeResult: Record<string, unknown>;
+        missingInfo: null;
+        todayAction: {
+          actionTitle: string;
+          actionReason: string;
+          actionSteps: string[];
+          estimatedTime: string;
+          recordAfterDone: string;
+          actionType: string;
+        };
         recordGuide: { recordType: string; fieldsToRecord: string[]; requiresUserConfirmation: boolean };
       };
 
       expect(contract.routeKey).toBe(routeKey);
-      expect(contract.todayAction).toEqual({ estimatedTime: "15-30 分钟", actionType });
+      expect(contract.outputType).toBe("light_review");
+      expect(contract.shortAssessment).toBe("string");
+      expect(Object.keys(contract.routeResult)).toEqual(["reviewBasis", "clues", "missingInfo", "nextAction"]);
+      expect(contract.missingInfo).toBeNull();
+      expect(contract.todayAction).toEqual({
+        actionTitle: "string",
+        actionReason: "string",
+        actionSteps: ["string (1-4 items)"],
+        estimatedTime: "15-30 分钟",
+        recordAfterDone: "string",
+        actionType,
+      });
       expect(contract.recordGuide).toEqual({ recordType, fieldsToRecord, requiresUserConfirmation: true });
+    },
+  );
+
+  it.each(routePromptCases)(
+    "uses a valid grounded complete $routeKey light review example",
+    async ({ routeKey, actionType, recordType, fieldsToRecord }) => {
+      const prompt = await capturePrompt({
+        routeKey,
+        input: {
+          mode: "light_review",
+          record: { actualDone: "保存了一个真实行动", payload: { note: "已确认" } },
+        },
+      });
+      const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
+        input: { record: { actualDone: string; payload: Record<string, unknown> } };
+        output: Record<string, unknown> & {
+          routeResult: { reviewBasis: string[] };
+          todayAction: { actionType: string };
+          recordGuide: { recordType: string; fieldsToRecord: string[] };
+        };
+      };
+
+      expect(routeOutputSchema.safeParse(example.output).success).toBe(true);
+      expect(example.output).not.toEqual(
+        parsePromptSection(prompt, "ACTIVE_ROUTE_CONTRACT_BEGIN", "ACTIVE_ROUTE_CONTRACT_END"),
+      );
+      expect(example.output.routeResult.reviewBasis).toEqual([example.input.record.actualDone]);
+      expect(example.output.todayAction.actionType).toBe(actionType);
+      expect(example.output.recordGuide).toMatchObject({ recordType, fieldsToRecord });
     },
   );
 

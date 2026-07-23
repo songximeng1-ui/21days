@@ -431,23 +431,7 @@ function buildRouteExample(routeKey: RouteKey, config: RoutePromptConfig): Recor
 function buildLightReviewPrompt(input: AiProviderInput): string {
   const config = ROUTE_PROMPT_CONFIG[input.routeKey];
   const record = isRecord(input.input.record) ? input.input.record : {};
-  const contract = {
-    routeKey: input.routeKey,
-    outputType: "light_review",
-    routeResult: {
-      reviewBasis: ["strict quote from record.actualDone or record.payload"],
-      clues: ["string (1-3 items)"],
-      missingInfo: ["string (1-3 items)"],
-      nextAction: "string",
-    },
-    missingInfo: null,
-    todayAction: { estimatedTime: "15-30 分钟", actionType: config.actionType },
-    recordGuide: {
-      recordType: config.recordType,
-      fieldsToRecord: config.fieldsToRecord,
-      requiresUserConfirmation: true,
-    },
-  };
+  const contract = buildLightReviewContract(input.routeKey, config);
   return [
     `当前且唯一的路线：${input.routeKey}`,
     "任务：基于用户已确认保存的一条真实记录，生成一次 light_review 轻复盘。",
@@ -456,7 +440,7 @@ function buildLightReviewPrompt(input: AiProviderInput): string {
     JSON.stringify(contract, null, 2),
     "ACTIVE_ROUTE_CONTRACT_END",
     "ACTIVE_ROUTE_EXAMPLE_BEGIN",
-    JSON.stringify({ input: { actualDone: "保存了一个真实行动" }, output: contract }, null, 2),
+    JSON.stringify(buildLightReviewExample(input.routeKey, config), null, 2),
     "ACTIVE_ROUTE_EXAMPLE_END",
     "ALLOWED_EVIDENCE_BEGIN",
     "reviewBasis 只能引用 record.actualDone 或 record.payload 中已经存在的事实。",
@@ -467,6 +451,69 @@ function buildLightReviewPrompt(input: AiProviderInput): string {
     "clues 只能写可继续验证的线索，不能写失败原因、公司筛选规则或用户能力判断。",
     "禁止输出报告、基础版报告、匹配率、匹配度、录取概率、适合/不适合、能投/不能投。",
   ].join("\n");
+}
+
+function buildLightReviewContract(routeKey: RouteKey, config: RoutePromptConfig): Record<string, unknown> {
+  return {
+    routeKey,
+    outputType: "light_review",
+    shortAssessment: "string",
+    routeResult: {
+      reviewBasis: ["strict quote from record.actualDone or record.payload"],
+      clues: ["string (1-3 items)"],
+      missingInfo: ["string (1-3 items)"],
+      nextAction: "string",
+    },
+    missingInfo: null,
+    todayAction: {
+      actionTitle: "string",
+      actionReason: "string",
+      actionSteps: ["string (1-4 items)"],
+      estimatedTime: "15-30 分钟",
+      recordAfterDone: "string",
+      actionType: config.actionType,
+    },
+    recordGuide: {
+      recordType: config.recordType,
+      fieldsToRecord: config.fieldsToRecord,
+      requiresUserConfirmation: true,
+    },
+  };
+}
+
+function buildLightReviewExample(routeKey: RouteKey, config: RoutePromptConfig): Record<string, unknown> {
+  const record = {
+    actualDone: "保存了一条真实行动记录",
+    payload: { note: "已确认这条行动记录" },
+  };
+  return {
+    input: { record },
+    output: {
+      routeKey,
+      outputType: "light_review",
+      shortAssessment: "这条已确认记录可以先做一次轻复盘。",
+      routeResult: {
+        reviewBasis: [record.actualDone],
+        clues: ["这条记录可以继续补充一项可验证信息。"],
+        missingInfo: ["还缺一项后续验证信息。"],
+        nextAction: "下一步补充一项真实信息并保存。",
+      },
+      missingInfo: null,
+      todayAction: {
+        actionTitle: "补充一项真实信息并保存",
+        actionReason: "让这条已确认记录更便于下一次复盘。",
+        actionSteps: ["打开已保存记录", "补充一项真实信息", "确认后保存"],
+        estimatedTime: "15-30 分钟",
+        recordAfterDone: "记录本次补充的真实信息。",
+        actionType: config.actionType,
+      },
+      recordGuide: {
+        recordType: config.recordType,
+        fieldsToRecord: config.fieldsToRecord,
+        requiresUserConfirmation: true,
+      },
+    },
+  };
 }
 
 function pickFields(input: Record<string, unknown>, fields: string[]): Record<string, unknown> {
