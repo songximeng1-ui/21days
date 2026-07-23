@@ -110,6 +110,42 @@ describe("scanSafetyViolations", () => {
       .toEqual({ passed: true, blockedReasons: [] });
   });
 
+  it.each([
+    {
+      text: "不要编造经历而应包装成全权负责项目",
+      reasons: ["禁止编造经历、JD、数据、结果或反馈", "禁止夸大职责或成果"],
+    },
+    {
+      text: "不要把参与写成主导但随后主导整个项目",
+      reasons: ["禁止夸大职责或成果"],
+    },
+    {
+      text: "不要把参与写成主导同时包装成全权负责项目",
+      reasons: ["禁止编造经历、JD、数据、结果或反馈", "禁止夸大职责或成果"],
+    },
+    {
+      text: "不要编造经历改为主导预算规划",
+      reasons: ["禁止夸大职责或成果"],
+    },
+    {
+      text: "不要把参与写成主导却包装成全权负责项目",
+      reasons: ["禁止编造经历、JD、数据、结果或反馈", "禁止夸大职责或成果"],
+    },
+    {
+      text: "不评价你本人适不适合但是你最适合做运营",
+      reasons: ["禁止评价用户本人适合或不适合"],
+    },
+    {
+      text: "不输出能投结论却可以直接投这个岗位",
+      reasons: ["禁止给出绝对投递结论"],
+    },
+  ])("preserves affirmative violations after a compliant reminder: $text", ({ text, reasons }) => {
+    const result = scanSafetyViolations(text);
+
+    expect(result.passed).toBe(false);
+    expect(result.blockedReasons).toEqual(expect.arrayContaining(reasons));
+  });
+
   it("blocks reversed absolute-application wording and disguised failure attribution", () => {
     const result = scanSafetyViolations("你可以直接投这个岗位；无反馈说明简历不行。");
 
