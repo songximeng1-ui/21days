@@ -683,6 +683,59 @@ describe("ChatCompletionProvider", () => {
     },
   );
 
+  it("teaches a direction light review to act on the current job sample immediately", async () => {
+    const prompt = await capturePrompt({
+      routeKey: "direction_to_jobs",
+      input: {
+        mode: "light_review",
+        record: {
+          actualDone: "保存了用户运营实习岗位样本",
+          payload: {
+            jobTitle: "用户运营实习",
+            jdSummary: "用户社群维护",
+            interestPoint: "活动执行",
+          },
+        },
+      },
+    });
+    const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
+      input: {
+        record: {
+          actualDone: string;
+          payload: { jobTitle: string; jdSummary: string; searchKeyword: string };
+        };
+      };
+      output: {
+        routeResult: { reviewBasis: string[]; nextAction: string };
+        todayAction: {
+          actionTitle: string;
+          actionReason: string;
+          actionSteps: string[];
+          recordAfterDone: string;
+        };
+      };
+    };
+    const actionCopy = [
+      example.output.routeResult.nextAction,
+      example.output.todayAction.actionTitle,
+      example.output.todayAction.actionReason,
+      ...example.output.todayAction.actionSteps,
+      example.output.todayAction.recordAfterDone,
+    ].join("\n");
+
+    expect(prompt).toContain("明确围绕当前岗位样本、搜索关键词或 JD");
+    expect(prompt).toContain("立即可做的具体动词");
+    expect(routeOutputSchema.safeParse(example.output).success).toBe(true);
+    expect(example.output.routeResult.reviewBasis).toEqual([example.input.record.actualDone]);
+    expect(actionCopy).toMatch(/打开|保存|记录|搜索|找到|选择|补|修改|填写|标出|复制|核对|整理|列出|确认/);
+    expect(actionCopy).toMatch(/岗位|JD|关键词|搜索/);
+    expect(actionCopy).toMatch(
+      new RegExp(
+        `${example.input.record.payload.jobTitle}|${example.input.record.payload.jdSummary}|${example.input.record.payload.searchKeyword}`,
+      ),
+    );
+  });
+
   it("teaches an experience light review to advance the current confirmed experience record", async () => {
     const prompt = await capturePrompt({
       routeKey: "experience_to_resume",

@@ -484,6 +484,44 @@ function buildLightReviewContract(routeKey: RouteKey, config: RoutePromptConfig)
 }
 
 function buildLightReviewExample(routeKey: RouteKey, config: RoutePromptConfig): Record<string, unknown> {
+  if (routeKey === "direction_to_jobs") {
+    const record = {
+      actualDone: "保存了用户运营实习岗位样本",
+      payload: {
+        jobTitle: "用户运营实习",
+        jdSummary: "用户社群维护",
+        searchKeyword: "用户运营 实习",
+      },
+    };
+    return {
+      input: { record },
+      output: {
+        routeKey,
+        outputType: "light_review",
+        shortAssessment: "当前岗位样本已经可以支持下一步具体核对。",
+        routeResult: {
+          reviewBasis: [record.actualDone],
+          clues: ["当前岗位样本包含一条可继续核对的 JD 要求。"],
+          missingInfo: ["还缺一个相邻岗位样本用于比较关键词。"],
+          nextAction: `打开“${record.payload.jobTitle}”岗位样本，复制 JD 中“${record.payload.jdSummary}”这条要求并记录。`,
+        },
+        missingInfo: null,
+        todayAction: {
+          actionTitle: `打开“${record.payload.jobTitle}”并记录 1 条 JD 要求`,
+          actionReason: "先从当前岗位样本留下一个可比较的真实要求。",
+          actionSteps: ["打开当前岗位样本", `找到“${record.payload.jdSummary}”这条 JD 要求`, "复制并保存到岗位记录"],
+          estimatedTime: "15-30 分钟",
+          recordAfterDone: `记录“${record.payload.searchKeyword}”关键词对应的岗位名称和 JD 摘要。`,
+          actionType: config.actionType,
+        },
+        recordGuide: {
+          recordType: config.recordType,
+          fieldsToRecord: config.fieldsToRecord,
+          requiresUserConfirmation: true,
+        },
+      },
+    };
+  }
   if (routeKey === "experience_to_resume") {
     const record = {
       actualDone: "确认了社团招新经历",
@@ -596,6 +634,12 @@ function buildLightReviewExample(routeKey: RouteKey, config: RoutePromptConfig):
 }
 
 function buildLightReviewSemanticRules(routeKey: RouteKey): string[] {
+  if (routeKey === "direction_to_jobs") {
+    return [
+      "routeResult.nextAction 和 todayAction 必须明确围绕当前岗位样本、搜索关键词或 JD。",
+      "必须包含一个立即可做的具体动词，例如打开、保存、记录、搜索、找到、选择、补、修改、填写、标出、复制、核对、整理、列出或确认。",
+    ];
+  }
   if (routeKey === "experience_to_resume") {
     return [
       "routeResult.nextAction 和 todayAction 必须围绕当前已确认记录中的经历、事实、动作、交付物或简历片段。",

@@ -935,6 +935,121 @@ describe("generateRouteOutput", () => {
     expect(primary.generate).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    {
+      name: "no immediate action verb",
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        routeResult: {
+          ...output.routeResult,
+          nextAction: "当前岗位样本后续仍值得关注。",
+        },
+        todayAction: {
+          ...output.todayAction,
+          actionTitle: "当前岗位样本的后续方向",
+          actionReason: "这个岗位样本仍有继续了解的空间。",
+          actionSteps: ["后续关注这个岗位样本"],
+          recordAfterDone: "当前岗位样本的后续信息。",
+        },
+      }),
+    },
+    {
+      name: "no direction route term",
+      mutate: (output: RouteOutput) => ({
+        ...output,
+        routeResult: {
+          ...output.routeResult,
+          nextAction: "立即打开并整理当前内容。",
+        },
+        todayAction: {
+          ...output.todayAction,
+          actionTitle: "打开并整理当前内容",
+          actionReason: "先完成一个可以立即开始的小步骤。",
+          actionSteps: ["打开当前内容", "整理一项信息", "确认后保存"],
+          recordAfterDone: "保存本次完成的内容。",
+        },
+      }),
+    },
+  ])("rejects direction light review with $name and never relaxes through fallback", async ({ mutate }) => {
+    const record = {
+      id: "record-direction-light-semantic",
+      routeKey: "direction_to_jobs" as const,
+      recordType: "job_sample" as const,
+      actionTitle: "保存岗位样本",
+      actualDone: "保存了用户运营实习岗位样本",
+      payload: {
+        jobTitle: "用户运营实习",
+        jdSummary: "用户社群维护",
+      },
+      userConfirmed: true,
+      createdAt: "2026-07-23T00:00:00.000Z",
+    };
+    const validOutput = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const primary = { generate: vi.fn().mockResolvedValue(mutate(validOutput)) };
+    const fallback = { generate: vi.fn().mockResolvedValue(validOutput) };
+
+    const result = await generateLightReviewOutput({ record, primary, fallback });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("retries the primary direction light review and accepts an actionable route-specific correction", async () => {
+    const record = {
+      id: "record-direction-light-retry",
+      routeKey: "direction_to_jobs" as const,
+      recordType: "job_sample" as const,
+      actionTitle: "保存岗位样本",
+      actualDone: "保存了用户运营实习岗位样本",
+      payload: {
+        jobTitle: "用户运营实习",
+        jdSummary: "用户社群维护",
+      },
+      userConfirmed: true,
+      createdAt: "2026-07-23T00:00:00.000Z",
+    };
+    const validOutput = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const vagueOutput = {
+      ...validOutput,
+      routeResult: {
+        ...validOutput.routeResult,
+        nextAction: "当前岗位样本后续仍值得关注。",
+      },
+      todayAction: {
+        ...validOutput.todayAction,
+        actionTitle: "当前岗位样本的后续方向",
+        actionReason: "这个岗位样本仍有继续了解的空间。",
+        actionSteps: ["后续关注这个岗位样本"],
+        recordAfterDone: "当前岗位样本的后续信息。",
+      },
+    };
+    const primary = {
+      generate: vi.fn()
+        .mockResolvedValueOnce(vagueOutput)
+        .mockResolvedValueOnce(validOutput),
+    };
+    const fallback = { generate: vi.fn().mockResolvedValue(validOutput) };
+
+    const result = await generateLightReviewOutput({ record, primary, fallback });
+    const actionCopy = JSON.stringify({
+      nextAction: result.routeResult?.nextAction,
+      todayAction: result.todayAction,
+    });
+
+    expect(result.outputType).toBe("light_review");
+    expect(actionCopy).toMatch(/打开|保存|记录|搜索|找到|选择|补|修改|填写|标出|复制|核对|整理|列出|确认/);
+    expect(actionCopy).toMatch(/岗位|JD|关键词|搜索/);
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
   it("allows a confirmed experience light review to quote grounded leadership in reviewBasis", async () => {
     const record = {
       id: "record-grounded-role-review",

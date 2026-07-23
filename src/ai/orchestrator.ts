@@ -324,6 +324,13 @@ function validateHardRouteContract(
     return "route_shape";
   }
   if (
+    mode === "light_review" &&
+    routeKey === "direction_to_jobs" &&
+    !hasActionableDirectionLightReview(output)
+  ) {
+    return "route_shape";
+  }
+  if (
     output.todayAction.actionType !== contract.actionType ||
     output.recordGuide.recordType !== contract.recordType ||
     output.todayAction.estimatedTime !== "15-30 分钟" ||
@@ -351,6 +358,23 @@ function hasExactDirectionItems(value: unknown): boolean {
         direction.validationFocus.includes("可以先探索"),
     )
   );
+}
+
+const DIRECTION_LIGHT_ACTION_TERM = /打开|保存|记录|搜索|找到|选择|补|修改|填写|标出|复制|核对|整理|列出|确认/;
+const DIRECTION_LIGHT_ROUTE_TERM = /岗位|JD|关键词|搜索/;
+
+function hasActionableDirectionLightReview(output: RouteOutput): boolean {
+  const nextAction = typeof output.routeResult?.nextAction === "string"
+    ? output.routeResult.nextAction
+    : "";
+  const actionText = [
+    nextAction,
+    output.todayAction.actionTitle,
+    output.todayAction.actionReason,
+    ...output.todayAction.actionSteps,
+    output.todayAction.recordAfterDone,
+  ].join("\n");
+  return DIRECTION_LIGHT_ACTION_TERM.test(actionText) && DIRECTION_LIGHT_ROUTE_TERM.test(actionText);
 }
 
 function hasExactKeys(value: Record<string, unknown>, expectedKeys: string[]): boolean {
