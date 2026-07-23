@@ -209,6 +209,15 @@ describe("ChatCompletionProvider", () => {
     expect(prompt).toContain("没有直接支撑时必须返回空数组");
   });
 
+  it("keeps every direction output field tentative without repeating forbidden conclusion terms", async () => {
+    const directionCase = routePromptCases[0];
+    const prompt = await capturePrompt({ routeKey: directionCase.routeKey, input: directionCase.input });
+
+    expect(prompt).toContain("方向内容必须使用“可以先探索”这种暂定表达");
+    expect(prompt).toContain("所有输出字段都不得使用匹配、适合、录取、概率或强烈推荐类结论");
+    expect(prompt).toContain("即使作为守则提醒，也不要在任何输出字段复述这些禁用术语名称");
+  });
+
   it("forbids upgrading participation or assistance into stronger experience roles", async () => {
     const experienceCase = routePromptCases[1];
     const prompt = await capturePrompt({ routeKey: experienceCase.routeKey, input: experienceCase.input });
@@ -332,6 +341,56 @@ describe("ChatCompletionProvider", () => {
     expect(retrySection).toContain("routeResult.confirmedFacts[0]");
     expect(retrySection).not.toMatch(
       /FIRST_FULL_CANDIDATE|PROVIDER_SECRET|sk-secret-test-key|COMPLETE_INPUT_SECRET|DeepSeek|Qwen|fallback|prompt|token|API key|stack trace|内部错误/i,
+    );
+  });
+
+  it("adds positive tentative regeneration guidance for a safety-boundary retry", async () => {
+    const prompt = await capturePrompt({
+      routeKey: "direction_to_jobs",
+      input: {
+        educationBackground: "DIRECTION_INPUT_SECRET",
+        realExperiences: "整理社团报名信息",
+        interestsOrAcceptables: "不排斥信息整理",
+      },
+      retryFeedback: {
+        stage: "safety",
+        code: "safety_boundary",
+        previousOutput: "UNSAFE_CANDIDATE_SECRET",
+        providerName: "PROVIDER_SECRET",
+      },
+    } as AiProviderInput);
+    const retrySection = prompt.split("RETRY_CORRECTION_BEGIN")[1]?.split("RETRY_CORRECTION_END")[0] ?? "";
+
+    expect(retrySection).toContain('\"stage\": \"safety\"');
+    expect(retrySection).toContain('\"code\": \"safety_boundary\"');
+    expect(retrySection).toContain("删除违规结论，只重新生成使用“可以先探索”表达、且有证据支撑的路线内容");
+    expect(retrySection).not.toMatch(/UNSAFE_CANDIDATE_SECRET|PROVIDER_SECRET|DIRECTION_INPUT_SECRET/);
+  });
+
+  it("adds exact allowlisted evidence-copy guidance for a grounding retry", async () => {
+    const prompt = await capturePrompt({
+      routeKey: "direction_to_jobs",
+      input: {
+        educationBackground: "DIRECTION_INPUT_SECRET",
+        realExperiences: "整理社团报名信息",
+        interestsOrAcceptables: "不排斥信息整理",
+      },
+      retryFeedback: {
+        stage: "grounding",
+        code: "grounding_failure",
+        previousOutput: "UNGROUNDED_CANDIDATE_SECRET",
+        apiKey: "sk-secret-retry-key",
+      },
+    } as AiProviderInput);
+    const retrySection = prompt.split("RETRY_CORRECTION_BEGIN")[1]?.split("RETRY_CORRECTION_END")[0] ?? "";
+
+    expect(retrySection).toContain('\"stage\": \"grounding\"');
+    expect(retrySection).toContain('\"code\": \"grounding_failure\"');
+    expect(retrySection).toContain(
+      "每个证据数组条目必须从一个 ALLOWED_EVIDENCE value 完整逐字复制，不得改写、添加前缀或后缀、跨字段合并",
+    );
+    expect(retrySection).not.toMatch(
+      /UNGROUNDED_CANDIDATE_SECRET|sk-secret-retry-key|DIRECTION_INPUT_SECRET/,
     );
   });
 

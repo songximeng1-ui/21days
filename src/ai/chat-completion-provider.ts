@@ -353,6 +353,13 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
 };
 
 function buildRouteSemanticRules(routeKey: RouteKey): string[] {
+  if (routeKey === "direction_to_jobs") {
+    return [
+      "方向内容必须使用“可以先探索”这种暂定表达，不得写成确定结论。",
+      "所有输出字段都不得使用匹配、适合、录取、概率或强烈推荐类结论。",
+      "即使作为守则提醒，也不要在任何输出字段复述这些禁用术语名称。",
+    ];
+  }
   if (routeKey === "jd_to_revision") {
     return [
       "supportedByMaterial 是 0-5 条 userMaterial 的严格逐字引用；没有直接支撑时必须返回空数组，不得为了满足结构而编造支撑。",
@@ -518,9 +525,22 @@ function buildRetryCorrection(feedback: AiProviderInput["retryFeedback"]): strin
   return [
     "RETRY_CORRECTION_BEGIN",
     JSON.stringify(sanitized, null, 2),
+    ...buildStageSpecificRetryGuidance(sanitized),
     "只修正该代码指出的问题，仍须服从当前路线契约和证据白名单。",
     "RETRY_CORRECTION_END",
   ];
+}
+
+function buildStageSpecificRetryGuidance(feedback: AiRetryFeedback): string[] {
+  if (feedback.stage === "safety" && feedback.code === "safety_boundary") {
+    return ["删除违规结论，只重新生成使用“可以先探索”表达、且有证据支撑的路线内容。"];
+  }
+  if (feedback.stage === "grounding" && feedback.code === "grounding_failure") {
+    return [
+      "每个证据数组条目必须从一个 ALLOWED_EVIDENCE value 完整逐字复制，不得改写、添加前缀或后缀、跨字段合并。",
+    ];
+  }
+  return [];
 }
 
 function sanitizeRetryFeedback(feedback: AiProviderInput["retryFeedback"]): AiRetryFeedback | undefined {
