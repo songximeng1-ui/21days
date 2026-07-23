@@ -168,10 +168,9 @@ export function hasGroundedExperienceRoleStrength(
     let markerIndex = draft.indexOf(marker);
     while (markerIndex >= 0) {
       const comparableClaim = readComparableRoleClaim(draft, markerIndex);
-      const matchingSources = sourceTexts.filter((sourceText) => sourceText.includes(comparableClaim));
-      const grounded = matchingSources.length > 0
-        ? matchingSources.some((sourceText) => hasAffirmativeRoleClaim(sourceText, comparableClaim, marker))
-        : sourceTexts.some((sourceText) => hasAffirmativeRoleMarker(sourceText, marker));
+      const grounded = sourceTexts.some(
+        (sourceText) => hasAffirmativeRoleClaim(sourceText, comparableClaim, marker),
+      );
       if (!grounded) return false;
       markerIndex = draft.indexOf(marker, markerIndex + marker.length);
     }

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { scanRouteSafety, scanSafetyViolations } from "@/domain/safety";
+import {
+  hasGroundedExperienceRoleStrength,
+  scanRouteSafety,
+  scanSafetyViolations,
+} from "@/domain/safety";
 
 describe("scanSafetyViolations", () => {
   it("blocks outcome promises, fit scoring, fabricated evidence, and internal terms", () => {
@@ -174,6 +178,51 @@ describe("scanSafetyViolations", () => {
       ).toEqual({ passed: true, blockedReasons: [] });
     },
   );
+
+  it.each([
+    ["主导", "主导摆放桌椅", "主导预算规划"],
+    ["负责", "负责摆放桌椅", "负责预算规划"],
+    ["独立负责", "独立负责摆放桌椅", "独立负责预算规划"],
+    ["独立完成", "独立完成桌椅摆放", "独立完成预算规划"],
+  ])(
+    "does not let the same %s marker authorize a different fact",
+    (_marker, sourceFact, draftFact) => {
+      expect(
+        hasGroundedExperienceRoleStrength(draftFact, {
+          actualActions: sourceFact,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    "主导摆放桌椅",
+    "负责摆放桌椅",
+    "独立负责摆放桌椅",
+    "独立完成桌椅摆放",
+  ])("allows the same affirmative strong-role fact: %s", (fact) => {
+    expect(
+      hasGroundedExperienceRoleStrength(fact, {
+        actualActions: fact,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a different grounded leadership fact from exempting an unsafe draft", () => {
+    const output = {
+      routeResult: {
+        confirmedFacts: ["主导摆放桌椅"],
+        resumeSnippetDraft: "主导预算规划。",
+        supportingFacts: ["主导摆放桌椅"],
+      },
+    };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: { actualActions: "主导摆放桌椅" },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
 
   it("does not exempt a leadership evidence fragment quoted from a negated source", () => {
     const output = {
