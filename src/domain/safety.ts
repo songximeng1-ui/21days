@@ -119,19 +119,25 @@ function canExemptGroundedExperienceLeadership(
 ): boolean {
   if (routeKey !== "experience_to_resume" || !isRecord(output) || !routeInput) return false;
   const routeResult = output.routeResult;
-  if (!isRecord(routeResult) || typeof routeResult.resumeSnippetDraft !== "string") return false;
+  if (!isRecord(routeResult)) return false;
 
-  const sourceTexts = ["targetDirection", "rawExperience", "actualActions", "deliverableOrResult"]
-    .map((field) => routeInput[field])
-    .filter((value): value is string => typeof value === "string" && value.includes("主导"));
-  if (sourceTexts.length === 0 || !routeResult.resumeSnippetDraft.includes("主导")) return false;
-
-  const sanitizedResult = {
-    ...routeResult,
-    resumeSnippetDraft: routeResult.resumeSnippetDraft.replaceAll("主导", ""),
-    confirmedFacts: stripGroundedLeadershipClaims(routeResult.confirmedFacts, sourceTexts),
-    supportingFacts: stripGroundedLeadershipClaims(routeResult.supportingFacts, sourceTexts),
-  };
+  const sourceTexts = collectExperienceRoleProvenance(routeInput);
+  if (sourceTexts.length === 0) return false;
+  const sanitizedResult = routeInput.mode === "light_review"
+    ? {
+        ...routeResult,
+        reviewBasis: stripGroundedLeadershipClaims(routeResult.reviewBasis, sourceTexts),
+      }
+    : {
+        ...routeResult,
+        resumeSnippetDraft:
+          hasGroundedExperienceRoleStrength(routeResult.resumeSnippetDraft, routeInput) &&
+          typeof routeResult.resumeSnippetDraft === "string"
+            ? routeResult.resumeSnippetDraft.replaceAll("主导", "")
+            : routeResult.resumeSnippetDraft,
+        confirmedFacts: stripGroundedLeadershipClaims(routeResult.confirmedFacts, sourceTexts),
+        supportingFacts: stripGroundedLeadershipClaims(routeResult.supportingFacts, sourceTexts),
+      };
   const remainingOutput = { ...output, routeResult: sanitizedResult };
   return !scanSafetyViolations(JSON.stringify(remainingOutput)).blockedReasons.includes(EXAGGERATION_REASON);
 }
@@ -139,9 +145,78 @@ function canExemptGroundedExperienceLeadership(
 function stripGroundedLeadershipClaims(value: unknown, sourceTexts: string[]): unknown {
   if (!Array.isArray(value)) return value;
   return value.map((claim) => {
-    if (typeof claim !== "string" || !sourceTexts.some((sourceText) => sourceText.includes(claim))) return claim;
+    if (
+      typeof claim !== "string" ||
+      !hasAffirmativeRoleMarker(claim, "主导") ||
+      !sourceTexts.some(
+        (sourceText) => sourceText.includes(claim) && hasAffirmativeRoleMarker(sourceText, "主导"),
+      )
+    ) return claim;
     return claim.replaceAll("主导", "");
   });
+}
+
+export const EXPERIENCE_ROLE_MARKERS = ["独立负责", "独立完成", "主导", "负责"] as const;
+
+export function hasGroundedExperienceRoleStrength(
+  draft: unknown,
+  routeInput?: Record<string, unknown>,
+): boolean {
+  if (typeof draft !== "string") return false;
+  const sourceTexts = routeInput ? collectExperienceRoleProvenance(routeInput) : [];
+  return EXPERIENCE_ROLE_MARKERS.every(
+    (marker) =>
+      !draft.includes(marker) ||
+      sourceTexts.some((sourceText) => hasAffirmativeRoleMarker(sourceText, marker)),
+  );
+}
+
+function collectExperienceRoleProvenance(routeInput: Record<string, unknown>): string[] {
+  if (routeInput.mode === "light_review") {
+    const record = routeInput.record;
+    if (
+      !isRecord(record) ||
+      record.routeKey !== "experience_to_resume" ||
+      record.userConfirmed !== true
+    ) return [];
+    return [
+      ...(typeof record.actualDone === "string" ? [record.actualDone] : []),
+      ...collectStringLeaves(record.payload),
+    ];
+  }
+
+  return ["rawExperience", "actualActions", "deliverableOrResult"]
+    .map((field) => routeInput[field])
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
+function hasAffirmativeRoleMarker(text: string, marker: string): boolean {
+  let fromIndex = 0;
+  while (fromIndex < text.length) {
+    const markerIndex = text.indexOf(marker, fromIndex);
+    if (markerIndex < 0) return false;
+    const clauseStart = Math.max(
+      text.lastIndexOf("。", markerIndex - 1),
+      text.lastIndexOf("；", markerIndex - 1),
+      text.lastIndexOf("，", markerIndex - 1),
+      text.lastIndexOf(".", markerIndex - 1),
+      text.lastIndexOf(";", markerIndex - 1),
+      text.lastIndexOf(",", markerIndex - 1),
+    ) + 1;
+    const prefix = text.slice(clauseStart, markerIndex);
+    if (!/(?:没有|并未|未曾|不是|并非|不要|不能|不得|请勿|避免)[^。；，,.]{0,10}$/.test(prefix)) {
+      return true;
+    }
+    fromIndex = markerIndex + marker.length;
+  }
+  return false;
+}
+
+function collectStringLeaves(value: unknown): string[] {
+  if (typeof value === "string") return value.trim() ? [value] : [];
+  if (Array.isArray(value)) return value.flatMap(collectStringLeaves);
+  if (isRecord(value)) return Object.values(value).flatMap(collectStringLeaves);
+  return [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

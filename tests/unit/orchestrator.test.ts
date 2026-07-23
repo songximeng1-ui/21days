@@ -383,6 +383,29 @@ describe("generateRouteOutput", () => {
     },
   );
 
+  it.each([
+    ["targetDirection", "主导方向", "主导整理信息并排版。"],
+    ["rawExperience", "没有主导整理信息并排版", "主导整理信息并排版。"],
+    ["actualActions", "并未主导整理信息并排版", "主导整理信息并排版。"],
+    ["rawExperience", "不是负责整体工作", "负责整体工作。"],
+    ["actualActions", "不要写成主导", "主导整理信息并排版。"],
+    ["deliverableOrResult", "不能说独立完成", "独立完成活动材料。"],
+    ["deliverableOrResult", "不是全权负责活动材料", "全权负责活动材料。"],
+  ])("rejects role strength backed only by non-affirmative %s provenance", async (field, sourceText, resumeSnippetDraft) => {
+    const input = { ...sufficientExperienceInput, [field]: sourceText };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "experience_to_resume", input });
+    const upgraded = {
+      ...generated,
+      routeResult: { ...generated.routeResult, resumeSnippetDraft },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(upgraded) };
+
+    const result = await generateRouteOutput({ routeKey: "experience_to_resume", input, primary });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects an application clue when any item lacks an uncertainty marker", async () => {
     const generated = await new MockAiProvider("success").generate({
       routeKey: "applications_to_review",
@@ -653,6 +676,57 @@ describe("generateRouteOutput", () => {
       input: { mode: "light_review", record },
     });
     const primary = { generate: vi.fn().mockResolvedValue(mutate(validOutput)) };
+
+    const result = await generateLightReviewOutput({ record, primary });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows a confirmed experience light review to quote grounded leadership in reviewBasis", async () => {
+    const record = {
+      id: "record-grounded-role-review",
+      routeKey: "experience_to_resume" as const,
+      recordType: "experience_fact" as const,
+      actionTitle: "保存真实经历",
+      actualDone: "主导整理信息并排版",
+      payload: {},
+      userConfirmed: true,
+      createdAt: "2026-07-21T00:00:00.000Z",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const grounded = {
+      ...generated,
+      routeResult: { ...generated.routeResult, reviewBasis: [record.actualDone] },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(grounded) };
+
+    const result = await generateLightReviewOutput({ record, primary });
+
+    expect(result.outputType).toBe("light_review");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects grounded light-review leadership outside reviewBasis", async () => {
+    const record = {
+      id: "record-role-review-cross-field",
+      routeKey: "experience_to_resume" as const,
+      recordType: "experience_fact" as const,
+      actionTitle: "保存真实经历",
+      actualDone: "主导整理信息并排版",
+      payload: {},
+      userConfirmed: true,
+      createdAt: "2026-07-21T00:00:00.000Z",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const crossField = { ...generated, shortAssessment: "你主导了整体工作。" };
+    const primary = { generate: vi.fn().mockResolvedValue(crossField) };
 
     const result = await generateLightReviewOutput({ record, primary });
 

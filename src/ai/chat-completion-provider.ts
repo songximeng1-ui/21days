@@ -196,7 +196,7 @@ function buildUserPrompt(input: AiProviderInput): string {
     "不得添加前缀或后缀；不得跨字段拼接；不得用同义词改写。",
     "非证据摘要与行动字段可以谨慎改写，但不得引入新事实。",
     "ALLOWED_EVIDENCE_END",
-    ...buildRetryCorrection(input.retryFeedback),
+    ...buildRetryCorrection(input.retryFeedback, input.routeKey, false),
   ].join("\n");
 }
 
@@ -347,7 +347,7 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
       recordSufficiency: "两条记录都已包含复盘所需的六个字段。",
       possibleClues: ["待验证线索：不同岗位的反馈状态存在差异。"],
       informationGaps: ["现有两条记录还不足以形成稳定结论。"],
-      nextValidationAction: "下一轮新增真实投递后继续对比反馈状态。",
+      nextValidationAction: "选择当前的“内容运营实习”记录，沿用“社团经历版”，下一次只调整经历首句是否前置内容整理这一项变量并记录反馈。",
     },
   },
 };
@@ -374,6 +374,7 @@ function buildRouteSemanticRules(routeKey: RouteKey): string[] {
     return [
       "possibleClues 每一项必须包含不确定或待验证标记，例如“可能”“待验证”“需验证”“尚不确定”“无法确认”或“不能确认”。",
       "userSuspicion 只能标注为用户自己的怀疑或待验证线索，不得改写成事实或失败原因。",
+      "nextValidationAction 必须选择一条当前投递记录，绑定该记录现有的 jobTitle 或 materialVersion，只调整一个小变量并记录；不得要求先等待或新增未来投递才能开始验证。",
     ];
   }
   return [];
@@ -447,7 +448,7 @@ function buildLightReviewPrompt(input: AiProviderInput): string {
     JSON.stringify(collectEvidenceLeaves(pickFields(record, ["actualDone", "payload"]), "record"), null, 2),
     "证据必须严格连续逐字引用同一个白名单来源值，不得添加前缀或后缀；不得跨字段拼接；不得用同义词改写。",
     "ALLOWED_EVIDENCE_END",
-    ...buildRetryCorrection(input.retryFeedback),
+    ...buildRetryCorrection(input.retryFeedback, input.routeKey, true),
     "clues 只能写可继续验证的线索，不能写失败原因、公司筛选规则或用户能力判断。",
     "禁止输出报告、基础版报告、匹配率、匹配度、录取概率、适合/不适合、能投/不能投。",
   ].join("\n");
@@ -566,21 +567,31 @@ const RETRY_CODES = new Set<AiRetryFeedback["code"]>([
   "safety_boundary", "grounding_failure", "provider_retryable",
 ]);
 
-function buildRetryCorrection(feedback: AiProviderInput["retryFeedback"]): string[] {
+function buildRetryCorrection(
+  feedback: AiProviderInput["retryFeedback"],
+  routeKey: RouteKey,
+  isLightReview: boolean,
+): string[] {
   const sanitized = sanitizeRetryFeedback(feedback);
   if (!sanitized) return [];
   return [
     "RETRY_CORRECTION_BEGIN",
     JSON.stringify(sanitized, null, 2),
-    ...buildStageSpecificRetryGuidance(sanitized),
+    ...buildStageSpecificRetryGuidance(sanitized, routeKey, isLightReview),
     "只修正该代码指出的问题，仍须服从当前路线契约和证据白名单。",
     "RETRY_CORRECTION_END",
   ];
 }
 
-function buildStageSpecificRetryGuidance(feedback: AiRetryFeedback): string[] {
+function buildStageSpecificRetryGuidance(
+  feedback: AiRetryFeedback,
+  routeKey: RouteKey,
+  isLightReview: boolean,
+): string[] {
   if (feedback.stage === "safety" && feedback.code === "safety_boundary") {
-    return ["删除违规结论，只重新生成使用“可以先探索”表达、且有证据支撑的路线内容。"];
+    return routeKey === "direction_to_jobs" && !isLightReview
+      ? ["删除违规结论，只重新生成使用“可以先探索”表达、且有证据支撑的路线内容。"]
+      : ["删除违规结论，重新生成有证据支撑、符合当前路线契约的内容。"];
   }
   if (feedback.stage === "grounding" && feedback.code === "grounding_failure") {
     return [

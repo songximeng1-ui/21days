@@ -133,6 +133,154 @@ describe("scanSafetyViolations", () => {
     expect(scanRouteSafety("experience_to_resume", output).blockedReasons).toContain("禁止夸大职责或成果");
   });
 
+  it.each([
+    ["targetDirection", "主导方向", "主导整理信息并排版。"],
+    ["rawExperience", "没有主导整理信息并排版", "主导整理信息并排版。"],
+    ["actualActions", "并未主导整理信息并排版", "主导整理信息并排版。"],
+    ["rawExperience", "不是负责整体工作", "负责整体工作。"],
+    ["actualActions", "不要写成主导", "主导整理信息并排版。"],
+    ["deliverableOrResult", "不是全权负责活动材料", "全权负责活动材料。"],
+  ])("does not treat %s=%s as affirmative role provenance", (field, sourceText, resumeSnippetDraft) => {
+    const output = { routeResult: { resumeSnippetDraft } };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: {
+          rawExperience: "参与社团活动",
+          actualActions: "整理信息并排版",
+          deliverableOrResult: "形成推文",
+          [field]: sourceText,
+        },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
+
+  it.each(["rawExperience", "actualActions", "deliverableOrResult"])(
+    "allows affirmative grounded leadership provenance from %s",
+    (field) => {
+      const sourceText = "主导整理信息并排版";
+      const output = {
+        routeResult: {
+          confirmedFacts: [sourceText],
+          resumeSnippetDraft: "主导整理信息并排版。",
+          supportingFacts: [sourceText],
+        },
+      };
+
+      expect(
+        scanRouteSafety("experience_to_resume", output, {
+          routeInput: { [field]: sourceText },
+        }),
+      ).toEqual({ passed: true, blockedReasons: [] });
+    },
+  );
+
+  it("does not exempt a leadership evidence fragment quoted from a negated source", () => {
+    const output = {
+      routeResult: {
+        confirmedFacts: ["主导整理信息并排版"],
+        resumeSnippetDraft: "参与整理信息并排版。",
+        supportingFacts: ["整理信息并排版"],
+      },
+    };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: { actualActions: "没有主导整理信息并排版" },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
+
+  it("allows a confirmed experience light review to quote grounded leadership only in reviewBasis", () => {
+    const groundedFact = "主导整理信息并排版";
+    const output = { routeResult: { reviewBasis: [groundedFact] } };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: {
+          mode: "light_review",
+          record: {
+            actualDone: groundedFact,
+            payload: {},
+            userConfirmed: true,
+            routeKey: "experience_to_resume",
+          },
+        },
+      }),
+    ).toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("allows reviewBasis to quote affirmative leadership from a confirmed payload scalar leaf", () => {
+    const groundedFact = "主导整理活动材料";
+
+    expect(
+      scanRouteSafety("experience_to_resume", { routeResult: { reviewBasis: [groundedFact] } }, {
+        routeInput: {
+          mode: "light_review",
+          record: {
+            routeKey: "experience_to_resume",
+            actualDone: "保存了真实经历",
+            payload: { details: { actualAction: groundedFact } },
+            userConfirmed: true,
+          },
+        },
+      }),
+    ).toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it.each([
+    ["shortAssessment", { shortAssessment: "主导整理信息并排版", routeResult: { reviewBasis: ["整理信息"] } }],
+    ["clues", { routeResult: { reviewBasis: ["整理信息"], clues: ["主导整理信息并排版"] } }],
+    ["missingInfo", { routeResult: { reviewBasis: ["整理信息"], missingInfo: ["主导整理信息并排版"] } }],
+    ["nextAction", { routeResult: { reviewBasis: ["整理信息"], nextAction: "主导整理信息并排版" } }],
+    ["action copy", { routeResult: { reviewBasis: ["整理信息"] }, todayAction: { actionTitle: "主导整理信息并排版" } }],
+  ])("does not exempt a grounded light-review role marker in %s", (_name, output) => {
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: {
+          mode: "light_review",
+          record: {
+            actualDone: "主导整理信息并排版",
+            payload: {},
+            userConfirmed: true,
+            routeKey: "experience_to_resume",
+          },
+        },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
+
+  it.each([
+    {
+      name: "an unconfirmed record",
+      record: { actualDone: "主导整理信息并排版", payload: {}, userConfirmed: false },
+    },
+    {
+      name: "a private record field",
+      record: {
+        actualDone: "整理信息并排版",
+        payload: {},
+        privateNotes: "主导整理信息并排版",
+        userConfirmed: true,
+      },
+    },
+    {
+      name: "another route record",
+      record: {
+        actualDone: "主导整理信息并排版",
+        payload: {},
+        userConfirmed: true,
+        routeKey: "jd_to_revision",
+      },
+    },
+  ])("does not establish light-review role provenance from $name", ({ record }) => {
+    expect(
+      scanRouteSafety("experience_to_resume", { routeResult: { reviewBasis: ["主导整理信息并排版"] } }, {
+        routeInput: { mode: "light_review", record },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
+
   it("does not exempt an ungrounded leadership claim outside the resume draft", () => {
     const output = {
       shortAssessment: "你主导了整体工作。",

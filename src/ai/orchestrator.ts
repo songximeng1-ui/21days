@@ -13,7 +13,7 @@ import {
 } from "@/ai/failure-diagnostics";
 import { validateRouteOutput } from "@/domain/action-card";
 import { getRouteStrategy, isPlaceholderValue, isRouteInputSufficient } from "@/domain/routes";
-import { scanRouteSafety } from "@/domain/safety";
+import { hasGroundedExperienceRoleStrength, scanRouteSafety } from "@/domain/safety";
 import type { ActionType, RecordType, RouteKey, RouteOutput } from "@/domain/types";
 import type { LocalRecord } from "@/lib/local-store";
 import { routeOutputSchema } from "@/schemas/route-output";
@@ -211,7 +211,7 @@ async function generateAndValidate(
   const safety = scanRouteSafety(
     output.routeKey,
     output,
-    options.mode === "route" ? { routeInput: options.input } : undefined,
+    { routeInput: options.input },
   );
   const nonSafetyIssues = validation.issues.filter(
     (issue) => !safetyWithoutProvenance.blockedReasons.includes(issue),
@@ -806,7 +806,7 @@ function hasGroundedRouteEvidence(
     return (
       claimsAreGrounded(routeResult.confirmedFacts, evidenceSource) &&
       claimsAreGrounded(routeResult.supportingFacts, evidenceSource) &&
-      hasGroundedExperienceRoleStrength(routeResult.resumeSnippetDraft, evidenceSource)
+      hasGroundedExperienceRoleStrength(routeResult.resumeSnippetDraft, input)
     );
   }
 
@@ -826,16 +826,6 @@ function hasGroundedRouteEvidence(
   }
 
   return true;
-}
-
-const EXPERIENCE_ROLE_MARKERS = ["独立负责", "独立完成", "主导", "负责"];
-
-function hasGroundedExperienceRoleStrength(draft: unknown, source: unknown): boolean {
-  if (typeof draft !== "string") return false;
-  const sourceTexts = collectSourceTexts(source);
-  return EXPERIENCE_ROLE_MARKERS.every(
-    (marker) => !draft.includes(marker) || sourceTexts.some((sourceText) => sourceText.includes(marker)),
-  );
 }
 
 function hasGroundedOptionalClaims(claims: unknown, source: unknown): boolean {

@@ -202,6 +202,24 @@ describe("ChatCompletionProvider", () => {
     expect(JSON.stringify(example.output.routeResult)).not.toMatch(/还缺投递时间|补齐.*投递.*时间|还缺.*材料版本/);
   });
 
+  it("binds the application validation action to one current record and one small variable", async () => {
+    const applicationCase = routePromptCases[3];
+    const prompt = await capturePrompt({ routeKey: applicationCase.routeKey, input: applicationCase.input });
+    const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
+      input: { applications: Array<{ jobTitle: string; materialVersion: string }> };
+      output: { routeResult: { nextValidationAction: string } };
+    };
+    const nextAction = example.output.routeResult.nextValidationAction;
+
+    expect(prompt).toContain("选择一条当前投递记录");
+    expect(prompt).toContain("绑定该记录现有的 jobTitle 或 materialVersion");
+    expect(prompt).toContain("只调整一个小变量");
+    expect(nextAction).toContain(example.input.applications[0].jobTitle);
+    expect(nextAction).toContain(example.input.applications[0].materialVersion);
+    expect(nextAction).toContain("只调整");
+    expect(nextAction).not.toMatch(/新增.*投递|等待.*投递|下一轮新增/);
+  });
+
   it("states that JD support may be empty and must never be invented", async () => {
     const jdCase = routePromptCases[2];
     const prompt = await capturePrompt({ routeKey: jdCase.routeKey, input: jdCase.input });
@@ -366,6 +384,51 @@ describe("ChatCompletionProvider", () => {
     expect(retrySection).toContain('\"code\": \"safety_boundary\"');
     expect(retrySection).toContain("删除违规结论，只重新生成使用“可以先探索”表达、且有证据支撑的路线内容");
     expect(retrySection).not.toMatch(/UNSAFE_CANDIDATE_SECRET|PROVIDER_SECRET|DIRECTION_INPUT_SECRET/);
+  });
+
+  it.each(routePromptCases.slice(1))(
+    "keeps direction-only wording out of $routeKey safety retries",
+    async ({ routeKey, input }) => {
+      const prompt = await capturePrompt({
+        routeKey,
+        input,
+        retryFeedback: {
+          stage: "safety",
+          code: "safety_boundary",
+          previousOutput: "UNSAFE_CANDIDATE_SECRET",
+          providerName: "PROVIDER_SECRET",
+        },
+      } as AiProviderInput);
+      const retrySection = prompt.split("RETRY_CORRECTION_BEGIN")[1]?.split("RETRY_CORRECTION_END")[0] ?? "";
+
+      expect(retrySection).toContain("删除违规结论，重新生成有证据支撑、符合当前路线契约的内容");
+      expect(retrySection).not.toContain("可以先探索");
+      expect(retrySection).not.toMatch(/UNSAFE_CANDIDATE_SECRET|PROVIDER_SECRET/);
+    },
+  );
+
+  it("keeps direction-only wording out of light-review safety retries", async () => {
+    const prompt = await capturePrompt({
+      routeKey: "direction_to_jobs",
+      input: {
+        mode: "light_review",
+        record: {
+          actualDone: "保存了一条岗位样本",
+          payload: { jobTitle: "内容运营实习" },
+          userConfirmed: true,
+        },
+      },
+      retryFeedback: {
+        stage: "safety",
+        code: "safety_boundary",
+        previousOutput: "UNSAFE_LIGHT_REVIEW_SECRET",
+      },
+    } as AiProviderInput);
+    const retrySection = prompt.split("RETRY_CORRECTION_BEGIN")[1]?.split("RETRY_CORRECTION_END")[0] ?? "";
+
+    expect(retrySection).toContain("删除违规结论，重新生成有证据支撑、符合当前路线契约的内容");
+    expect(retrySection).not.toContain("可以先探索");
+    expect(retrySection).not.toContain("UNSAFE_LIGHT_REVIEW_SECRET");
   });
 
   it("adds exact allowlisted evidence-copy guidance for a grounding retry", async () => {
