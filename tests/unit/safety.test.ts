@@ -191,6 +191,27 @@ describe("scanSafetyViolations", () => {
     ).toContain("禁止夸大职责或成果");
   });
 
+  it.each([
+    "并没有真正意义上在该项目中实际主导整理信息并排版",
+    "不确定是否主导整理信息并排版",
+    "无法确认是否主导整理信息并排版",
+  ])("treats the full normal-route clause as non-affirmative provenance: %s", (sourceText) => {
+    const groundedFragment = "主导整理信息并排版";
+    const output = {
+      routeResult: {
+        confirmedFacts: [groundedFragment],
+        resumeSnippetDraft: `${groundedFragment}。`,
+        supportingFacts: [groundedFragment],
+      },
+    };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: { actualActions: sourceText },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
+
   it("allows a confirmed experience light review to quote grounded leadership only in reviewBasis", () => {
     const groundedFact = "主导整理信息并排版";
     const output = { routeResult: { reviewBasis: [groundedFact] } };
@@ -229,6 +250,28 @@ describe("scanSafetyViolations", () => {
   });
 
   it.each([
+    "并没有真正意义上在该项目中实际主导整理信息并排版",
+    "不确定是否主导整理信息并排版",
+    "无法确认是否主导整理信息并排版",
+  ])("does not treat a confirmed light-review uncertainty clause as affirmative provenance: %s", (sourceText) => {
+    expect(
+      scanRouteSafety("experience_to_resume", {
+        routeResult: { reviewBasis: ["主导整理信息并排版"] },
+      }, {
+        routeInput: {
+          mode: "light_review",
+          record: {
+            routeKey: "experience_to_resume",
+            actualDone: sourceText,
+            payload: {},
+            userConfirmed: true,
+          },
+        },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
+
+  it.each([
     ["shortAssessment", { shortAssessment: "主导整理信息并排版", routeResult: { reviewBasis: ["整理信息"] } }],
     ["clues", { routeResult: { reviewBasis: ["整理信息"], clues: ["主导整理信息并排版"] } }],
     ["missingInfo", { routeResult: { reviewBasis: ["整理信息"], missingInfo: ["主导整理信息并排版"] } }],
@@ -253,11 +296,17 @@ describe("scanSafetyViolations", () => {
   it.each([
     {
       name: "an unconfirmed record",
-      record: { actualDone: "主导整理信息并排版", payload: {}, userConfirmed: false },
+      record: {
+        routeKey: "experience_to_resume",
+        actualDone: "主导整理信息并排版",
+        payload: {},
+        userConfirmed: false,
+      },
     },
     {
       name: "a private record field",
       record: {
+        routeKey: "experience_to_resume",
         actualDone: "整理信息并排版",
         payload: {},
         privateNotes: "主导整理信息并排版",

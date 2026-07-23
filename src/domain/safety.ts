@@ -202,9 +202,15 @@ function hasAffirmativeRoleMarker(text: string, marker: string): boolean {
       text.lastIndexOf(".", markerIndex - 1),
       text.lastIndexOf(";", markerIndex - 1),
       text.lastIndexOf(",", markerIndex - 1),
+      text.lastIndexOf("！", markerIndex - 1),
+      text.lastIndexOf("？", markerIndex - 1),
+      text.lastIndexOf("!", markerIndex - 1),
+      text.lastIndexOf("?", markerIndex - 1),
     ) + 1;
     const prefix = text.slice(clauseStart, markerIndex);
-    if (!/(?:没有|并未|未曾|不是|并非|不要|不能|不得|请勿|避免)[^。；，,.]{0,10}$/.test(prefix)) {
+    const nonAffirmativeContext =
+      /没有|并未|未曾|不是|并非|不要|不能|不得|请勿|避免|不确定|无法(?:确认|判断)|尚未(?:确认|明确)|未(?:确认|明确)|待(?:确认|核实)|是否/;
+    if (!nonAffirmativeContext.test(prefix)) {
       return true;
     }
     fromIndex = markerIndex + marker.length;

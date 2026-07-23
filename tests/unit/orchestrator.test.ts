@@ -391,6 +391,9 @@ describe("generateRouteOutput", () => {
     ["actualActions", "不要写成主导", "主导整理信息并排版。"],
     ["deliverableOrResult", "不能说独立完成", "独立完成活动材料。"],
     ["deliverableOrResult", "不是全权负责活动材料", "全权负责活动材料。"],
+    ["actualActions", "并没有真正意义上在该项目中实际主导整理信息并排版", "主导整理信息并排版。"],
+    ["actualActions", "不确定是否主导整理信息并排版", "主导整理信息并排版。"],
+    ["actualActions", "无法确认是否主导整理信息并排版", "主导整理信息并排版。"],
   ])("rejects role strength backed only by non-affirmative %s provenance", async (field, sourceText, resumeSnippetDraft) => {
     const input = { ...sufficientExperienceInput, [field]: sourceText };
     const generated = await new MockAiProvider("success").generate({ routeKey: "experience_to_resume", input });
@@ -727,6 +730,37 @@ describe("generateRouteOutput", () => {
     });
     const crossField = { ...generated, shortAssessment: "你主导了整体工作。" };
     const primary = { generate: vi.fn().mockResolvedValue(crossField) };
+
+    const result = await generateLightReviewOutput({ record, primary });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "并没有真正意义上在该项目中实际主导整理信息并排版",
+    "不确定是否主导整理信息并排版",
+    "无法确认是否主导整理信息并排版",
+  ])("rejects non-affirmative confirmed light-review leadership provenance: %s", async (actualDone) => {
+    const record = {
+      id: "record-non-affirmative-role-review",
+      routeKey: "experience_to_resume" as const,
+      recordType: "experience_fact" as const,
+      actionTitle: "保存真实经历",
+      actualDone,
+      payload: {},
+      userConfirmed: true,
+      createdAt: "2026-07-21T00:00:00.000Z",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const unsafeQuote = {
+      ...generated,
+      routeResult: { ...generated.routeResult, reviewBasis: ["主导整理信息并排版"] },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(unsafeQuote) };
 
     const result = await generateLightReviewOutput({ record, primary });
 
