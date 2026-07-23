@@ -81,10 +81,15 @@ function hasMeaningfulValue(value: unknown): boolean {
   return cleaned.length > 0 && !isPlaceholderValue(cleaned);
 }
 
+const PLACEHOLDER_PREFIX = "(?:暂时还|目前还|暂时|目前|还|尚)?";
+const PLACEHOLDER_STATE = "(?:不确定|不知道|不清楚|没有|没整理|未整理)";
+const PLACEHOLDER_VALUE = new RegExp(
+  `^(?:${PLACEHOLDER_PREFIX}${PLACEHOLDER_STATE}|暂无|无|无明确版本|unknown|not sure|none)[。.!！]?$`,
+  "i",
+);
+
 export function isPlaceholderValue(value: string): boolean {
-  return /^(不确定|暂时不确定|不知道|还不知道|不清楚|暂时没有|目前没有|还没整理|尚未整理|没有|无|无明确版本|unknown|not sure|none)[。.!！]?$/i.test(
-    value.trim(),
-  );
+  return PLACEHOLDER_VALUE.test(value.trim());
 }
 
 function hasSpecificReviewValue(value: unknown): boolean {
