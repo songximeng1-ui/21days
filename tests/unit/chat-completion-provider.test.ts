@@ -172,15 +172,22 @@ describe("ChatCompletionProvider", () => {
   it("teaches the exact direction count and keyword bounds in the contract and example", async () => {
     const directionCase = routePromptCases[0];
     const prompt = await capturePrompt({ routeKey: directionCase.routeKey, input: directionCase.input });
+    const contract = parsePromptSection(prompt, "ACTIVE_ROUTE_CONTRACT_BEGIN", "ACTIVE_ROUTE_CONTRACT_END") as {
+      routeResult: { explorableDirections: Array<{ validationFocus: string }> };
+    };
     const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
-      output: { routeResult: { explorableDirections: Array<{ searchKeywords: string[] }> } };
+      output: {
+        routeResult: { explorableDirections: Array<{ searchKeywords: string[]; validationFocus: string }> };
+      };
     };
 
     expect(prompt).toContain("2-3 direction items");
     expect(prompt).toContain("3-5 items");
+    expect(contract.routeResult.explorableDirections[0]?.validationFocus).toContain("可以先探索");
     expect(example.output.routeResult.explorableDirections).toHaveLength(2);
     for (const direction of example.output.routeResult.explorableDirections) {
       expect(direction.searchKeywords).toHaveLength(3);
+      expect(direction.validationFocus).toContain("可以先探索");
     }
   });
 
@@ -675,6 +682,97 @@ describe("ChatCompletionProvider", () => {
       expect(example.output.recordGuide).toMatchObject({ recordType, fieldsToRecord });
     },
   );
+
+  it("teaches an experience light review to advance the current confirmed experience record", async () => {
+    const prompt = await capturePrompt({
+      routeKey: "experience_to_resume",
+      input: {
+        mode: "light_review",
+        record: {
+          actualDone: "确认了社团招新经历",
+          payload: {
+            actualActions: "整理报名表",
+            deliverable: "报名名单",
+            missingFacts: "还缺报名人数",
+          },
+        },
+      },
+    });
+    const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
+      input: { record: { actualDone: string; payload: Record<string, string> } };
+      output: {
+        routeResult: { nextAction: string };
+        todayAction: {
+          actionTitle: string;
+          actionReason: string;
+          actionSteps: string[];
+          recordAfterDone: string;
+        };
+      };
+    };
+    const actionCopy = [
+      example.output.routeResult.nextAction,
+      example.output.todayAction.actionTitle,
+      example.output.todayAction.actionReason,
+      ...example.output.todayAction.actionSteps,
+      example.output.todayAction.recordAfterDone,
+    ].join("\n");
+    const sourceValues = [
+      example.input.record.actualDone,
+      ...Object.values(example.input.record.payload),
+    ];
+
+    expect(prompt).toContain("围绕当前已确认记录中的经历、事实、动作、交付物或简历片段");
+    expect(prompt).toContain("一项可以立即执行的具体补事实或克制简历动作");
+    expect(actionCopy).toMatch(/经历|事实|动作|交付|简历/);
+    expect(sourceValues.some((value) => actionCopy.includes(value))).toBe(true);
+    expect(actionCopy).not.toContain("补充一项真实信息");
+  });
+
+  it("teaches an application light review to bind one current record and change one variable now", async () => {
+    const prompt = await capturePrompt({
+      routeKey: "applications_to_review",
+      input: {
+        mode: "light_review",
+        record: {
+          actualDone: "保存了内容运营实习投递记录",
+          payload: {
+            jobTitle: "内容运营实习",
+            materialVersion: "社团经历版",
+            feedbackStatus: "暂无反馈",
+          },
+        },
+      },
+    });
+    const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
+      input: { record: { payload: { jobTitle: string; materialVersion: string } } };
+      output: {
+        routeResult: { nextAction: string };
+        todayAction: {
+          actionTitle: string;
+          actionReason: string;
+          actionSteps: string[];
+          recordAfterDone: string;
+        };
+      };
+    };
+    const actionCopy = [
+      example.output.routeResult.nextAction,
+      example.output.todayAction.actionTitle,
+      example.output.todayAction.actionReason,
+      ...example.output.todayAction.actionSteps,
+      example.output.todayAction.recordAfterDone,
+    ].join("\n");
+
+    expect(prompt).toContain("绑定当前 record.payload 中一个 jobTitle 或 materialVersion");
+    expect(prompt).toContain("只调整一个变量并立即记录");
+    expect(actionCopy).toMatch(
+      new RegExp(`${example.input.record.payload.jobTitle}|${example.input.record.payload.materialVersion}`),
+    );
+    expect(actionCopy).toContain("只调整");
+    expect(actionCopy).toContain("记录");
+    expect(actionCopy).not.toMatch(/等待|新增.*投递|下一轮新增/);
+  });
 
   it.each([
     {

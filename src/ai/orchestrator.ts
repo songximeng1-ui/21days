@@ -348,7 +348,7 @@ function hasExactDirectionItems(value: unknown): boolean {
         isRecord(direction) &&
         hasExactKeys(direction, DIRECTION_RESULT_KEYS) &&
         typeof direction.validationFocus === "string" &&
-        direction.validationFocus.trim().length > 0,
+        direction.validationFocus.includes("可以先探索"),
     )
   );
 }

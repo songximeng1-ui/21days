@@ -153,7 +153,7 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
             searchKeywords: [`${directionName}实习`, `${directionName}助理`, `${directionName}专员`],
             basisFromUserMaterial: basis,
             riskOrGap: "还缺真实 JD 样本验证",
-            validationFocus: "先观察岗位要求里反复出现的工具和交付物",
+            validationFocus: "可以先探索：观察岗位要求里反复出现的工具和交付物",
           },
           {
             directionName: secondaryDirectionName,
@@ -164,7 +164,7 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
             ],
             basisFromUserMaterial: basis,
             riskOrGap: "还缺真实 JD 样本验证",
-            validationFocus: "先观察岗位日常是否符合已知兴趣和限制",
+            validationFocus: "可以先探索：观察岗位日常是否符合已知兴趣和限制",
           },
         ],
       },

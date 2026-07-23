@@ -276,6 +276,84 @@ describe("generateRouteOutput", () => {
     expect(primary.generate).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects direction output without the exact tentative phrase and never relaxes through fallback", async () => {
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "direction_to_jobs",
+      input: sufficientDirectionInput,
+    });
+    const withoutTentativePhrase = {
+      ...generated,
+      routeResult: {
+        explorableDirections: (generated.routeResult?.explorableDirections as Array<Record<string, unknown>>).map(
+          (direction) => ({ ...direction, validationFocus: "观察真实岗位要求里的工具和交付物" }),
+        ),
+      },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(withoutTentativePhrase) };
+    const fallback = {
+      generate: vi.fn().mockResolvedValue({
+        ...generated,
+        routeResult: {
+          explorableDirections: (generated.routeResult?.explorableDirections as Array<Record<string, unknown>>).map(
+            (direction) => ({ ...direction, validationFocus: `可以先探索：${direction.validationFocus}` }),
+          ),
+        },
+      }),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "direction_to_jobs",
+      input: sufficientDirectionInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("retries the primary direction route and accepts the exact tentative phrase on the second attempt", async () => {
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "direction_to_jobs",
+      input: sufficientDirectionInput,
+    });
+    const withoutTentativePhrase = {
+      ...generated,
+      routeResult: {
+        explorableDirections: (generated.routeResult?.explorableDirections as Array<Record<string, unknown>>).map(
+          (direction) => ({ ...direction, validationFocus: "观察真实岗位要求里的工具和交付物" }),
+        ),
+      },
+    };
+    const corrected = {
+      ...generated,
+      routeResult: {
+        explorableDirections: (generated.routeResult?.explorableDirections as Array<Record<string, unknown>>).map(
+          (direction) => ({ ...direction, validationFocus: `可以先探索：${direction.validationFocus}` }),
+        ),
+      },
+    };
+    const primary = {
+      generate: vi.fn()
+        .mockResolvedValueOnce(withoutTentativePhrase)
+        .mockResolvedValueOnce(corrected),
+    };
+    const fallback = { generate: vi.fn().mockResolvedValue(corrected) };
+
+    const result = await generateRouteOutput({
+      routeKey: "direction_to_jobs",
+      input: sufficientDirectionInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(JSON.stringify(result.routeResult)).toContain("可以先探索");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
   it("accepts a grounded JD route with zero directly supported requirements", async () => {
     const input = {
       targetJobTitle: "数据运营实习生",

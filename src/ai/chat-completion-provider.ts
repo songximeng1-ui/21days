@@ -226,7 +226,7 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
         searchKeywords: ["string (3-5 items)"],
         basisFromUserMaterial: ["strict quote from allowed evidence (1-5 items)"],
         riskOrGap: "string",
-        validationFocus: "string",
+        validationFocus: "string containing the exact tentative phrase 可以先探索",
       }],
     },
     exampleInput: {
@@ -241,14 +241,14 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
           searchKeywords: ["运营支持 实习", "运营助理 实习", "用户运营 助理"],
           basisFromUserMaterial: ["整理社团报名表"],
           riskOrGap: "还没有真实岗位样本。",
-          validationFocus: "岗位日常是否包含信息整理。",
+          validationFocus: "可以先探索：观察岗位日常是否包含信息整理。",
         },
         {
           directionName: "内容运营",
           searchKeywords: ["内容运营 实习", "新媒体运营 实习", "内容编辑 助理"],
           basisFromUserMaterial: ["不排斥信息整理"],
           riskOrGap: "还不清楚是否接受持续写作。",
-          validationFocus: "真实 JD 是否要求稳定产出内容。",
+          validationFocus: "可以先探索：观察真实 JD 是否要求稳定产出内容。",
         },
       ],
     },
@@ -437,6 +437,7 @@ function buildLightReviewPrompt(input: AiProviderInput): string {
     `当前且唯一的路线：${input.routeKey}`,
     "任务：基于用户已确认保存的一条真实记录，生成一次 light_review 轻复盘。",
     `固定映射：todayAction.actionType 必须为 ${config.actionType}，recordType: ${config.recordType}。`,
+    ...buildLightReviewSemanticRules(input.routeKey),
     "ACTIVE_ROUTE_CONTRACT_BEGIN",
     JSON.stringify(contract, null, 2),
     "ACTIVE_ROUTE_CONTRACT_END",
@@ -483,6 +484,83 @@ function buildLightReviewContract(routeKey: RouteKey, config: RoutePromptConfig)
 }
 
 function buildLightReviewExample(routeKey: RouteKey, config: RoutePromptConfig): Record<string, unknown> {
+  if (routeKey === "experience_to_resume") {
+    const record = {
+      actualDone: "确认了社团招新经历",
+      payload: {
+        actualActions: "整理报名表",
+        deliverable: "报名名单",
+        missingFacts: "还缺报名人数",
+      },
+    };
+    return {
+      input: { record },
+      output: {
+        routeKey,
+        outputType: "light_review",
+        shortAssessment: "当前经历记录已经有实际动作和交付物，可以先补一项事实。",
+        routeResult: {
+          reviewBasis: [record.actualDone],
+          clues: ["这段经历已经记录了实际动作和交付物。"],
+          missingInfo: [record.payload.missingFacts],
+          nextAction: `围绕“${record.payload.actualActions}”这个动作，补报名人数这一项事实并保存。`,
+        },
+        missingInfo: null,
+        todayAction: {
+          actionTitle: "补这段经历的报名人数事实并保存",
+          actionReason: "补齐当前经历的一项事实后，简历动作会更克制、可核对。",
+          actionSteps: [`打开“${record.payload.actualActions}”这条动作记录`, "核对并补上真实报名人数", "确认后保存"],
+          estimatedTime: "15-30 分钟",
+          recordAfterDone: "记录这段经历补充的报名人数事实。",
+          actionType: config.actionType,
+        },
+        recordGuide: {
+          recordType: config.recordType,
+          fieldsToRecord: config.fieldsToRecord,
+          requiresUserConfirmation: true,
+        },
+      },
+    };
+  }
+  if (routeKey === "applications_to_review") {
+    const record = {
+      actualDone: "保存了内容运营实习投递记录",
+      payload: {
+        jobTitle: "内容运营实习",
+        materialVersion: "社团经历版",
+        jdSummary: "负责内容整理",
+        feedbackStatus: "暂无反馈",
+      },
+    };
+    return {
+      input: { record },
+      output: {
+        routeKey,
+        outputType: "light_review",
+        shortAssessment: "当前投递记录已包含岗位、材料版本和反馈状态，可以立即做一次单变量验证。",
+        routeResult: {
+          reviewBasis: [record.actualDone],
+          clues: ["当前记录可以围绕一个材料表达变量继续验证。"],
+          missingInfo: ["还没有调整变量后的反馈记录。"],
+          nextAction: `围绕“${record.payload.jobTitle}”和“${record.payload.materialVersion}”，只调整经历首句是否前置“${record.payload.jdSummary}”这一项变量并立即记录。`,
+        },
+        missingInfo: null,
+        todayAction: {
+          actionTitle: `为“${record.payload.jobTitle}”只调整一个材料变量`,
+          actionReason: `保持“${record.payload.materialVersion}”的其他内容不变，才便于后续比较记录。`,
+          actionSteps: ["打开当前材料版本", "只调整经历首句这一项变量", "立即记录修改内容"],
+          estimatedTime: "15-30 分钟",
+          recordAfterDone: `记录“${record.payload.jobTitle}”本次只调整的变量和材料版本。`,
+          actionType: config.actionType,
+        },
+        recordGuide: {
+          recordType: config.recordType,
+          fieldsToRecord: config.fieldsToRecord,
+          requiresUserConfirmation: true,
+        },
+      },
+    };
+  }
   const record = {
     actualDone: "保存了一条真实行动记录",
     payload: { note: "已确认这条行动记录" },
@@ -515,6 +593,22 @@ function buildLightReviewExample(routeKey: RouteKey, config: RoutePromptConfig):
       },
     },
   };
+}
+
+function buildLightReviewSemanticRules(routeKey: RouteKey): string[] {
+  if (routeKey === "experience_to_resume") {
+    return [
+      "routeResult.nextAction 和 todayAction 必须围绕当前已确认记录中的经历、事实、动作、交付物或简历片段。",
+      "必须给出一项可以立即执行的具体补事实或克制简历动作，不得退化为通用的“补充一项真实信息”。",
+    ];
+  }
+  if (routeKey === "applications_to_review") {
+    return [
+      "routeResult.nextAction 和 todayAction 必须绑定当前 record.payload 中一个 jobTitle 或 materialVersion。",
+      "只调整一个变量并立即记录，不得要求等待反馈、等待未来记录或新增投递后才能开始。",
+    ];
+  }
+  return [];
 }
 
 function pickFields(input: Record<string, unknown>, fields: string[]): Record<string, unknown> {
