@@ -35,7 +35,9 @@ function makeLightReviewOutput(input: AiProviderInput): RouteOutput {
     payload?: Record<string, unknown>;
   } | undefined;
   const actualDone = record?.actualDone ?? "你保存了一条真实记录。";
-  const next = lightReviewNextStep(input.routeKey);
+  const next = input.routeKey === "direction_to_jobs"
+    ? directionLightReviewNextStep(record, actualDone)
+    : lightReviewNextStep(input.routeKey);
 
   return {
     routeKey: input.routeKey,
@@ -61,6 +63,28 @@ function makeLightReviewOutput(input: AiProviderInput): RouteOutput {
       fieldsToRecord: next.fieldsToRecord,
       requiresUserConfirmation: true,
     },
+  };
+}
+
+function directionLightReviewNextStep(
+  record: { actualDone?: string; payload?: Record<string, unknown> } | undefined,
+  actualDone: string,
+): ReturnType<typeof lightReviewNextStep> {
+  const payloadAnchor = record?.payload
+    ? Object.values(record.payload).map(readText).find(Boolean)
+    : undefined;
+  const anchor = readText(record?.payload?.jobTitle) || payloadAnchor || actualDone;
+  return {
+    actionTitle: `打开“${anchor}”对应的岗位样本并记录 1 条 JD 要求`,
+    actionSteps: [
+      `打开“${anchor}”对应的岗位样本`,
+      `核对“${anchor}”对应岗位的 JD 要求`,
+      `记录“${anchor}”对应岗位的 1 条 JD 摘要`,
+    ],
+    recordAfterDone: `记录“${anchor}”对应岗位的名称、公司或平台和 JD 摘要。`,
+    actionType: "job_sample",
+    recordType: "job_sample",
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"],
   };
 }
 

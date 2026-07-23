@@ -725,6 +725,11 @@ describe("ChatCompletionProvider", () => {
 
     expect(prompt).toContain("明确围绕当前岗位样本、搜索关键词或 JD");
     expect(prompt).toContain("立即可做的具体动词");
+    expect(prompt).toContain("routeResult.nextAction 自身");
+    expect(prompt).toContain("record.actualDone 或 record.payload");
+    expect(prompt).toContain("todayAction.actionTitle 与 actionSteps");
+    expect(prompt).toContain("不得把具体动词、路线词和记录锚点拆散到不同字段");
+    expect(prompt).toContain("等待、以后或任何“后续再……”");
     expect(routeOutputSchema.safeParse(example.output).success).toBe(true);
     expect(example.output.routeResult.reviewBasis).toEqual([example.input.record.actualDone]);
     expect(actionCopy).toMatch(/打开|保存|记录|搜索|找到|选择|补|修改|填写|标出|复制|核对|整理|列出|确认/);

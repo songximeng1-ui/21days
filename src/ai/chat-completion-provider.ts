@@ -638,6 +638,10 @@ function buildLightReviewSemanticRules(routeKey: RouteKey): string[] {
     return [
       "routeResult.nextAction 和 todayAction 必须明确围绕当前岗位样本、搜索关键词或 JD。",
       "必须包含一个立即可做的具体动词，例如打开、保存、记录、搜索、找到、选择、补、修改、填写、标出、复制、核对、整理、列出或确认。",
+      "routeResult.nextAction 自身必须同时包含具体动词、岗位/JD/关键词/搜索等路线词，以及从 record.actualDone 或 record.payload 完整连续复制的一个当前记录锚点。",
+      "todayAction.actionTitle 与 actionSteps（可结合 recordAfterDone）也必须独立同时包含具体动词、路线词和同一当前记录中的一个完整连续锚点。",
+      "不得把具体动词、路线词和记录锚点拆散到不同字段后拼凑过关。",
+      "不得输出等待、以后或任何“后续再……”之类延期行动，必须给出现在即可开始的动作。",
     ];
   }
   if (routeKey === "experience_to_resume") {

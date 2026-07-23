@@ -195,7 +195,7 @@ async function generateAndValidate(
     return { failure: contentFailure("route_shape", "unexpected_output_type", durationMs) };
   }
 
-  const hardContractIssue = validateHardRouteContract(options.routeKey, output, options.mode);
+  const hardContractIssue = validateHardRouteContract(options.routeKey, output, options.mode, options.input);
   if (hardContractIssue) {
     return {
       failure: contentFailure(
@@ -313,6 +313,7 @@ function validateHardRouteContract(
   routeKey: RouteKey,
   output: RouteOutput,
   mode: "route" | "light_review",
+  input: Record<string, unknown>,
 ): "route_shape" | "action" | undefined {
   const contract = HARD_ROUTE_CONTRACTS[routeKey];
   if (mode === "route" && (
@@ -326,7 +327,7 @@ function validateHardRouteContract(
   if (
     mode === "light_review" &&
     routeKey === "direction_to_jobs" &&
-    !hasActionableDirectionLightReview(output)
+    !hasActionableDirectionLightReview(output, input)
   ) {
     return "route_shape";
   }
@@ -362,19 +363,38 @@ function hasExactDirectionItems(value: unknown): boolean {
 
 const DIRECTION_LIGHT_ACTION_TERM = /打开|保存|记录|搜索|找到|选择|补|修改|填写|标出|复制|核对|整理|列出|确认/;
 const DIRECTION_LIGHT_ROUTE_TERM = /岗位|JD|关键词|搜索/;
+const DIRECTION_LIGHT_DELAY_TERM = /等待|以后|后续再/;
 
-function hasActionableDirectionLightReview(output: RouteOutput): boolean {
+function hasActionableDirectionLightReview(
+  output: RouteOutput,
+  input: Record<string, unknown>,
+): boolean {
+  const record = isRecord(input.record) ? input.record : {};
+  const anchors = [
+    ...collectSourceTexts(record.actualDone),
+    ...collectSourceTexts(record.payload),
+  ].filter((value) => value.trim().length > 0);
   const nextAction = typeof output.routeResult?.nextAction === "string"
     ? output.routeResult.nextAction
     : "";
-  const actionText = [
-    nextAction,
+  const todayActionCore = [
     output.todayAction.actionTitle,
-    output.todayAction.actionReason,
     ...output.todayAction.actionSteps,
     output.todayAction.recordAfterDone,
   ].join("\n");
-  return DIRECTION_LIGHT_ACTION_TERM.test(actionText) && DIRECTION_LIGHT_ROUTE_TERM.test(actionText);
+  return (
+    isConcreteAnchoredDirectionAction(nextAction, anchors) &&
+    isConcreteAnchoredDirectionAction(todayActionCore, anchors)
+  );
+}
+
+function isConcreteAnchoredDirectionAction(text: string, anchors: string[]): boolean {
+  return (
+    !DIRECTION_LIGHT_DELAY_TERM.test(text) &&
+    DIRECTION_LIGHT_ACTION_TERM.test(text) &&
+    DIRECTION_LIGHT_ROUTE_TERM.test(text) &&
+    anchors.some((anchor) => text.includes(anchor))
+  );
 }
 
 function hasExactKeys(value: Record<string, unknown>, expectedKeys: string[]): boolean {

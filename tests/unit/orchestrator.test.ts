@@ -1050,6 +1050,185 @@ describe("generateRouteOutput", () => {
     expect(fallback.generate).not.toHaveBeenCalled();
   });
 
+  it("rejects a direction light review that only assembles route and action terms across delayed fields", async () => {
+    const record = {
+      id: "record-direction-light-cross-field",
+      routeKey: "direction_to_jobs" as const,
+      recordType: "job_sample" as const,
+      actionTitle: "保存岗位样本",
+      actualDone: "保存了用户运营实习岗位样本",
+      payload: {
+        jobTitle: "用户运营实习",
+        jdSummary: "用户社群维护",
+      },
+      userConfirmed: true,
+      createdAt: "2026-07-23T00:00:00.000Z",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const assembledDelay = {
+      ...generated,
+      routeResult: { ...generated.routeResult, nextAction: "等待以后再看。" },
+      todayAction: {
+        ...generated.todayAction,
+        actionTitle: "岗位",
+        actionReason: "以后再说。",
+        actionSteps: ["等待后续再看"],
+        recordAfterDone: "记录",
+      },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(assembledDelay) };
+    const fallback = { generate: vi.fn().mockResolvedValue(generated) };
+
+    const result = await generateLightReviewOutput({ record, primary, fallback });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a concrete direction light review that is not anchored to the current confirmed record", async () => {
+    const record = {
+      id: "record-direction-light-unanchored",
+      routeKey: "direction_to_jobs" as const,
+      recordType: "job_sample" as const,
+      actionTitle: "保存岗位样本",
+      actualDone: "保存了用户运营实习岗位样本",
+      payload: {
+        jobTitle: "用户运营实习",
+        jdSummary: "用户社群维护",
+      },
+      userConfirmed: true,
+      createdAt: "2026-07-23T00:00:00.000Z",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const unanchored = {
+      ...generated,
+      routeResult: { ...generated.routeResult, nextAction: "打开内容运营岗位并保存 JD。" },
+      todayAction: {
+        ...generated.todayAction,
+        actionTitle: "打开内容运营岗位并保存 JD",
+        actionReason: "先核对一个具体要求。",
+        actionSteps: ["打开内容运营岗位", "保存 1 条 JD 要求"],
+        recordAfterDone: "记录内容运营岗位的 JD。",
+      },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(unanchored) };
+    const fallback = { generate: vi.fn().mockResolvedValue(generated) };
+
+    const result = await generateLightReviewOutput({ record, primary, fallback });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a direction light review that defers a concrete anchored action with 后续再", async () => {
+    const record = {
+      id: "record-direction-light-deferred-prefix",
+      routeKey: "direction_to_jobs" as const,
+      recordType: "job_sample" as const,
+      actionTitle: "保存岗位样本",
+      actualDone: "保存了用户运营实习岗位样本",
+      payload: {
+        jobTitle: "用户运营实习",
+        jdSummary: "用户社群维护",
+      },
+      userConfirmed: true,
+      createdAt: "2026-07-23T00:00:00.000Z",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const deferred = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        nextAction: "后续再搜索“用户运营实习”岗位并记录 JD。",
+      },
+      todayAction: {
+        ...generated.todayAction,
+        actionTitle: "后续再打开“用户运营实习”岗位样本",
+        actionReason: "先保留这个动作。",
+        actionSteps: ["后续再核对“用户社群维护”这条 JD 要求"],
+        recordAfterDone: "后续再记录“用户运营实习”的 JD 摘要。",
+      },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(deferred) };
+    const fallback = { generate: vi.fn().mockResolvedValue(generated) };
+
+    const result = await generateLightReviewOutput({ record, primary, fallback });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("accepts the second primary direction light review when both actions bind to the current job title", async () => {
+    const record = {
+      id: "record-direction-light-anchored-retry",
+      routeKey: "direction_to_jobs" as const,
+      recordType: "job_sample" as const,
+      actionTitle: "保存岗位样本",
+      actualDone: "保存了用户运营实习岗位样本",
+      payload: {
+        jobTitle: "用户运营实习",
+        jdSummary: "用户社群维护",
+      },
+      userConfirmed: true,
+      createdAt: "2026-07-23T00:00:00.000Z",
+    };
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: record.routeKey,
+      input: { mode: "light_review", record },
+    });
+    const assembledDelay = {
+      ...generated,
+      routeResult: { ...generated.routeResult, nextAction: "等待以后再看。" },
+      todayAction: {
+        ...generated.todayAction,
+        actionTitle: "岗位",
+        actionReason: "以后再说。",
+        actionSteps: ["等待后续再看"],
+        recordAfterDone: "记录",
+      },
+    };
+    const anchored = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        nextAction: "打开“用户运营实习”岗位样本，核对“用户社群维护”这条 JD 要求并记录。",
+      },
+      todayAction: {
+        ...generated.todayAction,
+        actionTitle: "打开“用户运营实习”岗位样本",
+        actionReason: "先核对当前岗位样本的一条真实要求。",
+        actionSteps: ["打开“用户运营实习”岗位样本", "核对“用户社群维护”这条 JD 要求", "确认后记录"],
+        recordAfterDone: "记录“用户运营实习”的 JD 摘要。",
+      },
+    };
+    const primary = {
+      generate: vi.fn()
+        .mockResolvedValueOnce(assembledDelay)
+        .mockResolvedValueOnce(anchored),
+    };
+    const fallback = { generate: vi.fn().mockResolvedValue(anchored) };
+
+    const result = await generateLightReviewOutput({ record, primary, fallback });
+
+    expect(result.outputType).toBe("light_review");
+    expect(result.routeResult?.nextAction).toContain(record.payload.jobTitle);
+    expect(result.todayAction.actionTitle).toContain(record.payload.jobTitle);
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
   it("allows a confirmed experience light review to quote grounded leadership in reviewBasis", async () => {
     const record = {
       id: "record-grounded-role-review",
