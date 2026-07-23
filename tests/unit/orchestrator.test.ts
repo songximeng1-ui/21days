@@ -394,6 +394,8 @@ describe("generateRouteOutput", () => {
     ["actualActions", "并没有真正意义上在该项目中实际主导整理信息并排版", "主导整理信息并排版。"],
     ["actualActions", "不确定是否主导整理信息并排版", "主导整理信息并排版。"],
     ["actualActions", "无法确认是否主导整理信息并排版", "主导整理信息并排版。"],
+    ["actualActions", "主导整理信息并排版（尚未确认）", "主导整理信息并排版。"],
+    ["actualActions", "主导整理信息并排版，真实性待核实", "主导整理信息并排版。"],
   ])("rejects role strength backed only by non-affirmative %s provenance", async (field, sourceText, resumeSnippetDraft) => {
     const input = { ...sufficientExperienceInput, [field]: sourceText };
     const generated = await new MockAiProvider("success").generate({ routeKey: "experience_to_resume", input });
@@ -741,6 +743,8 @@ describe("generateRouteOutput", () => {
     "并没有真正意义上在该项目中实际主导整理信息并排版",
     "不确定是否主导整理信息并排版",
     "无法确认是否主导整理信息并排版",
+    "主导整理信息并排版（尚未确认）",
+    "主导整理信息并排版，真实性待核实",
   ])("rejects non-affirmative confirmed light-review leadership provenance: %s", async (actualDone) => {
     const record = {
       id: "record-non-affirmative-role-review",

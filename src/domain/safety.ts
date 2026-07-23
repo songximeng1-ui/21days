@@ -208,12 +208,23 @@ function hasAffirmativeRoleMarker(text: string, marker: string): boolean {
       text.lastIndexOf("?", markerIndex - 1),
     ) + 1;
     const prefix = text.slice(clauseStart, markerIndex);
-    const nonAffirmativeContext =
+    const markerEnd = markerIndex + marker.length;
+    const sentenceEnd = ["。", "；", ".", ";", "！", "？", "!", "?"]
+      .map((separator) => text.indexOf(separator, markerEnd))
+      .filter((index) => index >= 0)
+      .reduce((nearest, index) => Math.min(nearest, index), text.length);
+    const suffix = text.slice(markerEnd, sentenceEnd);
+    const prefixedNonAffirmativeContext =
       /没有|并未|未曾|不是|并非|不要|不能|不得|请勿|避免|不确定|无法(?:确认|判断)|尚未(?:确认|明确)|未(?:确认|明确)|待(?:确认|核实)|是否/;
-    if (!nonAffirmativeContext.test(prefix)) {
+    const postfixedNonAffirmativeContext =
+      /[（(][^）)]*(?:尚未确认|未确认|待核实|无法确认|不确定|not confirmed|unverified|uncertain)[^）)]*[）)]|(?:真实性|该事实|该说法|这一点)[^。；.!;!?]{0,12}(?:尚未确认|待核实|无法确认|不确定)|(?:^|[，,\s])(?:尚未确认|未确认|待核实|无法确认|not confirmed|unverified)(?:$|[，,\s）)])/i;
+    if (
+      !prefixedNonAffirmativeContext.test(prefix) &&
+      !postfixedNonAffirmativeContext.test(suffix)
+    ) {
       return true;
     }
-    fromIndex = markerIndex + marker.length;
+    fromIndex = markerEnd;
   }
   return false;
 }

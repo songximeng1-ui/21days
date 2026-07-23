@@ -212,6 +212,47 @@ describe("scanSafetyViolations", () => {
     ).toContain("禁止夸大职责或成果");
   });
 
+  it.each([
+    "主导整理信息并排版（尚未确认）",
+    "主导整理信息并排版，真实性待核实",
+    "主导整理信息并排版 (not confirmed)",
+  ])("rejects postfixed uncertainty in normal-route role provenance: %s", (sourceText) => {
+    const groundedFragment = "主导整理信息并排版";
+    const output = {
+      routeResult: {
+        confirmedFacts: [groundedFragment],
+        resumeSnippetDraft: `${groundedFragment}。`,
+        supportingFacts: [groundedFragment],
+      },
+    };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: { actualActions: sourceText },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
+
+  it.each([
+    "不确定是否参与前期讨论，后来主导整理信息并排版",
+    "无法确认是否参与前期讨论；后来主导整理信息并排版",
+  ])("keeps a later independent affirmative role clause grounded: %s", (sourceText) => {
+    const groundedFact = "主导整理信息并排版";
+    const output = {
+      routeResult: {
+        confirmedFacts: [groundedFact],
+        resumeSnippetDraft: `${groundedFact}。`,
+        supportingFacts: [groundedFact],
+      },
+    };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: { actualActions: sourceText },
+      }),
+    ).toEqual({ passed: true, blockedReasons: [] });
+  });
+
   it("allows a confirmed experience light review to quote grounded leadership only in reviewBasis", () => {
     const groundedFact = "主导整理信息并排版";
     const output = { routeResult: { reviewBasis: [groundedFact] } };
@@ -254,6 +295,28 @@ describe("scanSafetyViolations", () => {
     "不确定是否主导整理信息并排版",
     "无法确认是否主导整理信息并排版",
   ])("does not treat a confirmed light-review uncertainty clause as affirmative provenance: %s", (sourceText) => {
+    expect(
+      scanRouteSafety("experience_to_resume", {
+        routeResult: { reviewBasis: ["主导整理信息并排版"] },
+      }, {
+        routeInput: {
+          mode: "light_review",
+          record: {
+            routeKey: "experience_to_resume",
+            actualDone: sourceText,
+            payload: {},
+            userConfirmed: true,
+          },
+        },
+      }).blockedReasons,
+    ).toContain("禁止夸大职责或成果");
+  });
+
+  it.each([
+    "主导整理信息并排版（尚未确认）",
+    "主导整理信息并排版，真实性待核实",
+    "主导整理信息并排版 (not confirmed)",
+  ])("rejects postfixed uncertainty in confirmed light-review provenance: %s", (sourceText) => {
     expect(
       scanRouteSafety("experience_to_resume", {
         routeResult: { reviewBasis: ["主导整理信息并排版"] },
