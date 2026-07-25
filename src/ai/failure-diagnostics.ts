@@ -24,6 +24,7 @@ export type AiFailureEvent = {
   durationBucket: "lt_100ms" | "100_499ms" | "500_1999ms" | "gte_2000ms";
   schemaPaths?: string[];
   httpStatusClass?: AiHttpStatusClass;
+  providerErrorCode?: string;
 };
 
 export interface AiFailureReporter {

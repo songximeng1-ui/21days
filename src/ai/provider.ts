@@ -56,6 +56,7 @@ export class AiProviderError extends Error {
   constructor(
     readonly kind: AiProviderErrorKind = "transport",
     readonly httpStatusClass?: AiHttpStatusClass,
+    readonly providerErrorCode?: string,
   ) {
     super("AI provider request failed");
     this.name = "AiProviderError";

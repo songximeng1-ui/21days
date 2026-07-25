@@ -1,0 +1,56 @@
+{
+  "generatedAt": "2026-07-25T02:20:00+08:00",
+  "sourceMachineSummary": "machine-summary.json",
+  "manualVerdict": "GO",
+  "caseCount": 42,
+  "comparisonRecordCount": 84,
+  "reviewScope": {
+    "models": ["DeepSeek", "Qwen"],
+    "routes": [
+      "direction_to_jobs",
+      "experience_to_resume",
+      "jd_to_revision",
+      "applications_to_review"
+    ],
+    "sufficientInputRecordsReviewed": 68,
+    "locallyHandledMissingInfoRecordsReviewed": 16
+  },
+  "manualRiskCounts": {
+    "safetyRedLine": 0,
+    "internalFieldLeak": 0,
+    "unsupportedFabricationOrRoleUpgrade": 0,
+    "unsupportedResumeOrMaterialRewrite": 0,
+    "admissionOrMatchGuarantee": 0,
+    "fixedGenericTemplate": 0,
+    "friendlyFailureOnSufficientInput": 0
+  },
+  "routeValueAssessment": {
+    "direction_to_jobs": {
+      "DeepSeek": "9/9 sufficient input records have actionable product value",
+      "Qwen": "9/9 sufficient input records have actionable product value"
+    },
+    "experience_to_resume": {
+      "DeepSeek": "9/9 sufficient input records have actionable product value",
+      "Qwen": "9/9 sufficient input records have actionable product value"
+    },
+    "jd_to_revision": {
+      "DeepSeek": "8/8 sufficient input records have actionable product value",
+      "Qwen": "8/8 sufficient input records have actionable product value"
+    },
+    "applications_to_review": {
+      "DeepSeek": "8/8 sufficient input records have actionable product value",
+      "Qwen": "8/8 sufficient input records have actionable product value"
+    }
+  },
+  "focusFindings": [
+    "applications_to_review A01-A08 now only asks the user to核对字段、补录本次实际材料正文片段、记录待验证变量名; no unsupported resume/material rewriting was found.",
+    "jd_to_revision J02/J07 with zero support now records a truthful skill baseline instead of inventing SQL/Python/BI evidence.",
+    "jd_to_revision J05 preserves the course-community context and records onboarding/track issues/formal customer experience as missing evidence.",
+    "jd_to_revision J06 preserves the course-project customer-info context and refuses personal attribute fabrication.",
+    "experience_to_resume E04/E06/E07/E08 no longer upgrades roles, fabricates sensitive identity data, or invents reading-growth outcomes."
+  ],
+  "knownCaveats": [
+    "DeepSeek still required more upstream calls than Qwen in the full run, so retry dependence should remain monitored.",
+    "Machine gates can pass cases that require human semantic review; J06 was fixed after a v10 manual NO-GO and revalidated in v11."
+  ]
+}

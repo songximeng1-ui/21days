@@ -294,7 +294,7 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
       missingInfo: null,
       todayAction: {
         actionTitle: "今天先选择 1 条投递记录补齐材料版本",
-        actionReason: "先让这条记录可复盘，再判断下一轮怎么调整。",
+        actionReason: "先让这条记录可复盘，再决定下一次需要补哪项材料证据。",
         actionSteps: [
           "选最近一条投递",
           "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态 / JD 摘要 / 材料版本",

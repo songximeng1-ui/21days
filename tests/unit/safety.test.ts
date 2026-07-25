@@ -35,6 +35,75 @@ describe("scanSafetyViolations", () => {
     expect(result).toEqual({ passed: true, blockedReasons: [] });
   });
 
+  it("allows negated anti-fabrication reminders inside serialized output fields", () => {
+    expect(scanSafetyViolations(JSON.stringify({ doNotExaggerate: ["不要虚构阅读量增长数据"] })))
+      .toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("allows avoid-using-fabricated-data reminders", () => {
+    expect(scanSafetyViolations("先确认真实的经历细节，避免使用虚构数据。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("allows compliant refusal wording for fabricated tool-experience requests", () => {
+    expect(scanSafetyViolations("必须拒绝虚构或夸大工具经验，只记录真实材料边界。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+    expect(scanSafetyViolations("明确拒绝虚构经验，保持材料真实。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("allows compliant role-strength guardrail reminders", () => {
+    expect(scanSafetyViolations("不要夸大角色强度（如'主导项目'）"))
+      .toEqual({ passed: true, blockedReasons: [] });
+    expect(scanSafetyViolations("不要将角色夸大为独立负责或主导"))
+      .toEqual({ passed: true, blockedReasons: [] });
+    expect(scanSafetyViolations("不要写独立负责整理会议材料。不要写主导了文档汇总。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+    expect(scanSafetyViolations("不要将参与的数据处理说成主导或独立负责。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("allows serialized anti-fabrication and anti-exaggeration reminders from experience outputs", () => {
+    expect(scanSafetyViolations(JSON.stringify({
+      shortAssessment: "先确认已有事实，避免虚构数据。",
+      doNotExaggerate: [
+        "不要虚构阅读量增长300%",
+        "不能编造或夸大阅读量数据",
+        "不要将简单的复制发布写为独立运营",
+      ],
+    }))).toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("allows negated role-exaggeration reminders with concrete risky phrases", () => {
+    expect(scanSafetyViolations("不要写成独立负责公众号运营。不要把协助写成负责。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("allows serialized anti-role-upgrade reminders from experience outputs", () => {
+    expect(scanSafetyViolations(JSON.stringify({
+      doNotExaggerate: [
+        "不要写成负责或主导旧书交换活动。",
+        "不要写成独立负责内容运营或主导活动回顾策划。",
+        "不要包装成主导整场迎新活动，实际角色是协助。",
+        "不要写成主导需求调研或独立设计产品功能。",
+      ],
+    }))).toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("allows negated internal-secret leak reminders", () => {
+    expect(scanSafetyViolations("不要输出 API key 或完整 prompt。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it("allows compliant refusal wording for match scores and interview probability", () => {
+    expect(scanSafetyViolations("不评估匹配度、录取概率或投递结论，仅核对真实材料证据。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+    expect(scanSafetyViolations("无法提供匹配度或录取概率判断，只核对真实材料证据。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+    expect(scanSafetyViolations("无法打分或预测录取概率，仅基于材料核对 JD 要求。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+  });
+
   it.each([
     "记录公司、拒绝状态、来源和保存原因。",
     "表格包含公司、是否未通过、跟进人和备注原因。",
@@ -110,12 +179,18 @@ describe("scanSafetyViolations", () => {
       .toEqual({ passed: true, blockedReasons: [] });
   });
 
+  it("allows negated anti-fabrication reminders with concrete risky phrases", () => {
+    expect(scanSafetyViolations("不要写成阅读量增长300%。不虚构工具使用经验。"))
+      .toEqual({ passed: true, blockedReasons: [] });
+  });
+
   it.each([
     "不要编造经历",
     "不要把参与写成主导",
     "不要把协助写成负责",
     "不评价你本人适不适合",
     "不输出能投、不能投、匹配度或录取概率",
+    "不要捏造阅读量增长300%等虚假数据",
   ])("allows a pure safety reminder without later affirmative content: %s", (text) => {
     expect(scanSafetyViolations(text)).toEqual({ passed: true, blockedReasons: [] });
   });
