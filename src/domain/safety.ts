@@ -176,7 +176,7 @@ function canExemptGroundedExperienceLeadership(
         resumeSnippetDraft:
           hasGroundedExperienceRoleStrength(routeResult.resumeSnippetDraft, routeInput) &&
           typeof routeResult.resumeSnippetDraft === "string"
-            ? routeResult.resumeSnippetDraft.replaceAll("主导", "")
+            ? stripGroundedRoleMarkers(routeResult.resumeSnippetDraft, sourceTexts)
             : routeResult.resumeSnippetDraft,
         confirmedFacts: stripGroundedLeadershipClaims(routeResult.confirmedFacts, sourceTexts),
         supportingFacts: stripGroundedLeadershipClaims(routeResult.supportingFacts, sourceTexts),
@@ -188,15 +188,30 @@ function canExemptGroundedExperienceLeadership(
 function stripGroundedLeadershipClaims(value: unknown, sourceTexts: string[]): unknown {
   if (!Array.isArray(value)) return value;
   return value.map((claim) => {
-    if (
-      typeof claim !== "string" ||
-      !hasAffirmativeRoleMarker(claim, "主导") ||
-      !sourceTexts.some(
-        (sourceText) => hasAffirmativeRoleClaim(sourceText, claim, "主导"),
-      )
-    ) return claim;
-    return claim.replaceAll("主导", "");
+    if (typeof claim !== "string") return claim;
+    return stripGroundedRoleMarkers(claim, sourceTexts);
   });
+}
+
+function stripGroundedRoleMarkers(text: string, sourceTexts: string[]): string {
+  let sanitized = text;
+  for (const marker of ["负责整体", "全权负责", "主导", "独立负责", "独立完成", "负责"]) {
+    if (
+      hasAffirmativeRoleMarker(sanitized, marker) &&
+      sourceTexts.some((sourceText) => {
+        let markerIndex = sanitized.indexOf(marker);
+        while (markerIndex >= 0) {
+          const comparableClaim = readComparableRoleClaim(sanitized, markerIndex);
+          if (hasAffirmativeRoleClaim(sourceText, comparableClaim, marker)) return true;
+          markerIndex = sanitized.indexOf(marker, markerIndex + marker.length);
+        }
+        return false;
+      })
+    ) {
+      sanitized = sanitized.replaceAll(marker, "");
+    }
+  }
+  return sanitized;
 }
 
 export const EXPERIENCE_ROLE_MARKERS = ["独立负责", "独立完成", "主导", "负责"] as const;

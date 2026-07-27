@@ -29,6 +29,44 @@ describe("scanSafetyViolations", () => {
     expect(result).toEqual({ passed: true, blockedReasons: [] });
   });
 
+  it("allows grounded responsible-overall wording when it is present in the user material", () => {
+    const output = {
+      routeKey: "experience_to_resume",
+      outputType: "route_result",
+      shortAssessment: "先保留真实职责边界。",
+      routeResult: {
+        confirmedFacts: ["负责整体报名流程"],
+        missingFacts: ["还缺少具体交付物"],
+        doNotExaggerate: ["不要补写未发生的数据"],
+        resumeSnippetDraft: "负责整体报名流程，核对报名表并同步名单。",
+        supportingFacts: ["负责整体报名流程"],
+      },
+      todayAction: {
+        actionTitle: "核对报名流程证据",
+        actionReason: "这句话来自用户材料。",
+        actionSteps: ["找到报名流程记录", "核对实际动作"],
+        estimatedTime: "15-30 分钟",
+        recordAfterDone: "记录可证明的报名流程事实。",
+        actionType: "experience_fact",
+      },
+      recordGuide: {
+        recordType: "experience_fact",
+        fieldsToRecord: ["actualActions"],
+        requiresUserConfirmation: true,
+      },
+    };
+
+    expect(
+      scanRouteSafety("experience_to_resume", output, {
+        routeInput: {
+          rawExperience: "负责整体报名流程",
+          actualActions: "核对报名表并同步名单",
+          deliverableOrResult: "报名名单",
+        },
+      }),
+    ).toEqual({ passed: true, blockedReasons: [] });
+  });
+
   it("allows neutral application-record field instructions", () => {
     const result = scanSafetyViolations("记录岗位名称、公司、来源和保存原因。");
 

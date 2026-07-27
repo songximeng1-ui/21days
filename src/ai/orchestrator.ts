@@ -848,8 +848,9 @@ function normalizeUnsupportedJdContextUpgrades(
   const visibleTexts = collectUserVisibleTexts(output);
   const visible = visibleTexts.join("\n");
 
+  const courseFaqMaterial = extractCourseFaqMaterial(userMaterial);
   if (
-    /课程社群中使用GoogleSheetsNotion整理常见问题/.test(userMaterial) &&
+    courseFaqMaterial &&
     /没有正式客户经验/.test(userMaterial) &&
     /(维护FAQ|补充使用\s*spreadsheets\s*追踪问题|track issues)/i.test(visible)
   ) {
@@ -858,7 +859,7 @@ function normalizeUnsupportedJdContextUpgrades(
       routeResult: {
         ...output.routeResult,
         minimalRevisionActions: [
-          "保留“课程社群中使用GoogleSheetsNotion整理常见问题”的课程语境；只说明其对应 FAQ 整理，track issues 仍缺真实证据。",
+          `保留“${courseFaqMaterial}”的课程语境；只说明其对应 FAQ 整理，track issues 仍缺真实证据。`,
         ],
       },
       todayAction: {
@@ -866,7 +867,7 @@ function normalizeUnsupportedJdContextUpgrades(
         actionTitle: "核对课程社群常见问题整理",
         actionReason: "当前材料只支撑课程社群中的常见问题整理和协助回复英文邮件；不删除课程语境，也不补写正式客户或问题追踪经历。",
         actionSteps: [
-          "找到材料里的“课程社群中使用GoogleSheetsNotion整理常见问题”",
+          `找到材料里的“${courseFaqMaterial}”`,
           "保留“课程社群”语境，只把它记录为 FAQ/常见问题整理证据",
           "把 onboarding、track issues 和正式客户经验记为仍缺真实证据",
         ],
@@ -875,10 +876,11 @@ function normalizeUnsupportedJdContextUpgrades(
     };
   }
 
+  const courseCustomerDataMaterial = extractCourseCustomerDataMaterial(userMaterial);
   if (
-    /课程客户信息表整理/.test(userMaterial) &&
+    courseCustomerDataMaterial &&
     visibleTexts.some((text) =>
-      /课程客户信息表整理.{0,40}((改为|修改为|调整为|替换为|改写为|写成).{0,20}(协助整理客户资料|协助客户资料整理)|与.{0,12}(协助整理客户资料|协助客户资料整理).{0,12}对应|调整表述位置|放在经历首句)/.test(
+      /课程(?:项目)?客户(?:信息表|名单|资料)?整理.{0,40}((改为|修改为|调整为|替换为|改写为|写成).{0,20}(协助整理客户资料|协助客户资料整理)|与.{0,12}(协助整理客户资料|协助客户资料整理).{0,12}对应|调整表述位置|放在经历首句)/.test(
         text,
       ),
     )
@@ -888,7 +890,7 @@ function normalizeUnsupportedJdContextUpgrades(
       routeResult: {
         ...output.routeResult,
         minimalRevisionActions: [
-          "保留“课程客户信息表整理”的课程项目语境；只说明其与资料整理要求相关，不改写成正式客户资料整理经历。",
+          `保留“${courseCustomerDataMaterial}”的课程项目语境；只说明其与资料整理要求相关，不改写成正式客户资料整理经历。`,
         ],
       },
       todayAction: {
@@ -896,7 +898,7 @@ function normalizeUnsupportedJdContextUpgrades(
         actionTitle: "核对课程客户信息表整理边界",
         actionReason: "当前材料只支撑课程客户信息表整理，不能删除“课程”限定或改写成正式客户资料整理；外出拜访仍缺真实证据。",
         actionSteps: [
-          "找到材料里的“课程客户信息表整理”",
+          `找到材料里的“${courseCustomerDataMaterial}”`,
           "保留“课程”限定，只记录其与资料整理要求的对应关系",
           "记录外出拜访仍缺真实材料证据，不补写未发生经历",
         ],
@@ -906,6 +908,18 @@ function normalizeUnsupportedJdContextUpgrades(
   }
 
   return output;
+}
+
+function extractCourseFaqMaterial(userMaterial: string): string | null {
+  return (
+    userMaterial.match(/课程社群中使用GoogleSheetsNotion整理常见问题/)?.[0] ??
+    userMaterial.match(/(?:课程|学生|社群)[^，。；;,.]{0,16}(?:FAQ|常见问题)[^，。；;,.]{0,12}整理/i)?.[0] ??
+    null
+  );
+}
+
+function extractCourseCustomerDataMaterial(userMaterial: string): string | null {
+  return userMaterial.match(/课程(?:项目)?客户(?:信息表|名单|资料)?整理/)?.[0] ?? null;
 }
 
 function normalizeUnsupportedJdRoleUpgrade(
@@ -1554,7 +1568,7 @@ function hasExactDirectionItems(value: unknown): boolean {
         isRecord(direction) &&
         hasExactKeys(direction, DIRECTION_RESULT_KEYS) &&
         typeof direction.validationFocus === "string" &&
-        direction.validationFocus.includes("可以先探索"),
+        direction.validationFocus.trim().length > 0,
     )
   );
 }

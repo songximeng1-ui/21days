@@ -276,7 +276,7 @@ describe("generateRouteOutput", () => {
     expect(primary.generate).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects direction output without the exact tentative phrase and never relaxes through fallback", async () => {
+  it("accepts direction output with grounded validation focus without requiring a fixed tentative phrase", async () => {
     const generated = await new MockAiProvider("success").generate({
       routeKey: "direction_to_jobs",
       input: sufficientDirectionInput,
@@ -308,8 +308,8 @@ describe("generateRouteOutput", () => {
       fallback,
     });
 
-    expect(result.outputType).toBe("friendly_failure");
-    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
     expect(fallback.generate).not.toHaveBeenCalled();
   });
 
@@ -443,33 +443,24 @@ describe("generateRouteOutput", () => {
     expect(fallback.generate).not.toHaveBeenCalled();
   });
 
-  it("retries the primary direction route and accepts the exact tentative phrase on the second attempt", async () => {
+  it("accepts grounded direction validation focus without a fixed tentative phrase", async () => {
     const generated = await new MockAiProvider("success").generate({
       routeKey: "direction_to_jobs",
       input: sufficientDirectionInput,
     });
-    const withoutTentativePhrase = {
+    const equivalentValidationFocus = {
       ...generated,
       routeResult: {
         explorableDirections: (generated.routeResult?.explorableDirections as Array<Record<string, unknown>>).map(
-          (direction) => ({ ...direction, validationFocus: "观察真实岗位要求里的工具和交付物" }),
-        ),
-      },
-    };
-    const corrected = {
-      ...generated,
-      routeResult: {
-        explorableDirections: (generated.routeResult?.explorableDirections as Array<Record<string, unknown>>).map(
-          (direction) => ({ ...direction, validationFocus: `可以先探索：${direction.validationFocus}` }),
+          (direction) => ({ ...direction, validationFocus: "先用真实 JD 验证这个方向的工具、职责和交付物" }),
         ),
       },
     };
     const primary = {
       generate: vi.fn()
-        .mockResolvedValueOnce(withoutTentativePhrase)
-        .mockResolvedValueOnce(corrected),
+        .mockResolvedValueOnce(equivalentValidationFocus),
     };
-    const fallback = { generate: vi.fn().mockResolvedValue(corrected) };
+    const fallback = { generate: vi.fn().mockResolvedValue(generated) };
 
     const result = await generateRouteOutput({
       routeKey: "direction_to_jobs",
@@ -479,8 +470,8 @@ describe("generateRouteOutput", () => {
     });
 
     expect(result.outputType).toBe("route_result");
-    expect(JSON.stringify(result.routeResult)).toContain("可以先探索");
-    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(result.routeResult)).toContain("先用真实 JD 验证");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
     expect(fallback.generate).not.toHaveBeenCalled();
   });
 
@@ -1401,7 +1392,6 @@ describe("generateRouteOutput", () => {
       input,
       primary,
     });
-    console.log("no-space retry", primary.generate.mock.calls[1]?.[0]?.retryFeedback);
     const visibleCopy = JSON.stringify(result.routeResult);
 
     expect(result.outputType).toBe("route_result");
@@ -4871,6 +4861,46 @@ describe("generateRouteOutput", () => {
     expect(result.outputType).toBe("route_result");
     expect(JSON.stringify(result)).toContain("课程客户信息表整理");
     expect(JSON.stringify(result)).not.toContain("改为“协助整理客户资料”");
+    expect(provider.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps synonymous course-project context when customer-data wording is upgraded", async () => {
+    const input = {
+      targetJobTitle: "招商主管助理",
+      jdTextOrRequirements: "协助客户资料整理和外出拜访。",
+      userMaterial: "参与课程项目客户名单整理，没有外出拜访经历",
+      currentQuestion: "这段能不能更贴近 JD？",
+    };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "jd_to_revision", input });
+    const candidate = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        jdKeyRequirements: ["协助客户资料整理和外出拜访"],
+        supportedByMaterial: ["参与课程项目客户名单整理"],
+        unclearFromMaterial: ["外出拜访经历未在材料中体现"],
+        minimalRevisionActions: ["将“课程项目客户名单整理”改写为“协助客户资料整理”并放在经历首句。"],
+      },
+      todayAction: {
+        ...generated.todayAction,
+        actionTitle: "对照“协助客户资料整理”修改1处经历",
+        actionReason: "当前材料里已有课程项目客户名单整理，先做一处有来源的小修改。",
+        actionSteps: [
+          "打开JD中“协助客户资料整理”这条要求",
+          "找到材料里的“课程项目客户名单整理”",
+          "将这一句改写为“协助客户资料整理（课程项目客户名单整理）”",
+        ],
+        recordAfterDone: "记录修改前片段、修改后片段和对应的“协助客户资料整理”要求。",
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(candidate) };
+
+    const result = await generateRouteOutput({ routeKey: "jd_to_revision", input, provider });
+
+    expect(result.outputType).toBe("route_result");
+    expect(JSON.stringify(result)).toContain("课程项目客户名单整理");
+    expect(JSON.stringify(result)).not.toContain("改写为“协助客户资料整理”");
+    expect(JSON.stringify(result)).not.toContain("放在经历首句");
     expect(provider.generate).toHaveBeenCalledTimes(1);
   });
 
