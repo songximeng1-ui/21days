@@ -1,0 +1,103 @@
+{
+  "generatedAt": "2026-07-24T18:15:47.223Z",
+  "caseCount": 42,
+  "comparisonRecordCount": 84,
+  "locallyHandledCaseCount": 8,
+  "realModelCaseCountPerModel": 34,
+  "byModel": {
+    "DeepSeek": {
+      "records": 42,
+      "realModelCases": 34,
+      "upstreamCalls": 38,
+      "success": 42,
+      "routeResultSuccess": 34,
+      "contractPass": 42,
+      "actionPass": 42,
+      "safetyPass": 42,
+      "friendlyFailuresOnSufficientInput": 0,
+      "averageUserQuality": 4.6,
+      "issueCounts": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 0,
+        "PASS": 42
+      }
+    },
+    "Qwen": {
+      "records": 42,
+      "realModelCases": 34,
+      "upstreamCalls": 35,
+      "success": 42,
+      "routeResultSuccess": 34,
+      "contractPass": 42,
+      "actionPass": 42,
+      "safetyPass": 42,
+      "friendlyFailuresOnSufficientInput": 0,
+      "averageUserQuality": 4.71,
+      "issueCounts": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 0,
+        "PASS": 42
+      }
+    }
+  },
+  "byRouteAndModel": {
+    "direction_to_jobs:DeepSeek": {
+      "records": 11,
+      "success": 11,
+      "sufficientCases": 9,
+      "sufficientSuccess": 9,
+      "friendlyFailures": 0
+    },
+    "direction_to_jobs:Qwen": {
+      "records": 11,
+      "success": 11,
+      "sufficientCases": 9,
+      "sufficientSuccess": 9,
+      "friendlyFailures": 0
+    },
+    "experience_to_resume:DeepSeek": {
+      "records": 11,
+      "success": 11,
+      "sufficientCases": 9,
+      "sufficientSuccess": 9,
+      "friendlyFailures": 0
+    },
+    "experience_to_resume:Qwen": {
+      "records": 11,
+      "success": 11,
+      "sufficientCases": 9,
+      "sufficientSuccess": 9,
+      "friendlyFailures": 0
+    },
+    "jd_to_revision:DeepSeek": {
+      "records": 10,
+      "success": 10,
+      "sufficientCases": 8,
+      "sufficientSuccess": 8,
+      "friendlyFailures": 0
+    },
+    "jd_to_revision:Qwen": {
+      "records": 10,
+      "success": 10,
+      "sufficientCases": 8,
+      "sufficientSuccess": 8,
+      "friendlyFailures": 0
+    },
+    "applications_to_review:DeepSeek": {
+      "records": 10,
+      "success": 10,
+      "sufficientCases": 8,
+      "sufficientSuccess": 8,
+      "friendlyFailures": 0
+    },
+    "applications_to_review:Qwen": {
+      "records": 10,
+      "success": 10,
+      "sufficientCases": 8,
+      "sufficientSuccess": 8,
+      "friendlyFailures": 0
+    }
+  }
+}

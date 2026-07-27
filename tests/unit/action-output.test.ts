@@ -2,6 +2,38 @@ import { describe, expect, it } from "vitest";
 import { routeOutputSchema } from "@/schemas/route-output";
 import { validateRouteOutput } from "@/domain/action-card";
 
+function makeDirectionOutput(directionCount: number, keywordCount: number) {
+  return routeOutputSchema.parse({
+    routeKey: "direction_to_jobs",
+    outputType: "route_result",
+    shortAssessment: "可以先把方向落到岗位样本。",
+    routeResult: {
+      explorableDirections: Array.from({ length: directionCount }, (_, directionIndex) => ({
+        directionName: `方向 ${directionIndex + 1}`,
+        searchKeywords: Array.from({ length: keywordCount }, (_, keywordIndex) =>
+          `方向${directionIndex + 1}关键词${keywordIndex + 1}`),
+        basisFromUserMaterial: ["整理社团报名信息"],
+        riskOrGap: "还缺真实 JD 样本验证",
+        validationFocus: "观察岗位要求里的工具和交付物",
+      })),
+    },
+    missingInfo: null,
+    todayAction: {
+      actionTitle: "今天先保存 1-3 个真实岗位样本",
+      actionReason: "先用真实 JD 验证方向。",
+      actionSteps: ["搜索一个关键词", "保存岗位要求摘要"],
+      estimatedTime: "15-30 分钟",
+      recordAfterDone: "记录岗位名称、JD 摘要和担心点。",
+      actionType: "job_sample",
+    },
+    recordGuide: {
+      recordType: "job_sample",
+      fieldsToRecord: ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"],
+      requiresUserConfirmation: true,
+    },
+  });
+}
+
 describe("route output contract", () => {
   it("accepts one grounded today action", () => {
     const output = routeOutputSchema.parse({
@@ -113,5 +145,23 @@ describe("route output contract", () => {
     });
 
     expect(validateRouteOutput(output).passed).toBe(false);
+  });
+
+  it.each([1, 4])("rejects direction route output with %i direction items", (directionCount) => {
+    expect(validateRouteOutput(makeDirectionOutput(directionCount, 3)).passed).toBe(false);
+  });
+
+  it.each([2, 6])("rejects direction route output with %i keywords per direction", (keywordCount) => {
+    expect(validateRouteOutput(makeDirectionOutput(2, keywordCount)).passed).toBe(false);
+  });
+
+  it.each([
+    [2, 3],
+    [3, 5],
+  ])("accepts direction boundary with %i directions and %i keywords", (directionCount, keywordCount) => {
+    expect(validateRouteOutput(makeDirectionOutput(directionCount, keywordCount))).toEqual({
+      passed: true,
+      issues: [],
+    });
   });
 });

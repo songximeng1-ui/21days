@@ -73,22 +73,23 @@ function hasApplicationReviewDetails(value: unknown): boolean {
 }
 
 function hasMeaningfulValue(value: unknown): boolean {
-  if (typeof value === "string") {
-    const cleaned = value.trim();
-    return cleaned.length > 0 && !isPlaceholderValue(cleaned);
+  if (typeof value !== "string") {
+    return false;
   }
 
-  if (Array.isArray(value)) {
-    return value.length > 0;
-  }
-
-  return value !== null && value !== undefined;
+  const cleaned = value.trim();
+  return cleaned.length > 0 && !isPlaceholderValue(cleaned);
 }
 
+const PLACEHOLDER_PREFIX = "(?:暂时还|目前还|暂时|目前|还|尚)?";
+const PLACEHOLDER_STATE = "(?:不确定|不知道|不清楚|没有|没整理|未整理)";
+const PLACEHOLDER_VALUE = new RegExp(
+  `^(?:${PLACEHOLDER_PREFIX}${PLACEHOLDER_STATE}|暂无|无|无明确版本|unknown|not sure|none)[。.!！]?$`,
+  "i",
+);
+
 export function isPlaceholderValue(value: string): boolean {
-  return /^(不确定|不知道|不清楚|暂时没有|还没整理|没有|无|无明确版本|unknown|not sure|none)$/i.test(
-    value.trim()
-  );
+  return PLACEHOLDER_VALUE.test(value.trim());
 }
 
 function hasSpecificReviewValue(value: unknown): boolean {

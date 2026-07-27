@@ -7,7 +7,15 @@ import RouteInputPage from "@/app/routes/[routeKey]/input/page";
 import RecordPage from "@/app/routes/[routeKey]/record/page";
 import TrackPage from "@/app/track/page";
 import type { RouteKey, RouteOutput } from "@/domain/types";
-import { loadRecords, saveCurrentAction, saveDraft, saveRecord, saveReview } from "@/lib/local-store";
+import {
+  loadCurrentAction,
+  loadDraft,
+  loadRecords,
+  saveCurrentAction,
+  saveDraft,
+  saveRecord,
+  saveReview,
+} from "@/lib/local-store";
 
 const push = vi.fn();
 let routeKeyParam: RouteKey = "jd_to_revision";
@@ -293,6 +301,39 @@ describe("MVP page state flow", () => {
         userSuspicion: "",
       },
     ]);
+  });
+
+  it("keeps clear my records accessible when only a sensitive draft exists", async () => {
+    saveDraft("jd_to_revision", { userMaterial: "仅草稿中的敏感简历片段" });
+    expect(loadRecords()).toEqual([]);
+
+    render(<TrackPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "清空我的记录" }));
+
+    expect(loadDraft("jd_to_revision")).toEqual({});
+
+    cleanup();
+    render(<Home />);
+    expect(await screen.findByText("你现在最想先解决哪件事？")).toBeInTheDocument();
+    expect(screen.queryByText(/仅草稿中的敏感简历片段/)).not.toBeInTheDocument();
+  });
+
+  it("keeps clear my records accessible when only a current action exists", async () => {
+    saveCurrentAction({
+      ...jdActionOutput,
+      todayAction: { ...jdActionOutput.todayAction, actionTitle: "仅当前行动中的敏感内容" },
+    });
+    expect(loadRecords()).toEqual([]);
+
+    render(<TrackPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "清空我的记录" }));
+
+    expect(loadCurrentAction()).toBeNull();
+
+    cleanup();
+    render(<Home />);
+    expect(await screen.findByText("你现在最想先解决哪件事？")).toBeInTheDocument();
+    expect(screen.queryByText(/仅当前行动中的敏感内容/)).not.toBeInTheDocument();
   });
 
   it("returns home without restoring sensitive state after clicking clear my records", async () => {

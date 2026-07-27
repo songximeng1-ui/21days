@@ -35,7 +35,9 @@ function makeLightReviewOutput(input: AiProviderInput): RouteOutput {
     payload?: Record<string, unknown>;
   } | undefined;
   const actualDone = record?.actualDone ?? "你保存了一条真实记录。";
-  const next = lightReviewNextStep(input.routeKey);
+  const next = input.routeKey === "direction_to_jobs"
+    ? directionLightReviewNextStep(record, actualDone)
+    : lightReviewNextStep(input.routeKey);
 
   return {
     routeKey: input.routeKey,
@@ -61,6 +63,28 @@ function makeLightReviewOutput(input: AiProviderInput): RouteOutput {
       fieldsToRecord: next.fieldsToRecord,
       requiresUserConfirmation: true,
     },
+  };
+}
+
+function directionLightReviewNextStep(
+  record: { actualDone?: string; payload?: Record<string, unknown> } | undefined,
+  actualDone: string,
+): ReturnType<typeof lightReviewNextStep> {
+  const payloadAnchor = record?.payload
+    ? Object.values(record.payload).map(readText).find(Boolean)
+    : undefined;
+  const anchor = readText(record?.payload?.jobTitle) || payloadAnchor || actualDone;
+  return {
+    actionTitle: `打开“${anchor}”对应的岗位样本并记录 1 条 JD 要求`,
+    actionSteps: [
+      `打开“${anchor}”对应的岗位样本`,
+      `核对“${anchor}”对应岗位的 JD 要求`,
+      `记录“${anchor}”对应岗位的 1 条 JD 摘要`,
+    ],
+    recordAfterDone: `记录“${anchor}”对应岗位的名称、公司或平台和 JD 摘要。`,
+    actionType: "job_sample",
+    recordType: "job_sample",
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"],
   };
 }
 
@@ -128,7 +152,7 @@ function lightReviewNextStep(routeKey: AiProviderInput["routeKey"]): {
     recordAfterDone: "记录岗位、公司或平台、投递时间和反馈状态。",
     actionType: "application_record",
     recordType: "application",
-    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
+    fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"],
   };
 }
 
@@ -136,6 +160,7 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
   const { routeKey } = input;
   if (routeKey === "direction_to_jobs") {
     const directionName = readText(input.input.interestsOrAcceptables) || readText(input.input.educationBackground);
+    const secondaryDirectionName = readText(input.input.educationBackground) || `${directionName}支持`;
     const basis = compactTextValues([
       input.input.educationBackground,
       input.input.realExperiences,
@@ -149,10 +174,21 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
         explorableDirections: [
           {
             directionName,
-            searchKeywords: [`${directionName}实习`, `${directionName}助理`],
+            searchKeywords: [`${directionName}实习`, `${directionName}助理`, `${directionName}专员`],
             basisFromUserMaterial: basis,
             riskOrGap: "还缺真实 JD 样本验证",
-            validationFocus: "先观察岗位要求里反复出现的工具和交付物",
+            validationFocus: "可以先探索：观察岗位要求里反复出现的工具和交付物",
+          },
+          {
+            directionName: secondaryDirectionName,
+            searchKeywords: [
+              `${secondaryDirectionName}实习`,
+              `${secondaryDirectionName}助理`,
+              `${secondaryDirectionName}专员`,
+            ],
+            basisFromUserMaterial: basis,
+            riskOrGap: "还缺真实 JD 样本验证",
+            validationFocus: "可以先探索：观察岗位日常是否符合已知兴趣和限制",
           },
         ],
       },
@@ -251,14 +287,14 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
       routeResult: {
         reviewBasis,
         recordSufficiency: "enough",
-        possibleClues: ["部分记录还缺材料版本，后续不好判断修改是否有效"],
+        possibleClues: ["可能需要继续验证材料版本与反馈状态之间是否存在差异"],
         informationGaps: ["JD 摘要", "使用的材料版本"],
         nextValidationAction: "补齐 1 条投递记录的材料版本",
       },
       missingInfo: null,
       todayAction: {
         actionTitle: "今天先选择 1 条投递记录补齐材料版本",
-        actionReason: "先让这条记录可复盘，再判断下一轮怎么调整。",
+        actionReason: "先让这条记录可复盘，再决定下一次需要补哪项材料证据。",
         actionSteps: [
           "选最近一条投递",
           "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态 / JD 摘要 / 材料版本",

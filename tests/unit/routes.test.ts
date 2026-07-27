@@ -88,6 +88,99 @@ describe("route strategies", () => {
     expect(isRouteInputSufficient(routeKey, input)).toBe(false);
   });
 
+  it.each([
+    [
+      "direction_to_jobs",
+      {
+        educationBackground: "市场营销专业",
+        realExperiences: ["整理过社团报名表"],
+        interestsOrAcceptables: "不排斥活动执行",
+      },
+    ],
+    [
+      "experience_to_resume",
+      {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: {},
+        deliverableOrResult: "形成报名表",
+      },
+    ],
+    [
+      "jd_to_revision",
+      {
+        targetJobTitle: "运营实习生",
+        jdTextOrRequirements: "负责内容整理",
+        userMaterial: { text: "整理过社团报名表" },
+      },
+    ],
+  ] as const)("requires concrete string values for required %s fields", (routeKey, input) => {
+    expect(isRouteInputSufficient(routeKey, input)).toBe(false);
+  });
+
+  it.each(["暂时不确定", "还不知道", "目前没有", "尚未整理"])(
+    "treats the common placeholder variant %s as insufficient",
+    (actualActions) => {
+      expect(
+        isRouteInputSufficient("experience_to_resume", {
+          targetDirection: "运营",
+          rawExperience: "社团活动",
+          actualActions,
+          deliverableOrResult: "形成报名表",
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    [
+      "direction_to_jobs",
+      {
+        educationBackground: "还不确定",
+        realExperiences: "整理过社团报名表",
+        interestsOrAcceptables: "不排斥活动执行",
+      },
+    ],
+    [
+      "experience_to_resume",
+      {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "暂时还没有",
+        deliverableOrResult: "形成报名表",
+      },
+    ],
+    [
+      "jd_to_revision",
+      {
+        targetJobTitle: "运营实习生",
+        jdTextOrRequirements: "负责内容整理",
+        userMaterial: "目前还没整理",
+      },
+    ],
+  ] as const)("rejects additional natural placeholder grammar for %s", (routeKey, input) => {
+    expect(isRouteInputSufficient(routeKey, input)).toBe(false);
+  });
+
+  it("does not mistake longer concrete facts for standalone placeholders", () => {
+    expect(
+      isRouteInputSufficient("experience_to_resume", {
+        targetDirection: "运营",
+        rawExperience: "社团公众号推文发布",
+        actualActions: "目前还没整理完整，但已经排版并发布 5 篇推文",
+        deliverableOrResult: "无明确结果",
+      }),
+    ).toBe(true);
+
+    expect(
+      isRouteInputSufficient("direction_to_jobs", {
+        educationBackground: "市场营销专业",
+        realExperiences: "整理过社团报名表",
+        interestsOrAcceptables: "还不确定是否做销售，但可以接受用户沟通",
+      }),
+    ).toBe(true);
+  });
+
   it("does not treat vague no-feedback application worry as sufficient review evidence", () => {
     expect(
       isRouteInputSufficient("applications_to_review", {
@@ -132,6 +225,37 @@ describe("route strategies", () => {
         ],
       })
     ).toBe(true);
+  });
+
+  it.each([
+    ["placeholder array", ["不确定"]],
+    ["nested object", { value: "内容运营实习" }],
+    ["common placeholder variant", "尚未整理"],
+    ["common unknown variant", "尚不清楚"],
+    ["short no-value variant", "暂无"],
+  ])("keeps application records with a non-concrete %s field insufficient", (_name, jobTitle) => {
+    expect(
+      isRouteInputSufficient("applications_to_review", {
+        applications: [
+          {
+            jobTitle,
+            companyOrPlatform: "A 公司",
+            submittedAt: "7 月 1 日",
+            feedbackStatus: "暂无反馈",
+            jdSummary: "负责内容整理",
+            materialVersion: "社团经历版",
+          },
+          {
+            jobTitle: "新媒体运营实习",
+            companyOrPlatform: "B 公司",
+            submittedAt: "7 月 3 日",
+            feedbackStatus: "已查看",
+            jdSummary: "负责选题和数据记录",
+            materialVersion: "项目经历版",
+          },
+        ],
+      }),
+    ).toBe(false);
   });
 
   it("keeps partial structured application records insufficient", () => {

@@ -3,6 +3,12 @@ type SafetyScanResult = {
   blockedReasons: string[];
 };
 
+type RouteSafetyContext = {
+  routeInput?: Record<string, unknown>;
+};
+
+const EXAGGERATION_REASON = "禁止夸大职责或成果";
+
 const BLOCKERS: Array<{ reason: string; patterns: RegExp[] }> = [
   {
     reason: "禁止输出匹配度、录取概率或适合度评分",
@@ -25,9 +31,10 @@ const BLOCKERS: Array<{ reason: string; patterns: RegExp[] }> = [
   {
     reason: "禁止猜测公司筛选规则或失败原因",
     patterns: [
-      /筛选规则|公司.*原因|失败原因是|没反馈.*因为|rejection reason/i,
+      /筛选规则|公司[^。；，、,.]*(?:拒绝|淘汰|未通过|没有反馈|没反馈|无反馈|未回复)[^。；，、,.]*(?:原因(?:可能)?是|，原因(?:可能)?是)|失败原因是|没反馈.*因为|rejection reason/i,
       /(?:主要|就是|肯定)卡在|问题出在/i,
       /无反馈[^。；，,.]{0,8}(?:说明|表明|意味着)[^。；，,.]{0,8}(?:简历|材料|能力)[^。；，,.]{0,4}(?:不行|太弱|有问题)/i,
+      /(?:学历|简历|材料|经历|能力)[^。；，,.]{0,12}(?:导致|造成|所以)[^。；，,.]{0,8}(?:没有反馈|没反馈|无反馈|未通过|被拒绝|失败)/i,
     ],
   },
   {
@@ -70,18 +77,69 @@ export function scanSafetyViolations(text: string): SafetyScanResult {
 }
 
 function stripCompliantGuardrailReminders(text: string): string {
+  const boundary = "(?=。|；|;|\\.|!|\\?|\"|,|\\]|}|$)";
   return text
-    .replace(/(?:不要|不能|不得|请勿|避免)编造[^。；，,.]*[。；，,.]?/gi, "")
-    .replace(/(?:不要|不能|不得|请勿|避免)把参与写成主导[^。；，,.]*[。；，,.]?/gi, "")
-    .replace(/(?:不要|不能|不得|请勿|避免)把协助写成负责[^。；，,.]*[。；，,.]?/gi, "")
-    .replace(/(?:不评价|不能评价|不得评价)你本人适不适合[^。；，,.]*[。；，,.]?/gi, "")
-    .replace(/(?:不输出|不能输出|不得输出|不给出|不能给出|不得给出)[^。；，,.]*(?:能投|不能投|匹配度|录取概率)[^。；，,.]*[。；，,.]?/gi, "");
+    .replace(
+      new RegExp(`(?:必须|需要|应当|要|请)?\\s*(?:明确)?\\s*拒绝\\s*(?:虚构|编造)(?:或夸大)?[^。；;.!?"]{0,32}${boundary}`, "gi"),
+      (match) => /但|而|改为|然后|随后|同时|却|接着|再|进而|之后|接下来/.test(match) ? match : "",
+    )
+    .replace(
+      new RegExp(`(?:禁止|避免|不得|不能|不要|不应|请勿)\\s*(?:虚构|编造)(?:或夸大)?[^。；;.!?"]{0,32}${boundary}`, "gi"),
+      (match) => /但|而|改为|然后|随后|同时|却|接着|再|进而|之后|接下来/.test(match) ? match : "",
+    )
+    .replace(
+      new RegExp(`(?:不要|不能|不得|请勿|避免|不应)\\s*(?:将|把)?[^。；;.!?"]{0,12}角色[^。；;.!?"]{0,12}夸大[^。；;.!?"]{0,40}${boundary}`, "gi"),
+      (match) => /但|而|改为|然后|随后|同时|却|接着|再|进而|之后|接下来/.test(match) ? match : "",
+    )
+    .replace(
+      new RegExp(`(?:不要|不能|不得|请勿|避免|不应)\\s*夸大[^。；;.!?"]{0,16}角色强度[^。；;.!?"]{0,40}${boundary}`, "gi"),
+      (match) => /但|而|改为|然后|随后|同时|却|接着|再|进而|之后|接下来/.test(match) ? match : "",
+    )
+    .replace(/(?:不要|不能|不得|请勿|避免)编造/gi, "")
+    .replace(new RegExp(`(?:不要|不能|不得|请勿|避免|不)\\s*(?:使用|采用|依赖)?\\s*(?:虚构|编造)(?:或夸大)?[^。；;.!?"]{0,32}${boundary}`, "gi"), "")
+    .replace(new RegExp(`(?:不要|不能|不得|请勿|避免)\\s*(?:将|把)?[^。；;.!?"]{0,24}写(?:成|为)[^。；;.!?"]{0,48}(?:\\d+\\s*%|独立运营)[^。；;.!?"]*${boundary}`, "gi"), "")
+    .replace(
+      new RegExp(`(?:不要|不能|不得|请勿|避免)\\s*(?:将|把)?[^。；;.!?"]{0,40}(?:写成|写为|包装成|改写成)[^。；;.!?"]{0,80}(?:负责|主导|独立负责|独立设计|独立运营|主导整场)[^。；;.!?"]*${boundary}`, "gi"),
+      (match) => /但|随后|同时|却|接着|再/.test(match) ? match : "",
+    )
+    .replace(
+      new RegExp(`(?:不要|不能|不得|请勿|避免)\\s*(?:将|把)?[^。；;.!?"]{0,40}说成[^。；;.!?"]{0,80}(?:负责|主导|独立负责|独立完成)[^。；;.!?"]*${boundary}`, "gi"),
+      (match) => /但|而|改为|然后|随后|同时|却|接着|再|进而|之后|接下来/.test(match) ? match : "",
+    )
+    .replace(
+      new RegExp(`(?:不要|不能|不得|请勿|避免)\\s*写[^。；;.!?"]{0,48}(?:负责|主导|独立负责|独立完成)[^。；;.!?"]*${boundary}`, "gi"),
+      (match) => /但|而|改为|然后|随后|同时|却|接着|再|进而|之后|接下来/.test(match) ? match : "",
+    )
+    .replace(new RegExp(`(?:不要|不能|不得|请勿|避免|不)\\s*(?:输出|暴露|泄露|提供|展示)[^。；;.!?"]{0,48}(?:API[_\\s-]?key|完整\\s*prompt|prompt|token|fallback)[^。；;.!?"]*${boundary}`, "gi"), "")
+    .replace(/(?:不要|不能|不得|请勿|避免)把参与写成主导/gi, "")
+    .replace(/(?:不要|不能|不得|请勿|避免)把协助写成负责/gi, "")
+    .replace(/(?:不评价|不能评价|不得评价)你本人适不适合/gi, "")
+    .replace(
+      /(?:不输出|不能输出|不得输出|不给出|不能给出|不得给出)\s*(?:能投|不能投|匹配度|录取概率)(?:\s*(?:或|和|、|\/)\s*(?:能投|不能投|匹配度|录取概率))*/gi,
+      "",
+    )
+    .replace(
+      /(?:不评估|不能评估|不得评估|不判断|不能判断|不得判断)\s*(?:匹配度|匹配率|录取概率|面试概率|投递结论)(?:\s*(?:或|和|、|\/)\s*(?:匹配度|匹配率|录取概率|面试概率|投递结论))*/gi,
+      "",
+    )
+    .replace(
+      /(?:无法|不能|不应|不宜)\s*(?:提供|给出|判断|评估|打分|预测)[^。；;.!?"]{0,24}(?:匹配度|匹配率|录取概率|面试概率|投递结论)(?:[^。；;.!?"]{0,24}(?:匹配度|匹配率|录取概率|面试概率|投递结论))?[^。；;.!?"]{0,8}/gi,
+      "",
+    );
 }
 
-export function scanRouteSafety(routeKey: string, output: unknown): SafetyScanResult {
+export function scanRouteSafety(
+  routeKey: string,
+  output: unknown,
+  context?: RouteSafetyContext,
+): SafetyScanResult {
   const text = JSON.stringify(output);
   const base = scanSafetyViolations(text);
-  const blockedReasons = [...base.blockedReasons];
+  const blockedReasons = base.blockedReasons.filter(
+    (reason) =>
+      reason !== EXAGGERATION_REASON ||
+      !canExemptGroundedExperienceLeadership(routeKey, output, context?.routeInput),
+  );
 
   if (routeKey === "jd_to_revision" && /没有 JD 却|no JD but/i.test(text)) {
     blockedReasons.push("没有真实 JD 时不能做深度岗位判断");
@@ -95,4 +153,177 @@ export function scanRouteSafety(routeKey: string, output: unknown): SafetyScanRe
     passed: blockedReasons.length === 0,
     blockedReasons: Array.from(new Set(blockedReasons)),
   };
+}
+
+function canExemptGroundedExperienceLeadership(
+  routeKey: string,
+  output: unknown,
+  routeInput?: Record<string, unknown>,
+): boolean {
+  if (routeKey !== "experience_to_resume" || !isRecord(output) || !routeInput) return false;
+  const routeResult = output.routeResult;
+  if (!isRecord(routeResult)) return false;
+
+  const sourceTexts = collectExperienceRoleProvenance(routeInput);
+  if (sourceTexts.length === 0) return false;
+  const sanitizedResult = routeInput.mode === "light_review"
+    ? {
+        ...routeResult,
+        reviewBasis: stripGroundedLeadershipClaims(routeResult.reviewBasis, sourceTexts),
+      }
+    : {
+        ...routeResult,
+        resumeSnippetDraft:
+          hasGroundedExperienceRoleStrength(routeResult.resumeSnippetDraft, routeInput) &&
+          typeof routeResult.resumeSnippetDraft === "string"
+            ? stripGroundedRoleMarkers(routeResult.resumeSnippetDraft, sourceTexts)
+            : routeResult.resumeSnippetDraft,
+        confirmedFacts: stripGroundedLeadershipClaims(routeResult.confirmedFacts, sourceTexts),
+        supportingFacts: stripGroundedLeadershipClaims(routeResult.supportingFacts, sourceTexts),
+      };
+  const remainingOutput = { ...output, routeResult: sanitizedResult };
+  return !scanSafetyViolations(JSON.stringify(remainingOutput)).blockedReasons.includes(EXAGGERATION_REASON);
+}
+
+function stripGroundedLeadershipClaims(value: unknown, sourceTexts: string[]): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((claim) => {
+    if (typeof claim !== "string") return claim;
+    return stripGroundedRoleMarkers(claim, sourceTexts);
+  });
+}
+
+function stripGroundedRoleMarkers(text: string, sourceTexts: string[]): string {
+  let sanitized = text;
+  for (const marker of ["负责整体", "全权负责", "主导", "独立负责", "独立完成", "负责"]) {
+    if (
+      hasAffirmativeRoleMarker(sanitized, marker) &&
+      sourceTexts.some((sourceText) => {
+        let markerIndex = sanitized.indexOf(marker);
+        while (markerIndex >= 0) {
+          const comparableClaim = readComparableRoleClaim(sanitized, markerIndex);
+          if (hasAffirmativeRoleClaim(sourceText, comparableClaim, marker)) return true;
+          markerIndex = sanitized.indexOf(marker, markerIndex + marker.length);
+        }
+        return false;
+      })
+    ) {
+      sanitized = sanitized.replaceAll(marker, "");
+    }
+  }
+  return sanitized;
+}
+
+export const EXPERIENCE_ROLE_MARKERS = ["独立负责", "独立完成", "主导", "负责"] as const;
+
+export function hasGroundedExperienceRoleStrength(
+  draft: unknown,
+  routeInput?: Record<string, unknown>,
+): boolean {
+  if (typeof draft !== "string") return false;
+  const sourceTexts = routeInput ? collectExperienceRoleProvenance(routeInput) : [];
+  return EXPERIENCE_ROLE_MARKERS.every((marker) => {
+    let markerIndex = draft.indexOf(marker);
+    while (markerIndex >= 0) {
+      const comparableClaim = readComparableRoleClaim(draft, markerIndex);
+      const grounded = sourceTexts.some(
+        (sourceText) => hasAffirmativeRoleClaim(sourceText, comparableClaim, marker),
+      );
+      if (!grounded) return false;
+      markerIndex = draft.indexOf(marker, markerIndex + marker.length);
+    }
+    return true;
+  });
+}
+
+function collectExperienceRoleProvenance(routeInput: Record<string, unknown>): string[] {
+  if (routeInput.mode === "light_review") {
+    const record = routeInput.record;
+    if (
+      !isRecord(record) ||
+      record.routeKey !== "experience_to_resume" ||
+      record.userConfirmed !== true
+    ) return [];
+    return [
+      ...(typeof record.actualDone === "string" ? [record.actualDone] : []),
+      ...collectStringLeaves(record.payload),
+    ];
+  }
+
+  return ["rawExperience", "actualActions", "deliverableOrResult"]
+    .map((field) => routeInput[field])
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
+function hasAffirmativeRoleMarker(text: string, marker: string): boolean {
+  let fromIndex = 0;
+  while (fromIndex < text.length) {
+    const markerIndex = text.indexOf(marker, fromIndex);
+    if (markerIndex < 0) return false;
+    if (isAffirmativeRoleMarkerAt(text, marker, markerIndex)) return true;
+    fromIndex = markerIndex + marker.length;
+  }
+  return false;
+}
+
+function hasAffirmativeRoleClaim(sourceText: string, claim: string, marker: string): boolean {
+  let claimIndex = sourceText.indexOf(claim);
+  while (claimIndex >= 0) {
+    let markerOffset = claim.indexOf(marker);
+    while (markerOffset >= 0) {
+      if (isAffirmativeRoleMarkerAt(sourceText, marker, claimIndex + markerOffset)) return true;
+      markerOffset = claim.indexOf(marker, markerOffset + marker.length);
+    }
+    claimIndex = sourceText.indexOf(claim, claimIndex + claim.length);
+  }
+  return false;
+}
+
+function readComparableRoleClaim(text: string, markerIndex: number): string {
+  const claimEnd = ["。", "；", "，", ".", ";", ",", "！", "？", "!", "?", "（", "("]
+    .map((separator) => text.indexOf(separator, markerIndex))
+    .filter((index) => index >= 0)
+    .reduce((nearest, index) => Math.min(nearest, index), text.length);
+  return text.slice(markerIndex, claimEnd).trim();
+}
+
+function isAffirmativeRoleMarkerAt(text: string, marker: string, markerIndex: number): boolean {
+  const clauseStart = Math.max(
+    text.lastIndexOf("。", markerIndex - 1),
+    text.lastIndexOf("；", markerIndex - 1),
+    text.lastIndexOf("，", markerIndex - 1),
+    text.lastIndexOf(".", markerIndex - 1),
+    text.lastIndexOf(";", markerIndex - 1),
+    text.lastIndexOf(",", markerIndex - 1),
+    text.lastIndexOf("！", markerIndex - 1),
+    text.lastIndexOf("？", markerIndex - 1),
+    text.lastIndexOf("!", markerIndex - 1),
+    text.lastIndexOf("?", markerIndex - 1),
+  ) + 1;
+  const prefix = text.slice(clauseStart, markerIndex);
+  const markerEnd = markerIndex + marker.length;
+  const sentenceEnd = ["。", "；", ".", ";", "！", "？", "!", "?"]
+    .map((separator) => text.indexOf(separator, markerEnd))
+    .filter((index) => index >= 0)
+    .reduce((nearest, index) => Math.min(nearest, index), text.length);
+  const suffix = text.slice(markerEnd, sentenceEnd);
+  const prefixedNonAffirmativeContext =
+    /没有|并未|未曾|不是|并非|不要|不能|不得|请勿|避免|不确定|无法(?:确认|判断)|尚未(?:确认|明确)|未(?:确认|明确)|待(?:确认|核实)|是否/;
+  const postfixedNonAffirmativeContext =
+    /[（(][^）)]*(?:尚未确认|未确认|待核实|无法确认|不确定|not confirmed|unverified|uncertain)[^）)]*[）)]|(?:真实性|该事实|该说法|这一点)[^。；.!;!?]{0,12}(?:尚未确认|待核实|无法确认|不确定)|(?:^|[，,\s])(?:尚未确认|未确认|待核实|无法确认|not confirmed|unverified)(?:$|[，,\s）)])/i;
+  return (
+    !prefixedNonAffirmativeContext.test(prefix) &&
+    !postfixedNonAffirmativeContext.test(suffix)
+  );
+}
+
+function collectStringLeaves(value: unknown): string[] {
+  if (typeof value === "string") return value.trim() ? [value] : [];
+  if (Array.isArray(value)) return value.flatMap(collectStringLeaves);
+  if (isRecord(value)) return Object.values(value).flatMap(collectStringLeaves);
+  return [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
