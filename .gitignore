@@ -13,6 +13,14 @@
 # testing
 /coverage
 
+# local real-AI QA run artifacts
+#
+# Keep raw model outputs and iterative run directories local by default.
+# If a final QA summary/report is intentionally needed in Git, add that
+# specific file with `git add -f <path>`.
+qa/real-ai-*/
+qa/real-ai-*.log
+
 # next.js
 /.next/
 /out/
