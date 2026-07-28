@@ -247,7 +247,7 @@ describe("MVP page state flow", () => {
     fireEvent.change(screen.getByLabelText("第 1 条投递：当前反馈状态"), {
       target: { value: "暂无反馈" },
     });
-    expect(screen.getByText("前 4 项就是最低完成；下面 3 项是第二层补充，可先不填。")).toBeInTheDocument();
+    expect(screen.getByText("岗位、公司/平台、投递时间、反馈状态、JD 摘要、材料版本是进入复盘的必要信息；怀疑点可先不填。")).toBeInTheDocument();
     expect(screen.getByText(/示例：负责内容整理、活动执行和数据记录/)).toBeInTheDocument();
     expect(screen.getByText(/示例：社团经历版 V1/)).toBeInTheDocument();
     expect(screen.getByText(/示例：经历写得太泛/)).toBeInTheDocument();

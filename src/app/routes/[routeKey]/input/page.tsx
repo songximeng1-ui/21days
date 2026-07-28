@@ -129,7 +129,7 @@ export default function RouteInputPage() {
 
         {routeKey === "applications_to_review" && (
           <div className="notice">
-            <strong>前 4 项就是最低完成；下面 3 项是第二层补充，可先不填。</strong>
+            <strong>岗位、公司/平台、投递时间、反馈状态、JD 摘要、材料版本是进入复盘的必要信息；怀疑点可先不填。</strong>
             <p>JD 摘要示例：负责内容整理、活动执行和数据记录。</p>
             <p>材料版本示例：社团经历版 V1。</p>
             <p>怀疑点示例：经历写得太泛，没有体现实际动作。</p>
