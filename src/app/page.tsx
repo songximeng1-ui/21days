@@ -124,14 +124,14 @@ function ReturnHomeState({
     ? `继续：${reviewAction.todayAction.actionTitle}`
     : shouldContinueFillingInfo
       ? "继续补信息"
-      : "基于这条记录轻复盘";
+      : "基于这条记录看看下一步";
 
   return (
     <div className="notice">
       {progress.latestRecord && <p className="lead">最近推进：{progress.latestRecord.actualDone}</p>}
       {progress.latestReview && (
         <>
-          <p className="muted">上次复盘后的下一步：</p>
+          <p className="muted">上次记录后的下一步：</p>
           <p className="lead">今天继续这一件事</p>
           <h2>{progress.latestReview.nextAction}</h2>
         </>
@@ -193,9 +193,9 @@ function makeReviewNextAction(routeKey: RouteKey, review: LocalReview): RouteOut
   return {
     routeKey,
     outputType: "route_result",
-    shortAssessment: "根据上次复盘，今天继续这一件事。",
+    shortAssessment: "根据上次记录，今天继续这一件事。",
     routeResult: {
-      reviewBasis: ["上次轻复盘生成的下一步行动"],
+      reviewBasis: ["上次记录后整理出的下一步行动"],
       recordSufficiency: "next_action",
       possibleClues: ["已经有一条可继续推进的行动"],
       informationGaps: ["做完后再补真实记录"],
@@ -204,7 +204,7 @@ function makeReviewNextAction(routeKey: RouteKey, review: LocalReview): RouteOut
     missingInfo: null,
     todayAction: {
       actionTitle: nextAction,
-      actionReason: "这一步来自上次真实记录后的轻复盘。",
+      actionReason: "这一步来自上次真实记录后整理出的下一步。",
       actionSteps: ["打开上次记录", "完成这一小步", "做完后保存结果"],
       estimatedTime: "15-30 分钟",
       recordAfterDone: "记录这次实际完成了什么。",

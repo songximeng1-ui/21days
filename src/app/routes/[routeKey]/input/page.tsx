@@ -13,7 +13,7 @@ const fieldLabels: Record<string, string> = {
   actualActions: "这段经历里你实际做过哪些动作？",
   deliverableOrResult: "有交付物或结果吗？没有可以写“无明确结果”。",
   targetJobTitle: "目标岗位名称是什么？",
-  jdTextOrRequirements: "贴上真实 JD 或 3-5 条岗位要求。",
+  jdTextOrRequirements: "把岗位要求粘贴进来，或者写 3-5 条你看到的要求。",
   userMaterial: "贴上你准备使用的相关经历或简历片段。",
   educationBackground: "你的专业或学习背景是什么？",
   realExperiences: "你做过哪些课程、项目、社团、兼职或实习？",
@@ -23,15 +23,15 @@ const fieldLabels: Record<string, string> = {
   companyOrPlatform: "第 1 条投递：公司或平台",
   submittedAt: "第 1 条投递：投递时间",
   feedbackStatus: "第 1 条投递：当前反馈状态",
-  jdSummary: "第 1 条投递：岗位要求摘要",
-  materialVersion: "第 1 条投递：使用的材料版本",
+  jdSummary: "第 1 条投递：这份岗位主要要求",
+  materialVersion: "第 1 条投递：这次投递用的简历/材料",
   userSuspicion: "你自己怀疑的问题是什么？可选。",
   jobTitle2: "第 2 条投递：岗位名称",
   companyOrPlatform2: "第 2 条投递：公司或平台",
   submittedAt2: "第 2 条投递：投递时间",
   feedbackStatus2: "第 2 条投递：当前反馈状态",
-  jdSummary2: "第 2 条投递：岗位要求摘要",
-  materialVersion2: "第 2 条投递：使用的材料版本",
+  jdSummary2: "第 2 条投递：这份岗位主要要求",
+  materialVersion2: "第 2 条投递：这次投递用的简历/材料",
   userSuspicion2: "第 2 条投递：你自己怀疑的问题是什么？可选。",
 };
 
@@ -129,9 +129,9 @@ export default function RouteInputPage() {
 
         {routeKey === "applications_to_review" && (
           <div className="notice">
-            <strong>岗位、公司/平台、投递时间、反馈状态、JD 摘要、材料版本是进入复盘的必要信息；怀疑点可先不填。</strong>
-            <p>JD 摘要示例：负责内容整理、活动执行和数据记录。</p>
-            <p>材料版本示例：社团经历版 V1。</p>
+            <strong>想让系统帮你回头看这一轮投递，需要先有这些信息：岗位、公司/平台、投递时间、反馈状态、这份岗位主要要求、这次投递用的简历/材料。怀疑点可以先不填。</strong>
+            <p>这份岗位主要要求示例：负责内容整理、活动执行和数据记录。</p>
+            <p>这次投递用的简历/材料示例：社团经历版 V1。</p>
             <p>怀疑点示例：经历写得太泛，没有体现实际动作。</p>
           </div>
         )}

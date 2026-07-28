@@ -191,7 +191,8 @@ describe("Home", () => {
     render(<Home />);
 
     expect(await screen.findByText("最近推进：整理了社团招新报名表。")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "基于这条记录轻复盘" })).toHaveAttribute("href", "/review");
+    expect(screen.getByRole("link", { name: "基于这条记录看看下一步" })).toHaveAttribute("href", "/review");
+    expect(screen.queryByRole("link", { name: "基于这条记录轻复盘" })).not.toBeInTheDocument();
     expect(screen.queryByText("我不知道能投哪些岗位")).not.toBeInTheDocument();
   });
 
@@ -212,6 +213,7 @@ describe("Home", () => {
       "href",
       "/routes/jd_to_revision/input",
     );
+    expect(screen.queryByRole("link", { name: "基于这条记录看看下一步" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "基于这条记录轻复盘" })).not.toBeInTheDocument();
   });
 
@@ -245,7 +247,8 @@ describe("Home", () => {
 
     expect(await screen.findByText("最近推进：刚刚改完 JD 相关的一句话。")).toBeInTheDocument();
     expect(screen.queryByText("继续补旧经历的交付物。")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "基于这条记录轻复盘" })).toHaveAttribute("href", "/review");
+    expect(screen.getByRole("link", { name: "基于这条记录看看下一步" })).toHaveAttribute("href", "/review");
+    expect(screen.queryByRole("link", { name: "基于这条记录轻复盘" })).not.toBeInTheDocument();
   });
 
   it("falls back to the first-time entry when the saved current action is invalid", async () => {

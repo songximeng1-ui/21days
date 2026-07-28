@@ -82,18 +82,18 @@ const applicationOutput: CurrentAction = {
   shortAssessment: "先基于真实投递记录看一个可能线索。",
   routeResult: {
     reviewBasis: ["最近补充的投递记录"],
-    possibleClues: ["部分记录还缺材料版本，后续不好判断修改是否有效"],
+    possibleClues: ["部分记录还缺这次投递用的简历/材料，后续不好判断修改是否有效"],
   },
   todayAction: {
-    actionTitle: "今天先选择 1 条投递记录补齐材料版本",
-    actionReason: "先让这条记录可复盘，再判断下一轮怎么调整。",
+    actionTitle: "今天先选择 1 条投递记录，补齐这次投递用的简历/材料",
+    actionReason: "先让这条记录可回头检查，再判断下一轮怎么调整。",
     actionSteps: [
       "选最近一条投递",
-      "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态 / JD 摘要 / 材料版本",
-      "只写能确认的真实信息，先把这条记录补到可以复盘",
+      "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态 / 这份岗位主要要求 / 这次投递用的简历或材料",
+      "只写能确认的真实信息，先把这条记录补到可以回头检查",
     ],
     estimatedTime: "15-30 分钟",
-    recordAfterDone: "记录岗位、公司或平台、投递时间、反馈状态、JD 摘要和材料版本。",
+    recordAfterDone: "记录岗位、公司或平台、投递时间、反馈状态、这份岗位主要要求和这次投递用的简历/材料。",
     actionType: "application_record",
   },
   recordGuide: {
@@ -136,8 +136,8 @@ describe("ActionPage", () => {
 
     render(<ActionPage />);
 
-    expect(await screen.findByText("基于记录看到的可能线索：部分记录还缺材料版本，后续不好判断修改是否有效")).toBeInTheDocument();
-    expect(screen.queryByText("你提供的材料里有：部分记录还缺材料版本，后续不好判断修改是否有效")).not.toBeInTheDocument();
+    expect(await screen.findByText("基于记录看到的可能线索：部分记录还缺这次投递用的简历/材料，后续不好判断修改是否有效")).toBeInTheDocument();
+    expect(screen.queryByText("你提供的材料里有：部分记录还缺这次投递用的简历/材料，后续不好判断修改是否有效")).not.toBeInTheDocument();
   });
 
   it("limits long evidence snippets before showing them", async () => {
@@ -315,7 +315,7 @@ describe("RecordPage", () => {
     });
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
 
-    fireEvent.click(screen.getByRole("button", { name: "保存并轻复盘" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
 
     expect(saveRecord).toHaveBeenCalledWith({
       actionId: "action-jd-revision",
@@ -370,33 +370,35 @@ describe("RecordPage", () => {
 
     expect(await screen.findByText("这条内容只在这台设备上保存，方便你下次从这里继续。")).toBeInTheDocument();
     expect(screen.queryByText(/浏览器/)).not.toBeInTheDocument();
-    expect(screen.getAllByText("JD 摘要会用来对照这次投递的岗位到底在要什么。").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("材料版本会用来判断同一版材料投出去后的反馈变化。").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("这份岗位主要要求会用来对照这次投递的岗位到底在要什么。").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("这次投递用的简历/材料会用来判断同一份材料投出去后的反馈变化。").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/JD/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/材料版本/)).not.toBeInTheDocument();
 
-    expect(screen.getByLabelText("JD 摘要")).toHaveAttribute(
+    expect(screen.getByLabelText("这份岗位主要要求")).toHaveAttribute(
       "placeholder",
       expect.stringContaining("例如"),
     );
-    expect(screen.getByLabelText("使用的材料版本")).toHaveAttribute(
+    expect(screen.getByLabelText("这次投递用的简历/材料")).toHaveAttribute(
       "placeholder",
       expect.stringContaining("例如"),
     );
-    expect(screen.getByRole("button", { name: "保存并轻复盘" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存并看看下一步" })).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText("JD 摘要"), {
+    fireEvent.change(screen.getByLabelText("这份岗位主要要求"), {
       target: { value: "负责内容整理和活动执行" },
     });
-    fireEvent.change(screen.getByLabelText("使用的材料版本"), {
+    fireEvent.change(screen.getByLabelText("这次投递用的简历/材料"), {
       target: { value: "社团经历版 V1" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "保存并轻复盘" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
 
     expect(saveRecord).toHaveBeenCalledWith({
       actionId: "action-application-record",
       routeKey: "applications_to_review",
       recordType: "application",
-      actionTitle: "今天先选择 1 条投递记录补齐材料版本",
+      actionTitle: "今天先选择 1 条投递记录，补齐这次投递用的简历/材料",
       actualDone: "补了一条投递记录",
       payload: {
         jobTitle: "内容运营实习",
@@ -489,7 +491,7 @@ describe("RecordPage", () => {
       target: { value: "确认了两条投递记录" },
     });
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
-    fireEvent.click(screen.getByRole("button", { name: "保存并轻复盘" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
 
     expect(saveRecord).toHaveBeenCalledWith(expect.objectContaining({
       routeKey: "applications_to_review",
