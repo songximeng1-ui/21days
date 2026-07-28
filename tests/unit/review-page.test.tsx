@@ -44,17 +44,17 @@ describe("ReviewPage", () => {
       json: async () => ({
         routeKey: "applications_to_review",
         outputType: "light_review",
-        shortAssessment: "可以继续复盘。",
+        shortAssessment: "可以继续回头看这一轮。",
         routeResult: {
           reviewBasis: ["内容运营实习", "新媒体运营实习"],
           clues: ["两条记录可以对照"],
-          missingInfo: ["还缺材料版本"],
+          missingInfo: ["还缺这次投递用的简历/材料"],
           nextAction: "下一步先补一条最低字段投递记录",
         },
         missingInfo: null,
         todayAction: {
           actionTitle: "下一步先补一条最低字段投递记录",
-          actionReason: "让投递复盘继续有依据。",
+          actionReason: "让后面回头看这一轮时继续有依据。",
           actionSteps: ["补岗位、公司、时间和反馈"],
           estimatedTime: "15-30 分钟",
           recordAfterDone: "保存这条投递记录。",
@@ -70,7 +70,9 @@ describe("ReviewPage", () => {
 
     render(<ReviewPage />);
 
-    expect(await screen.findByText("已根据这条记录生成轻复盘。")).toBeInTheDocument();
+    expect(await screen.findByText("已根据这条记录整理出下一步。")).toBeInTheDocument();
+    expect(screen.queryByText(/轻复盘/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/复盘/)).not.toBeInTheDocument();
     expect(loadLatestReview()).toMatchObject({
       nextActionType: "application_record",
       nextRecordType: "application",

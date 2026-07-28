@@ -134,7 +134,7 @@ export default function RecordPage() {
             type="submit"
             disabled={(output?.outputType !== "missing_info" && !actualDone.trim()) || !canSaveRecord()}
           >
-            {output?.outputType === "missing_info" ? "保存补充信息，继续判断" : "保存并轻复盘"}
+            {output?.outputType === "missing_info" ? "保存补充信息，继续判断" : "保存并看看下一步"}
           </button>
           <p className="muted">
             {output?.outputType === "missing_info"
@@ -171,16 +171,16 @@ function summarizeFillInfo(payload: Record<string, string>): string {
 
 function recordHelpText(output: RouteOutput | null) {
   if (output?.recordGuide.recordType === "application") {
-    return "岗位、公司或平台、投递时间、反馈状态、JD 摘要、材料版本填完后，这条记录才足够支持下一次复盘；怀疑点可先不填。";
+    return "岗位、公司或平台、投递时间、反馈状态、这份岗位主要要求、这次投递用的简历/材料填完后，系统才好帮你回头看这一轮投递；怀疑点可先不填。";
   }
 
-  return "确认勾选并补齐上面的记录字段后，才能保存并复盘。";
+  return "确认勾选并补齐上面的记录信息后，才能保存并看看下一步。";
 }
 
 const recordFieldLabels: Record<string, string> = {
   jobTitle: "岗位名称",
   companyOrPlatform: "公司或平台",
-  jdSummary: "JD 摘要",
+  jdSummary: "这份岗位主要要求",
   interestPoint: "你愿意继续看的点",
   concernPoint: "你担心或不确定的点",
   actualActions: "实际做过的动作",
@@ -188,23 +188,23 @@ const recordFieldLabels: Record<string, string> = {
   missingFacts: "还不确定的事实",
   beforeSnippet: "修改前片段",
   afterSnippet: "修改后片段",
-  jdRequirement: "对应的 JD 要求",
+  jdRequirement: "对应的岗位要求",
   submitted: "是否已经投递",
   submittedAt: "投递时间",
-  materialVersion: "使用的材料版本",
+  materialVersion: "这次投递用的简历/材料",
   feedbackStatus: "反馈状态",
   note: "补充的信息",
   draft: "当前草稿",
   missingFact: "要补充的事实",
   targetJobTitle: "目标岗位名称",
-  jdTextOrRequirements: "真实 JD 或 3-5 条岗位要求",
+  jdTextOrRequirements: "岗位要求或 3-5 条你看到的要求",
   userSuspicion: "自己怀疑的问题",
   jobTitle2: "第 2 条投递：岗位名称",
   companyOrPlatform2: "第 2 条投递：公司或平台",
   submittedAt2: "第 2 条投递：投递时间",
   feedbackStatus2: "第 2 条投递：反馈状态",
-  jdSummary2: "第 2 条投递：JD 摘要",
-  materialVersion2: "第 2 条投递：使用的材料版本",
+  jdSummary2: "第 2 条投递：这份岗位主要要求",
+  materialVersion2: "第 2 条投递：这次投递用的简历/材料",
   userSuspicion2: "第 2 条投递：自己怀疑的问题",
 };
 
@@ -253,9 +253,9 @@ function recordFieldsForOutput(output: RouteOutput): string[] {
 }
 
 function recordFieldHelp(field: string): string {
-  if (field.startsWith("jdSummary")) return "JD 摘要会用来对照这次投递的岗位到底在要什么。";
-  if (field.startsWith("materialVersion")) return "材料版本会用来判断同一版材料投出去后的反馈变化。";
-  if (field.startsWith("feedbackStatus")) return "反馈状态会帮你下次复盘时不靠记忆猜结果。";
+  if (field.startsWith("jdSummary")) return "这份岗位主要要求会用来对照这次投递的岗位到底在要什么。";
+  if (field.startsWith("materialVersion")) return "这次投递用的简历/材料会用来判断同一份材料投出去后的反馈变化。";
+  if (field.startsWith("feedbackStatus")) return "反馈状态会帮你下次回头看时不靠记忆猜结果。";
   return "";
 }
 

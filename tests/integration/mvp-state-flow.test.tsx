@@ -117,7 +117,7 @@ describe("MVP page state flow", () => {
       target: { value: "加入真实动作后的片段" },
     });
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
-    fireEvent.click(screen.getByRole("button", { name: "保存并轻复盘" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
 
     expect(push).toHaveBeenCalledWith("/review");
     expect(loadRecords()).toHaveLength(1);
@@ -128,20 +128,20 @@ describe("MVP page state flow", () => {
         json: async () => ({
           routeKey: "jd_to_revision",
           outputType: "light_review",
-          shortAssessment: "这条记录可以先做一次轻复盘。",
+          shortAssessment: "这条记录可以先回头看一眼。",
           routeResult: {
             reviewBasis: ["改完 JD 相关的一句话。"],
             clues: ["这次已经留下修改前后片段"],
             missingInfo: ["还缺投递后的反馈"],
-            nextAction: "下一步先记录这次投递使用的材料版本。",
+            nextAction: "下一步先记录这次投递用的简历/材料。",
           },
           missingInfo: null,
           todayAction: {
-            actionTitle: "下一步先记录这次投递使用的材料版本",
-            actionReason: "材料版本清楚后，后续反馈才有依据。",
-            actionSteps: ["打开这条记录", "补材料版本", "保存修改"],
+            actionTitle: "下一步先记录这次投递用的简历/材料",
+            actionReason: "这次投递用的简历/材料清楚后，后续反馈才有依据。",
+            actionSteps: ["打开这条记录", "补这次投递用的简历/材料", "保存修改"],
             estimatedTime: "15-30 分钟",
-            recordAfterDone: "记录材料版本。",
+            recordAfterDone: "记录这次投递用的简历/材料。",
             actionType: "fill_info",
           },
           recordGuide: {
@@ -155,14 +155,14 @@ describe("MVP page state flow", () => {
 
     cleanup();
     render(<ReviewPage />);
-    expect(await screen.findByText("已根据这条记录生成轻复盘。")).toBeInTheDocument();
+    expect(await screen.findByText("已根据这条记录整理出下一步。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "设为下一次行动" }));
 
     cleanup();
     render(<Home />);
     expect(await screen.findByText("最近推进：改完 JD 相关的一句话。")).toBeInTheDocument();
-    expect(screen.getByText("下一步先记录这次投递使用的材料版本。")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "继续：下一步先记录这次投递使用的材料版本。" })).toHaveAttribute(
+    expect(screen.getByText("下一步先记录这次投递用的简历/材料。")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "继续：下一步先记录这次投递用的简历/材料。" })).toHaveAttribute(
       "href",
       "/routes/jd_to_revision/action",
     );
@@ -183,7 +183,7 @@ describe("MVP page state flow", () => {
     fireEvent.change(screen.getByLabelText("目标岗位名称"), {
       target: { value: "产品运营实习生" },
     });
-    fireEvent.change(screen.getByLabelText("真实 JD 或 3-5 条岗位要求"), {
+    fireEvent.change(screen.getByLabelText("岗位要求或 3-5 条你看到的要求"), {
       target: { value: "负责用户调研、数据整理、活动复盘" },
     });
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
@@ -215,7 +215,7 @@ describe("MVP page state flow", () => {
 
     render(<RecordPage />);
     expect(await screen.findByText("这一步先不保存成完成记录")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "保存并轻复盘" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存并看看下一步" })).not.toBeInTheDocument();
     expect(loadRecords()).toEqual([]);
 
     cleanup();
@@ -247,16 +247,17 @@ describe("MVP page state flow", () => {
     fireEvent.change(screen.getByLabelText("第 1 条投递：当前反馈状态"), {
       target: { value: "暂无反馈" },
     });
-    expect(screen.getByText("岗位、公司/平台、投递时间、反馈状态、JD 摘要、材料版本是进入复盘的必要信息；怀疑点可先不填。")).toBeInTheDocument();
-    expect(screen.getByText(/示例：负责内容整理、活动执行和数据记录/)).toBeInTheDocument();
-    expect(screen.getByText(/示例：社团经历版 V1/)).toBeInTheDocument();
+    expect(screen.getByText("想让系统帮你回头看这一轮投递，需要先有这些信息：岗位、公司/平台、投递时间、反馈状态、这份岗位主要要求、这次投递用的简历/材料。怀疑点可以先不填。")).toBeInTheDocument();
+    expect(screen.getByText(/这份岗位主要要求示例：负责内容整理、活动执行和数据记录/)).toBeInTheDocument();
+    expect(screen.getByText(/这次投递用的简历\/材料示例：社团经历版 V1/)).toBeInTheDocument();
     expect(screen.getByText(/示例：经历写得太泛/)).toBeInTheDocument();
+    expect(screen.queryByText(/JD/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("第 2 条投递：岗位名称")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("第 1 条投递：岗位要求摘要"), {
+    fireEvent.change(screen.getByLabelText("第 1 条投递：这份岗位主要要求"), {
       target: { value: "负责内容整理" },
     });
-    fireEvent.change(screen.getByLabelText("第 1 条投递：使用的材料版本"), {
+    fireEvent.change(screen.getByLabelText("第 1 条投递：这次投递用的简历/材料"), {
       target: { value: "社团经历版" },
     });
     fireEvent.click(screen.getByRole("button", { name: "再补第 2 条投递记录" }));
@@ -272,10 +273,10 @@ describe("MVP page state flow", () => {
     fireEvent.change(screen.getByLabelText("第 2 条投递：当前反馈状态"), {
       target: { value: "已查看" },
     });
-    fireEvent.change(screen.getByLabelText("第 2 条投递：岗位要求摘要"), {
+    fireEvent.change(screen.getByLabelText("第 2 条投递：这份岗位主要要求"), {
       target: { value: "负责选题和数据记录" },
     });
-    fireEvent.change(screen.getByLabelText("第 2 条投递：使用的材料版本"), {
+    fireEvent.change(screen.getByLabelText("第 2 条投递：这次投递用的简历/材料"), {
       target: { value: "项目经历版" },
     });
     fireEvent.click(screen.getByRole("button", { name: "生成今天先做的一步" }));

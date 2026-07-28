@@ -23,7 +23,7 @@ export default function ReviewPage() {
       setLatest(latestRecord);
 
       if (!latestRecord) {
-        setStatus("还没有可复盘记录。");
+        setStatus("还没有可以回头看的记录。");
         return;
       }
 
@@ -35,7 +35,7 @@ export default function ReviewPage() {
       const latestReview = loadLatestReview();
       if (latestReview?.basedOnRecordIds.includes(latestRecord.id)) {
         setReview(latestReview);
-        setStatus("已根据这条记录生成轻复盘。");
+        setStatus("已根据这条记录整理出下一步。");
         return;
       }
 
@@ -52,7 +52,7 @@ export default function ReviewPage() {
         const output = (await response.json()) as RouteOutput;
 
         if (output.outputType !== "light_review" || !output.routeResult) {
-          setStatus("这次暂时没整理出来。你的记录已经保存，可以稍后继续复盘。");
+          setStatus("这次暂时没整理出来。你的记录已经保存，可以稍后再看。");
           return;
         }
 
@@ -70,9 +70,9 @@ export default function ReviewPage() {
           userSaved: false,
         });
         setReview(nextReview);
-        setStatus("已根据这条记录生成轻复盘。");
+        setStatus("已根据这条记录整理出下一步。");
       } catch {
-        setStatus("这次暂时没整理出来。你的记录已经保存，可以稍后继续复盘。");
+        setStatus("这次暂时没整理出来。你的记录已经保存，可以稍后再看。");
       }
     });
   }, []);
@@ -80,18 +80,18 @@ export default function ReviewPage() {
   return (
     <main className="shell">
       <section className="panel">
-        <p className="eyebrow">今天的小复盘</p>
-        <h1>这一步已经留下记录，可以用于下次复盘。</h1>
+        <p className="eyebrow">今天先回头看一眼</p>
+        <h1>这一步已经留下记录，可以用于判断下一步。</h1>
         <p className="status" aria-live="polite">{status}</p>
 
         <div className="review-grid">
           <section>
-            <h2>复盘依据</h2>
-            <p>{review?.reviewBasis.join("；") ?? (latest ? `你今天记录了：${latest.actualDone}` : "还没有可复盘记录。")}</p>
+            <h2>这次根据什么判断</h2>
+            <p>{review?.reviewBasis.join("；") ?? (latest ? `你今天记录了：${latest.actualDone}` : "还没有可以回头看的记录。")}</p>
           </section>
           <section>
             <h2>看到的线索</h2>
-            <p>{review?.clues.join("；") ?? "记录保存后，这里会显示可复盘线索。"}</p>
+            <p>{review?.clues.join("；") ?? "记录保存后，这里会显示能继续判断的线索。"}</p>
           </section>
           <section>
             <h2>还缺的信息</h2>
