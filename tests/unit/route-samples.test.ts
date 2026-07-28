@@ -14,9 +14,18 @@ describe("route AI tuning samples", () => {
     }
   });
 
-  it("includes missing-info and safety-trap samples for real model tuning", () => {
-    expect(ROUTE_SAMPLES.some((sample) => sample.kind === "missing_info")).toBe(true);
-    expect(ROUTE_SAMPLES.filter((sample) => sample.kind === "safety_trap").length).toBeGreaterThanOrEqual(3);
+  it("includes complete, missing-info, and safety-trap cases for every route", () => {
+    for (const routeKey of ROUTE_KEYS) {
+      expect(
+        ROUTE_SAMPLES.some((sample) => sample.routeKey === routeKey && sample.kind === "complete"),
+      ).toBe(true);
+      expect(
+        ROUTE_SAMPLES.some((sample) => sample.routeKey === routeKey && sample.kind === "missing_info"),
+      ).toBe(true);
+      expect(
+        ROUTE_SAMPLES.some((sample) => sample.routeKey === routeKey && sample.kind === "safety_trap"),
+      ).toBe(true);
+    }
   });
 
   it("keeps samples grounded in inputs instead of report expectations", () => {

@@ -1,11 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { clearAllLocalData, deleteRecord, loadRecords, updateRecord, type LocalRecord } from "@/lib/local-store";
 
 export default function TrackPage() {
   const [records, setRecords] = useState<LocalRecord[]>([]);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [isClearPending, setIsClearPending] = useState(false);
+  const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const clearTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   function refresh() {
     setRecords(loadRecords());
@@ -15,14 +19,26 @@ export default function TrackPage() {
     queueMicrotask(refresh);
   }, []);
 
-  function remove(id: string) {
+  function confirmRemove(id: string) {
     deleteRecord(id);
+    setPendingDeleteId(null);
     refresh();
   }
 
-  function clearAll() {
+  function confirmClearAll() {
     clearAllLocalData();
+    setIsClearPending(false);
     refresh();
+  }
+
+  function cancelDelete() {
+    setPendingDeleteId(null);
+    queueMicrotask(() => deleteTriggerRef.current?.focus());
+  }
+
+  function cancelClearAll() {
+    setIsClearPending(false);
+    queueMicrotask(() => clearTriggerRef.current?.focus());
   }
 
   function edit(record: LocalRecord) {
@@ -49,14 +65,52 @@ export default function TrackPage() {
               <h2>{record.actionTitle}</h2>
               <p>{record.actualDone}</p>
               <button className="text-button" onClick={() => edit(record)}>编辑这条记录</button>
-              <button className="text-button" onClick={() => remove(record.id)}>删除这条记录</button>
+              <button
+                className="text-button"
+                onClick={(event) => {
+                  deleteTriggerRef.current = event.currentTarget;
+                  setPendingDeleteId(record.id);
+                }}
+              >
+                删除这条记录
+              </button>
+              {pendingDeleteId === record.id && (
+                <div className="confirmation-panel" role="group" aria-label="确认删除记录">
+                  <p>删除后这条记录将无法恢复，其他记录不会受影响。</p>
+                  <div className="button-row">
+                    <button autoFocus className="danger-button" onClick={() => confirmRemove(record.id)}>
+                      确认删除这条记录
+                    </button>
+                    <button className="secondary-button" onClick={cancelDelete}>
+                      取消删除
+                    </button>
+                  </div>
+                </div>
+              )}
             </article>
           ))}
           {records.length === 0 && <p className="muted">还没有记录。今天先完成一个小行动就可以开始。</p>}
         </div>
 
         <Link className="primary-button" href="/">回到今天的行动</Link>
-        <button className="danger-button" onClick={clearAll}>清空我的记录</button>
+        <button
+          className="danger-button"
+          onClick={(event) => {
+            clearTriggerRef.current = event.currentTarget;
+            setIsClearPending(true);
+          }}
+        >
+          清空我的记录
+        </button>
+        {isClearPending && (
+          <div className="confirmation-panel" role="group" aria-label="确认清空所有内容">
+            <p>这会删除当前行动、所有草稿、求职记录和查看结果，且无法撤销。</p>
+            <div className="button-row">
+              <button autoFocus className="danger-button" onClick={confirmClearAll}>确认清空全部内容</button>
+              <button className="secondary-button" onClick={cancelClearAll}>取消清空</button>
+            </div>
+          </div>
+        )}
       </section>
     </main>
   );

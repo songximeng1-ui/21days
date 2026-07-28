@@ -9,10 +9,24 @@ import { loadCurrentAction } from "@/lib/local-store";
 export default function ActionPage() {
   const params = useParams<{ routeKey: RouteKey }>();
   const [output, setOutput] = useState<RouteOutput | null>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    queueMicrotask(() => setOutput(loadCurrentAction()));
+    queueMicrotask(() => {
+      setOutput(loadCurrentAction());
+      setIsLoaded(true);
+    });
   }, []);
+
+  if (!isLoaded) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <p className="status" role="status" aria-live="polite">正在读取今天的行动。</p>
+        </section>
+      </main>
+    );
+  }
 
   if (!output) {
     return (
@@ -129,7 +143,7 @@ function RouteResultBlock({ output }: { output: RouteOutput }) {
 
   if (output.routeKey === "jd_to_revision") {
     return (
-      <section className="route-result" aria-label="JD 路线结果">
+      <section className="route-result" aria-label="岗位要求对照结果">
         <ResultList title="这个岗位最看重什么" values={asStringArray(result.jdKeyRequirements)} />
         <ResultList title="你的材料目前能支撑什么" values={asStringArray(result.supportedByMaterial)} />
         <ResultList title="当前还看不出来什么" values={asStringArray(result.unclearFromMaterial)} />
@@ -139,8 +153,8 @@ function RouteResultBlock({ output }: { output: RouteOutput }) {
   }
 
   return (
-    <section className="route-result" aria-label="投递复盘路线结果">
-      <ResultList title="本次复盘依据" values={asStringArray(result.reviewBasis)} />
+    <section className="route-result" aria-label="这轮投递的查看结果">
+      <ResultList title="这次根据什么判断" values={asStringArray(result.reviewBasis)} />
       <ResultList title="能看到的线索" values={asStringArray(result.possibleClues)} />
       <ResultList title="信息缺口" values={asStringArray(result.informationGaps)} />
       <ResultText title="下一步行动" value={result.nextValidationAction} />

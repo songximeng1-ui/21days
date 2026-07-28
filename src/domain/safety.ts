@@ -45,7 +45,13 @@ const BLOCKERS: Array<{ reason: string; patterns: RegExp[] }> = [
   },
   {
     reason: "禁止承诺 offer、面试、薪资或通过率",
-    patterns: [/保 offer|包过|一定能|通过率|offer promise|guarantee/i],
+    patterns: [
+      /保 offer|包过|一定能|通过率|offer promise|guarantee/i,
+      /(?:保证|确保|承诺|稳(?:了)?|(?<!未)必(?:然|定)?|一定|肯定|绝对|包)[^。；，、,.]{0,10}(?:进面|面试(?:邀请|机会|结果)?|offer|录取(?:结果)?|收到回复|回复|通过(?:机会|率)?|上岸)/i,
+      /(?:进面|面试(?:邀请|机会|结果)?|offer|录取(?:结果)?|收到回复|回复|通过(?:机会|率)?|上岸)[^。；，、,.]{0,10}(?:保证|确保|承诺|稳(?:了)?|(?<!未)必(?:然|定)?|一定|肯定|绝对|包)/i,
+      /(?:薪资|月薪|年薪|工资)[^。；，、,.]{0,8}(?:至少|不低于|起码|保底|保证|确保|稳|(?<!未)必(?:然|定)?|一定|肯定)[^。；，、,.]{0,8}\d+(?:\.\d+)?\s*(?:k|w|万|千)?/i,
+      /(?:保证|确保|承诺|稳|(?<!未)必(?:然|定)?|一定|肯定|保底)[^。；，、,.]{0,8}(?:薪资|月薪|年薪|工资)[^。；，、,.]{0,8}\d+(?:\.\d+)?\s*(?:k|w|万|千)?/i,
+    ],
   },
   {
     reason: "禁止评价用户本人适合或不适合",
@@ -65,7 +71,9 @@ const BLOCKERS: Array<{ reason: string; patterns: RegExp[] }> = [
 ];
 
 export function scanSafetyViolations(text: string): SafetyScanResult {
-  const textWithoutGuardrailReminders = stripCompliantGuardrailReminders(text);
+  const textWithoutGuardrailReminders = stripCompliantGuardrailReminders(
+    stripCompliantOutcomePromiseReminders(text),
+  );
   const blockedReasons = BLOCKERS.filter((blocker) =>
     blocker.patterns.some((pattern) => pattern.test(textWithoutGuardrailReminders))
   ).map((blocker) => blocker.reason);
@@ -74,6 +82,19 @@ export function scanSafetyViolations(text: string): SafetyScanResult {
     passed: blockedReasons.length === 0,
     blockedReasons,
   };
+}
+
+function stripCompliantOutcomePromiseReminders(text: string): string {
+  const outcome =
+    "(?:进面|面试(?:邀请|机会|结果)?|offer|录取(?:结果)?|收到回复|回复|通过(?:机会|率)?|上岸|薪资(?:下限|结果)?)";
+  const boundary = "(?=。|；|;|\\.|!|\\?|\"|,|，|\\]|}|$)";
+  return text.replace(
+    new RegExp(
+      `(?:当前)?\\s*(?:不能|无法|不应|不会|不得|不要|不承诺)\\s*(?:保证|确保|承诺|预测)?\\s*(?:会|能|可以)?\\s*[^。；;.!?"，,]{0,16}${outcome}[^。；;.!?"，,]{0,16}${boundary}`,
+      "gi",
+    ),
+    (match) => /但|却|不过|然而|同时|随后|接着|改为/.test(match) ? match : "",
+  );
 }
 
 function stripCompliantGuardrailReminders(text: string): string {

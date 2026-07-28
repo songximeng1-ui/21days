@@ -121,6 +121,17 @@ describe("ActionPage", () => {
     expect(recordLink).toHaveAttribute("href", "/routes/jd_to_revision/record");
   });
 
+  it("shows a real loading state before an empty current-action state", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue(null);
+
+    render(<ActionPage />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取今天的行动");
+    expect(await screen.findByText("还没有当前行动")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+  });
+
   it("shows concrete evidence behind the current action", async () => {
     vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
 
@@ -201,7 +212,7 @@ describe("ActionPage", () => {
         informationGaps: ["还缺一条岗位要求摘要"],
         nextValidationAction: "下一轮先改一条材料表达",
       },
-      ["本次复盘依据", "能看到的线索", "信息缺口", "下一步行动"],
+      ["这次根据什么判断", "能看到的线索", "信息缺口", "下一步行动"],
     ],
   ] as const)("shows the core route result for %s", async (routeKey, routeResult, expectedTexts) => {
     routeKeyParam = routeKey;
@@ -502,6 +513,28 @@ describe("RecordPage", () => {
     }));
   });
 
+  it("associates application field help with the field for assistive technology", async () => {
+    routeKeyParam = "applications_to_review";
+    vi.mocked(loadCurrentAction).mockReturnValue(applicationOutput);
+    vi.mocked(loadDraft).mockReturnValue({
+      jobTitle: "内容运营实习",
+      companyOrPlatform: "A 公司",
+      submittedAt: "7 月 1 日",
+      feedbackStatus: "暂无反馈",
+      jdSummary: "负责内容整理",
+      materialVersion: "社团经历版",
+    });
+
+    render(<RecordPage />);
+
+    const field = await screen.findByLabelText("这份岗位主要要求");
+    const helpId = field.getAttribute("aria-describedby");
+    expect(helpId).toBeTruthy();
+    expect(document.getElementById(helpId ?? "")).toHaveTextContent(
+      "这份岗位主要要求会用来对照这次投递的岗位到底在要什么。",
+    );
+  });
+
   it("does not save friendly failure as a completed record", async () => {
     vi.mocked(loadCurrentAction).mockReturnValue({
       ...missingInfoOutput,
@@ -518,5 +551,32 @@ describe("RecordPage", () => {
     expect(await screen.findByText("这一步先不保存成完成记录")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "保存补充信息，继续判断" })).not.toBeInTheDocument();
     expect(saveRecord).not.toHaveBeenCalled();
+  });
+
+  it("shows loading and then a single recovery action when no current action exists", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue(null);
+
+    render(<RecordPage />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取要记录的行动");
+    expect(await screen.findByText("还没有可以记录的行动")).toBeInTheDocument();
+    expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+  });
+
+  it("uses ordinary fallback copy instead of exposing an unknown record field token", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...missingInfoOutput,
+      recordGuide: {
+        recordType: "fill_info",
+        fieldsToRecord: ["internal_secret_token"],
+        requiresUserConfirmation: true,
+      },
+    });
+
+    render(<RecordPage />);
+
+    expect(await screen.findByLabelText("补充信息")).toBeInTheDocument();
+    expect(screen.queryByText(/internal_secret_token/)).not.toBeInTheDocument();
   });
 });

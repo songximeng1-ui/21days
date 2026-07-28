@@ -31,6 +31,16 @@ describe("ReviewPage", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("shows loading and then an honest empty state without review claims", async () => {
+    render(<ReviewPage />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取最近的记录");
+    expect(await screen.findByText("还没有可以回头看的记录")).toBeInTheDocument();
+    expect(screen.queryByText("这一步已经留下记录，可以用于判断下一步。")).not.toBeInTheDocument();
+    expect(screen.queryByText("看到的线索")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+  });
+
   it("stores the generated next action type and record guide with the review", async () => {
     saveRecord({
       routeKey: "applications_to_review",

@@ -1271,13 +1271,8 @@ function normalizeVisibleBookkeepingCopy(output: RouteOutput): RouteOutput {
   };
 }
 
-function mapCandidateStrings(value: unknown, mapper: (value: string) => string): RouteOutput {
-  if (typeof value === "string") return mapper(value) as unknown as RouteOutput;
-  if (Array.isArray(value)) return value.map((item) => mapCandidateStrings(item, mapper)) as unknown as RouteOutput;
-  if (!isRecord(value)) return value as RouteOutput;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [key, mapCandidateStrings(child, mapper)]),
-  ) as RouteOutput;
+function mapCandidateStrings(value: RouteOutput, mapper: (value: string) => string): RouteOutput {
+  return mapVisibleStrings(value, mapper) as RouteOutput;
 }
 
 function mapVisibleStrings(value: unknown, mapper: (value: string) => string): unknown {

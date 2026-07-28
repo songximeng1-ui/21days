@@ -13,6 +13,7 @@ export default function RecordPage() {
   const [actualDone, setActualDone] = useState("");
   const [payload, setPayload] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -22,6 +23,7 @@ export default function RecordPage() {
         const draft = loadDraft(params.routeKey);
         setPayload(pickFields(draft, applicationRecordFields));
       }
+      setIsLoaded(true);
     });
   }, [params.routeKey]);
 
@@ -65,10 +67,33 @@ export default function RecordPage() {
       return false;
     }
 
-    return requiredRecordFields(output).every((field) => payload[field]?.trim());
+    const requiredFields = requiredRecordFields(output);
+    return requiredFields.length > 0 && requiredFields.every((field) => payload[field]?.trim());
   }
 
   const hasRouteMismatch = output && output.routeKey !== params.routeKey;
+
+  if (!isLoaded) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <p className="status" role="status" aria-live="polite">正在读取要记录的行动。</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!output) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <h1>还没有可以记录的行动</h1>
+          <p className="muted">先回到今日入口，选择现在最想推进的一件事。</p>
+          <Link className="primary-button" href="/">回到今日入口</Link>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="shell">
@@ -93,32 +118,46 @@ export default function RecordPage() {
           </div>
         )}
 
-        {(!output || (!hasRouteMismatch && isRecordableOutput(output))) && (
+        {!hasRouteMismatch && isRecordableOutput(output) && (
         <form className="form-stack" onSubmit={submit}>
           <div className="field-group">
             <label className="field">
               <span>实际完成了什么？</span>
-              <textarea value={actualDone} onChange={(event) => setActualDone(event.target.value)} />
+              <textarea
+                id="actual-done"
+                aria-describedby="actual-done-help"
+                value={actualDone}
+                onChange={(event) => setActualDone(event.target.value)}
+              />
             </label>
-            <p className="field-help">写今天完成的可核对结果，下次会用它决定下一步。</p>
+            <p className="field-help" id="actual-done-help">
+              写今天完成的可核对结果，下次会用它决定下一步。
+            </p>
           </div>
 
-          {output && recordFieldsForOutput(output).map((field) => (
-            <div className="field-group" key={field}>
-              <label className="field">
-                <span>
-                  {recordFieldLabels[field] ?? field}
-                  {!requiredRecordFields(output).includes(field) && "（想补充时再填）"}
-                </span>
-                <textarea
-                  value={payload[field] ?? ""}
-                  onChange={(event) => updatePayload(field, event.target.value)}
-                  placeholder={recordFieldPlaceholder(field)}
-                />
-              </label>
-              {recordFieldHelp(field) && <p className="field-help">{recordFieldHelp(field)}</p>}
-            </div>
-          ))}
+          {recordFieldsForOutput(output).map((field, index) => {
+            const help = recordFieldHelp(field);
+            const fieldId = `record-field-${index}`;
+            const helpId = `${fieldId}-help`;
+            return (
+              <div className="field-group" key={field}>
+                <label className="field" htmlFor={fieldId}>
+                  <span>
+                    {recordFieldLabels[field] ?? "补充信息"}
+                    {!requiredRecordFields(output).includes(field) && "（想补充时再填）"}
+                  </span>
+                  <textarea
+                    id={fieldId}
+                    aria-describedby={help ? helpId : undefined}
+                    value={payload[field] ?? ""}
+                    onChange={(event) => updatePayload(field, event.target.value)}
+                    placeholder={recordFieldPlaceholder(field)}
+                  />
+                </label>
+                {help && <p className="field-help" id={helpId}>{help}</p>}
+              </div>
+            );
+          })}
 
           <label className="checkbox">
             <input
@@ -156,7 +195,7 @@ function isRecordableOutput(output: RouteOutput) {
 function requiredRecordFields(output: RouteOutput): string[] {
   if (output.recordGuide.recordType === "application") {
     if (output.outputType === "missing_info") {
-      return applicationMinimumFields.filter((field) => output.recordGuide.fieldsToRecord.includes(field));
+      return output.recordGuide.fieldsToRecord;
     }
     return applicationReviewRequiredFields;
   }
@@ -223,17 +262,6 @@ const applicationRecordFields = [
   "jdSummary2",
   "materialVersion2",
   "userSuspicion2",
-];
-
-const applicationMinimumFields = [
-  "jobTitle",
-  "companyOrPlatform",
-  "submittedAt",
-  "feedbackStatus",
-  "jobTitle2",
-  "companyOrPlatform2",
-  "submittedAt2",
-  "feedbackStatus2",
 ];
 
 const applicationReviewRequiredFields = [

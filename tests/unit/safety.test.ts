@@ -176,6 +176,32 @@ describe("scanSafetyViolations", () => {
   });
 
   it.each([
+    "保证进面",
+    "确保拿到面试邀请",
+    "这个岗位稳 offer",
+    "这个岗位必进面",
+    "改完后必拿 offer",
+    "你必然会被录取",
+    "肯定会收到回复",
+    "我承诺你会收到回复",
+    "保证通过机会",
+    "薪资至少 20k",
+    "月薪不低于 2 万",
+  ])("blocks deterministic interview, offer, reply, pass, and salary promises: %s", (text) => {
+    expect(scanSafetyViolations(text).blockedReasons).toContain("禁止承诺 offer、面试、薪资或通过率");
+  });
+
+  it.each([
+    "不能保证进面，只能核对当前材料。",
+    "当前无法预测录取结果，先补一条真实记录。",
+    "不承诺 offer 或面试结果，只整理已有证据。",
+    "无法保证会收到回复。",
+    "当前未必能进面，只能继续观察真实反馈。",
+  ])("allows compliant reminders that explicitly reject outcome promises: %s", (text) => {
+    expect(scanSafetyViolations(text)).toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it.each([
     "经历写得太泛导致没有反馈。",
     "材料问题造成未通过。",
     "学历不符所以被拒绝。",

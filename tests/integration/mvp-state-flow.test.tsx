@@ -205,6 +205,106 @@ describe("MVP page state flow", () => {
     expect(screen.getByDisplayValue("负责用户调研、数据整理、活动复盘")).toBeInTheDocument();
   });
 
+  it("requires and merges the exact application review details before continuing judgment", async () => {
+    routeKeyParam = "applications_to_review";
+    saveDraft("applications_to_review", {
+      jobTitle: "内容运营实习",
+      companyOrPlatform: "A 公司",
+      submittedAt: "7 月 1 日",
+      feedbackStatus: "暂无反馈",
+      userSuspicion: "经历写得太泛",
+    });
+    saveCurrentAction({
+      routeKey: "applications_to_review",
+      outputType: "missing_info",
+      shortAssessment: "第 1 条投递已经有最低记录，再补两项就能用于对照复盘。",
+      routeResult: null,
+      missingInfo: {
+        cannotJudge: "这条投递使用的材料是否支撑岗位要求",
+        alreadyKnown: ["第 1 条最低字段投递记录"],
+        missingFields: ["第 1 条投递的 JD 摘要", "第 1 条投递的材料版本"],
+      },
+      todayAction: {
+        actionTitle: "今天先补第 1 条投递的 JD 摘要和材料版本",
+        actionReason: "这两项能让下一次判断基于真实岗位要求和真实材料版本。",
+        actionSteps: ["写下岗位要求", "写下材料版本"],
+        estimatedTime: "15-30 分钟",
+        recordAfterDone: "记录 JD 摘要和材料版本。",
+        actionType: "fill_info",
+      },
+      recordGuide: {
+        recordType: "application",
+        fieldsToRecord: ["jdSummary", "materialVersion"],
+        requiresUserConfirmation: true,
+      },
+    });
+
+    render(<RecordPage />);
+    const saveButton = await screen.findByRole("button", { name: "保存补充信息，继续判断" });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    expect(saveButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("这份岗位主要要求"), {
+      target: { value: "负责内容整理和数据记录" },
+    });
+    expect(saveButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("这次投递用的简历/材料"), {
+      target: { value: "社团经历版 V1" },
+    });
+    expect(saveButton).toBeEnabled();
+    fireEvent.click(saveButton);
+
+    expect(loadDraft("applications_to_review")).toEqual({
+      jobTitle: "内容运营实习",
+      companyOrPlatform: "A 公司",
+      submittedAt: "7 月 1 日",
+      feedbackStatus: "暂无反馈",
+      userSuspicion: "经历写得太泛",
+      jdSummary: "负责内容整理和数据记录",
+      materialVersion: "社团经历版 V1",
+    });
+
+    const completedOutput = {
+      ...jdActionOutput,
+      routeKey: "applications_to_review" as const,
+      todayAction: {
+        ...jdActionOutput.todayAction,
+        actionTitle: "今天先对照两条投递记录看一个线索",
+        actionType: "application_record" as const,
+      },
+      recordGuide: {
+        recordType: "application" as const,
+        fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
+        requiresUserConfirmation: true,
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => completedOutput,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    cleanup();
+    render(<RouteInputPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "生成今天先做的一步" }));
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.input.applications[0]).toEqual({
+      jobTitle: "内容运营实习",
+      companyOrPlatform: "A 公司",
+      submittedAt: "7 月 1 日",
+      feedbackStatus: "暂无反馈",
+      jdSummary: "负责内容整理和数据记录",
+      materialVersion: "社团经历版 V1",
+      userSuspicion: "经历写得太泛",
+    });
+    expect((await fetchMock.mock.results[0].value).json()).resolves.toMatchObject({
+      outputType: "route_result",
+      todayAction: { actionTitle: "今天先对照两条投递记录看一个线索" },
+    });
+  });
+
   it("keeps friendly failure out of records while preserving the input draft", async () => {
     saveDraft("jd_to_revision", {
       targetJobTitle: "产品运营实习生",
@@ -235,6 +335,8 @@ describe("MVP page state flow", () => {
 
     render(<RouteInputPage />);
 
+    expect(await screen.findByText("第 1 条（1/2）")).toBeInTheDocument();
+    expect(screen.getByText(/至少需要两条可对照的投递记录/)).toBeInTheDocument();
     fireEvent.change(await screen.findByLabelText("第 1 条投递：岗位名称"), {
       target: { value: "内容运营实习" },
     });
@@ -247,7 +349,8 @@ describe("MVP page state flow", () => {
     fireEvent.change(screen.getByLabelText("第 1 条投递：当前反馈状态"), {
       target: { value: "暂无反馈" },
     });
-    expect(screen.getByText("想让系统帮你回头看这一轮投递，需要先有这些信息：岗位、公司/平台、投递时间、反馈状态、这份岗位主要要求、这次投递用的简历/材料。怀疑点可以先不填。")).toBeInTheDocument();
+    expect(screen.getByText(/至少需要两条可对照的投递记录/)).toBeInTheDocument();
+    expect(screen.getByText(/不确定或暂时没有的内容可以直接这样写/)).toBeInTheDocument();
     expect(screen.getByText(/这份岗位主要要求示例：负责内容整理、活动执行和数据记录/)).toBeInTheDocument();
     expect(screen.getByText(/这次投递用的简历\/材料示例：社团经历版 V1/)).toBeInTheDocument();
     expect(screen.getByText(/示例：经历写得太泛/)).toBeInTheDocument();
@@ -261,6 +364,7 @@ describe("MVP page state flow", () => {
       target: { value: "社团经历版" },
     });
     fireEvent.click(screen.getByRole("button", { name: "再补第 2 条投递记录" }));
+    expect(screen.getByText("第 2 条（2/2）")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("第 2 条投递：岗位名称"), {
       target: { value: "新媒体运营实习" },
     });
@@ -310,6 +414,7 @@ describe("MVP page state flow", () => {
 
     render(<TrackPage />);
     fireEvent.click(await screen.findByRole("button", { name: "清空我的记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认清空全部内容" }));
 
     expect(loadDraft("jd_to_revision")).toEqual({});
 
@@ -328,6 +433,7 @@ describe("MVP page state flow", () => {
 
     render(<TrackPage />);
     fireEvent.click(await screen.findByRole("button", { name: "清空我的记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认清空全部内容" }));
 
     expect(loadCurrentAction()).toBeNull();
 
@@ -362,6 +468,7 @@ describe("MVP page state flow", () => {
 
     render(<TrackPage />);
     fireEvent.click(await screen.findByRole("button", { name: "清空我的记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认清空全部内容" }));
 
     cleanup();
     render(<Home />);

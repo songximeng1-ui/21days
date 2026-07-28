@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { getRouteStrategy } from "@/domain/routes";
@@ -57,26 +57,44 @@ export default function RouteInputPage() {
   const params = useParams<{ routeKey: RouteKey }>();
   const routeKey = params.routeKey;
   const strategy = getRouteStrategy(routeKey);
-  const [draftStatus, setDraftStatus] = useState("已保存草稿");
+  const [draftStatus, setDraftStatus] = useState("正在读取草稿。");
   const [values, setValues] = useState<Record<string, string>>({});
   const [showSecondApplication, setShowSecondApplication] = useState(false);
   const [aiStatus, setAiStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isDraftPersisted = useRef(false);
 
   useEffect(() => {
     queueMicrotask(() => {
-      const draft = loadDraft(routeKey);
-      setValues(draft);
-      setShowSecondApplication(secondApplicationFields.some((field) => Boolean(draft[field]?.trim())));
+      try {
+        const draft = loadDraft(routeKey);
+        setValues(draft);
+        setShowSecondApplication(secondApplicationFields.some((field) => Boolean(draft[field]?.trim())));
+        isDraftPersisted.current = Object.values(draft).some((value) => value.trim());
+        setDraftStatus(
+          isDraftPersisted.current
+            ? "已恢复草稿。"
+            : "还没有保存的草稿。",
+        );
+      } catch {
+        isDraftPersisted.current = false;
+        setDraftStatus("这次没有读取成功，可以继续填写。");
+      }
     });
   }, [routeKey]);
 
   function updateValue(field: string, value: string) {
     const next = { ...values, [field]: value };
     setValues(next);
-    setDraftStatus("正在保存");
-    saveDraft(routeKey, next);
-    setDraftStatus("已保存草稿");
+    setDraftStatus("正在保存。");
+    try {
+      saveDraft(routeKey, next);
+      isDraftPersisted.current = true;
+      setDraftStatus("已保存草稿。");
+    } catch {
+      isDraftPersisted.current = false;
+      setDraftStatus("这次没有保存成功，请先不要关闭页面，稍后再试。");
+    }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -87,7 +105,11 @@ export default function RouteInputPage() {
     setAiStatus("正在阅读你提供的信息。");
     const controller = new AbortController();
     const longWaitTimer = window.setTimeout(() => {
-      setAiStatus("还在整理，内容已经保存，可以稍后回来继续。");
+      setAiStatus(
+        isDraftPersisted.current
+          ? "还在整理，内容已经保存，可以稍后回来继续。"
+          : "还在整理。当前填写仍保留在页面上，请先不要关闭页面。",
+      );
     }, 8000);
     const timeoutTimer = window.setTimeout(() => {
       controller.abort();
@@ -110,7 +132,11 @@ export default function RouteInputPage() {
       saveCurrentAction(output);
       router.push(`/routes/${routeKey}/action`);
     } catch {
-      setAiStatus("这次暂时没整理出来。草稿已经保存在本页，可以稍后再试。");
+      setAiStatus(
+        isDraftPersisted.current
+          ? "这次暂时没整理出来。草稿已经保存在本页，可以稍后再试。"
+          : "这次暂时没整理出来。当前填写还保留在页面上，但没有保存成功，请稍后再试。",
+      );
       setIsSubmitting(false);
     } finally {
       window.clearTimeout(longWaitTimer);
@@ -129,7 +155,8 @@ export default function RouteInputPage() {
 
         {routeKey === "applications_to_review" && (
           <div className="notice">
-            <strong>想让系统帮你回头看这一轮投递，需要先有这些信息：岗位、公司/平台、投递时间、反馈状态、这份岗位主要要求、这次投递用的简历/材料。怀疑点可以先不填。</strong>
+            <strong>至少需要两条可对照的投递记录。先完成第 1 条，再按 2/2 补第 2 条，不会一次铺开全部字段。</strong>
+            <p>不确定或暂时没有的内容可以直接这样写，不要为了填满而编。</p>
             <p>这份岗位主要要求示例：负责内容整理、活动执行和数据记录。</p>
             <p>这次投递用的简历/材料示例：社团经历版 V1。</p>
             <p>怀疑点示例：经历写得太泛，没有体现实际动作。</p>
@@ -137,6 +164,7 @@ export default function RouteInputPage() {
         )}
 
         <form onSubmit={submit} className="form-stack" aria-busy={isSubmitting}>
+          {routeKey === "applications_to_review" && <p className="eyebrow">第 1 条（1/2）</p>}
           {routeFields[routeKey].map((field) => (
             <label key={field} className="field">
               <span>{fieldLabels[field]}</span>
@@ -152,17 +180,20 @@ export default function RouteInputPage() {
           {routeKey === "applications_to_review" && (
             <>
               {showSecondApplication ? (
-                secondApplicationFields.map((field) => (
-                  <label key={field} className="field">
-                    <span>{fieldLabels[field]}</span>
-                    <textarea
-                      name={field}
-                      value={values[field] ?? ""}
-                      onChange={(event) => updateValue(field, event.target.value)}
-                      placeholder={inputPlaceholder(routeKey, field)}
-                    />
-                  </label>
-                ))
+                <>
+                  <p className="eyebrow">第 2 条（2/2）</p>
+                  {secondApplicationFields.map((field) => (
+                    <label key={field} className="field">
+                      <span>{fieldLabels[field]}</span>
+                      <textarea
+                        name={field}
+                        value={values[field] ?? ""}
+                        onChange={(event) => updateValue(field, event.target.value)}
+                        placeholder={inputPlaceholder(routeKey, field)}
+                      />
+                    </label>
+                  ))}
+                </>
               ) : (
                 <button
                   className="secondary-button"

@@ -178,6 +178,18 @@ describe("ChatCompletionProvider", () => {
     expect(prompt).toContain("只能出现在 JSON 固定字段值里");
   });
 
+  it("explicitly forbids promises about interviews, offers, replies, admission, and salary floors", async () => {
+    const experienceCase = routePromptCases[1];
+    const prompt = await capturePrompt({ routeKey: experienceCase.routeKey, input: experienceCase.input });
+
+    expect(prompt).toContain("禁止承诺");
+    expect(prompt).toContain("面试");
+    expect(prompt).toContain("offer");
+    expect(prompt).toContain("录取");
+    expect(prompt).toContain("回复");
+    expect(prompt).toContain("薪资下限");
+  });
+
   it("teaches JD revision not to turn absent tool experience into tool wording", async () => {
     const prompt = await capturePrompt({
       routeKey: "jd_to_revision",

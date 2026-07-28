@@ -15,7 +15,8 @@ import {
 export default function ReviewPage() {
   const [latest, setLatest] = useState<LocalRecord | null>(null);
   const [review, setReview] = useState<LocalReview | null>(null);
-  const [status, setStatus] = useState("正在整理这条记录。");
+  const [status, setStatus] = useState("正在读取最近的记录。");
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
     queueMicrotask(async () => {
@@ -24,11 +25,13 @@ export default function ReviewPage() {
 
       if (!latestRecord) {
         setStatus("还没有可以回头看的记录。");
+        setIsLoaded(true);
         return;
       }
 
       if (latestRecord.recordType === "fill_info") {
         setStatus("这条补充信息已经保存。");
+        setIsLoaded(true);
         return;
       }
 
@@ -36,6 +39,7 @@ export default function ReviewPage() {
       if (latestReview?.basedOnRecordIds.includes(latestRecord.id)) {
         setReview(latestReview);
         setStatus("已根据这条记录整理出下一步。");
+        setIsLoaded(true);
         return;
       }
 
@@ -53,6 +57,7 @@ export default function ReviewPage() {
 
         if (output.outputType !== "light_review" || !output.routeResult) {
           setStatus("这次暂时没整理出来。你的记录已经保存，可以稍后再看。");
+          setIsLoaded(true);
           return;
         }
 
@@ -71,18 +76,42 @@ export default function ReviewPage() {
         });
         setReview(nextReview);
         setStatus("已根据这条记录整理出下一步。");
+        setIsLoaded(true);
       } catch {
         setStatus("这次暂时没整理出来。你的记录已经保存，可以稍后再看。");
+        setIsLoaded(true);
       }
     });
   }, []);
+
+  if (!isLoaded) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <p className="status" role="status" aria-live="polite">{status}</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!latest) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <h1>还没有可以回头看的记录</h1>
+          <p className="muted">先完成并保存一条真实行动，之后再从记录里看下一步。</p>
+          <Link className="primary-button" href="/">回到今日入口</Link>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="shell">
       <section className="panel">
         <p className="eyebrow">今天先回头看一眼</p>
         <h1>这一步已经留下记录，可以用于判断下一步。</h1>
-        <p className="status" aria-live="polite">{status}</p>
+        <p className="status" role="status" aria-live="polite">{status}</p>
 
         <div className="review-grid">
           <section>

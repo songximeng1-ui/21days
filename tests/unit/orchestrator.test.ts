@@ -117,6 +117,54 @@ describe("generateRouteOutput", () => {
     ]);
   });
 
+  it("asks for the first application review details after its minimum fields are present", async () => {
+    const result = await generateRouteOutput({
+      routeKey: "applications_to_review",
+      input: {
+        applications: [{
+          jobTitle: "内容运营实习",
+          companyOrPlatform: "A 公司",
+          submittedAt: "7 月 1 日",
+          feedbackStatus: "暂无反馈",
+        }],
+      },
+      provider: new MockAiProvider("success"),
+    });
+
+    expect(result.outputType).toBe("missing_info");
+    expect(result.todayAction.actionTitle).toContain("第 1 条");
+    expect(result.recordGuide.fieldsToRecord).toEqual(["jdSummary", "materialVersion"]);
+  });
+
+  it("uses second-record suffixes when the second application needs review details", async () => {
+    const result = await generateRouteOutput({
+      routeKey: "applications_to_review",
+      input: {
+        applications: [
+          {
+            jobTitle: "内容运营实习",
+            companyOrPlatform: "A 公司",
+            submittedAt: "7 月 1 日",
+            feedbackStatus: "暂无反馈",
+            jdSummary: "负责内容整理",
+            materialVersion: "社团经历版",
+          },
+          {
+            jobTitle: "新媒体运营实习",
+            companyOrPlatform: "B 公司",
+            submittedAt: "7 月 3 日",
+            feedbackStatus: "已查看",
+          },
+        ],
+      },
+      provider: new MockAiProvider("success"),
+    });
+
+    expect(result.outputType).toBe("missing_info");
+    expect(result.todayAction.actionTitle).toContain("第 2 条");
+    expect(result.recordGuide.fieldsToRecord).toEqual(["jdSummary2", "materialVersion2"]);
+  });
+
   it("hides provider failures behind friendly failure copy", async () => {
     const result = await generateRouteOutput({
       routeKey: "experience_to_resume",
@@ -2587,6 +2635,26 @@ describe("generateRouteOutput", () => {
 
     expect(calls).toBe(2);
     expect(result.outputType).toBe("route_result");
+  });
+
+  it("never displays a provider-authored outcome promise and uses the friendly failure path", async () => {
+    const validOutput = await makeValidExperienceOutput();
+    const provider = {
+      generate: vi.fn().mockResolvedValue({
+        ...validOutput,
+        shortAssessment: "保证进面，薪资至少 20k。",
+      }),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      provider,
+    });
+
+    expect(provider.generate).toHaveBeenCalledTimes(2);
+    expect(result.outputType).toBe("friendly_failure");
+    expect(JSON.stringify(result)).not.toMatch(/保证进面|薪资至少\s*20k/i);
   });
 
   it("retries primary once when candidate Zod parsing fails and can recover", async () => {
