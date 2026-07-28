@@ -332,7 +332,7 @@ describe("RecordPage", () => {
     expect(push).toHaveBeenCalledWith("/review");
   });
 
-  it("saves the four minimum application fields and keeps review details optional", async () => {
+  it("requires JD summary and material version before saving an application review record", async () => {
     routeKeyParam = "applications_to_review";
     vi.mocked(loadCurrentAction).mockReturnValue({
       ...applicationOutput,
@@ -368,14 +368,27 @@ describe("RecordPage", () => {
     });
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
 
-    expect(screen.getByLabelText("JD 摘要（第二层补充，可先不填）")).toHaveAttribute(
+    expect(await screen.findByText("这条内容只在这台设备上保存，方便你下次从这里继续。")).toBeInTheDocument();
+    expect(screen.queryByText(/浏览器/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("JD 摘要会用来对照这次投递的岗位到底在要什么。").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("材料版本会用来判断同一版材料投出去后的反馈变化。").length).toBeGreaterThan(0);
+
+    expect(screen.getByLabelText("JD 摘要")).toHaveAttribute(
       "placeholder",
       expect.stringContaining("例如"),
     );
-    expect(screen.getByLabelText("使用的材料版本（第二层补充，可先不填）")).toHaveAttribute(
+    expect(screen.getByLabelText("使用的材料版本")).toHaveAttribute(
       "placeholder",
       expect.stringContaining("例如"),
     );
+    expect(screen.getByRole("button", { name: "保存并轻复盘" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("JD 摘要"), {
+      target: { value: "负责内容整理和活动执行" },
+    });
+    fireEvent.change(screen.getByLabelText("使用的材料版本"), {
+      target: { value: "社团经历版 V1" },
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "保存并轻复盘" }));
 
@@ -390,6 +403,8 @@ describe("RecordPage", () => {
         companyOrPlatform: "A 公司",
         submittedAt: "7 月 1 日",
         feedbackStatus: "暂无反馈",
+        jdSummary: "负责内容整理和活动执行",
+        materialVersion: "社团经历版 V1",
       },
       userConfirmed: true,
     });

@@ -75,7 +75,7 @@ export default function RecordPage() {
       <section className="panel">
         <p className="eyebrow">记录今天做完了什么</p>
         <h1>{output?.todayAction.actionTitle ?? "记录结果"}</h1>
-        <p className="muted">这条记录只保存在你的浏览器里。这里仅展示你自己保存的求职记录。</p>
+        <p className="muted">这条内容只在这台设备上保存，方便你下次从这里继续。</p>
 
         {hasRouteMismatch && (
           <div className="notice">
@@ -95,23 +95,29 @@ export default function RecordPage() {
 
         {(!output || (!hasRouteMismatch && isRecordableOutput(output))) && (
         <form className="form-stack" onSubmit={submit}>
-          <label className="field">
-            <span>实际完成了什么？</span>
-            <textarea value={actualDone} onChange={(event) => setActualDone(event.target.value)} />
-          </label>
+          <div className="field-group">
+            <label className="field">
+              <span>实际完成了什么？</span>
+              <textarea value={actualDone} onChange={(event) => setActualDone(event.target.value)} />
+            </label>
+            <p className="field-help">写今天完成的可核对结果，下次会用它决定下一步。</p>
+          </div>
 
           {output && recordFieldsForOutput(output).map((field) => (
-            <label className="field" key={field}>
-              <span>
-                {recordFieldLabels[field] ?? field}
-                {!requiredRecordFields(output).includes(field) && "（第二层补充，可先不填）"}
-              </span>
-              <textarea
-                value={payload[field] ?? ""}
-                onChange={(event) => updatePayload(field, event.target.value)}
-                placeholder={recordFieldPlaceholder(field)}
-              />
-            </label>
+            <div className="field-group" key={field}>
+              <label className="field">
+                <span>
+                  {recordFieldLabels[field] ?? field}
+                  {!requiredRecordFields(output).includes(field) && "（想补充时再填）"}
+                </span>
+                <textarea
+                  value={payload[field] ?? ""}
+                  onChange={(event) => updatePayload(field, event.target.value)}
+                  placeholder={recordFieldPlaceholder(field)}
+                />
+              </label>
+              {recordFieldHelp(field) && <p className="field-help">{recordFieldHelp(field)}</p>}
+            </div>
           ))}
 
           <label className="checkbox">
@@ -152,7 +158,7 @@ function requiredRecordFields(output: RouteOutput): string[] {
     if (output.outputType === "missing_info") {
       return applicationMinimumFields.filter((field) => output.recordGuide.fieldsToRecord.includes(field));
     }
-    return applicationMinimumFields.slice(0, 4);
+    return applicationReviewRequiredFields;
   }
 
   return output.recordGuide.fieldsToRecord;
@@ -165,7 +171,7 @@ function summarizeFillInfo(payload: Record<string, string>): string {
 
 function recordHelpText(output: RouteOutput | null) {
   if (output?.recordGuide.recordType === "application") {
-    return "岗位、公司或平台、投递时间、反馈状态是最低完成；JD 摘要、材料版本和怀疑点是第二层补充。";
+    return "岗位、公司或平台、投递时间、反馈状态、JD 摘要、材料版本填完后，这条记录才足够支持下一次复盘；怀疑点可先不填。";
   }
 
   return "确认勾选并补齐上面的记录字段后，才能保存并复盘。";
@@ -230,11 +236,27 @@ const applicationMinimumFields = [
   "feedbackStatus2",
 ];
 
+const applicationReviewRequiredFields = [
+  "jobTitle",
+  "companyOrPlatform",
+  "submittedAt",
+  "feedbackStatus",
+  "jdSummary",
+  "materialVersion",
+];
+
 function recordFieldsForOutput(output: RouteOutput): string[] {
   if (output.routeKey === "applications_to_review" && output.outputType === "route_result") {
     return applicationRecordFields;
   }
   return output.recordGuide.fieldsToRecord;
+}
+
+function recordFieldHelp(field: string): string {
+  if (field.startsWith("jdSummary")) return "JD 摘要会用来对照这次投递的岗位到底在要什么。";
+  if (field.startsWith("materialVersion")) return "材料版本会用来判断同一版材料投出去后的反馈变化。";
+  if (field.startsWith("feedbackStatus")) return "反馈状态会帮你下次复盘时不靠记忆猜结果。";
+  return "";
 }
 
 function recordFieldPlaceholder(field: string): string {

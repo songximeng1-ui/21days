@@ -185,9 +185,21 @@ textarea {
   gap: 8px;
 }
 
+.field-group {
+  display: grid;
+  gap: 6px;
+}
+
 .field span,
 .checkbox span {
   font-weight: 700;
+}
+
+.field-help {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 textarea {
