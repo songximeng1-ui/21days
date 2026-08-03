@@ -10,19 +10,28 @@ import {
   loadRecords,
   markReviewSaved,
   mergeDraft,
+  runLocalStoreTransaction,
   saveCurrentAction,
   saveDraft,
   saveRecord,
   saveReview,
+  savePastSevenDayReview,
   updateRecord,
 } from "@/lib/local-store";
 import type { RouteOutput } from "@/domain/types";
+import { withTestProvenance } from "../helpers/test-provenance";
 
-const routeOutput: RouteOutput = {
+const routeOutput: RouteOutput = withTestProvenance({
   routeKey: "jd_to_revision",
   outputType: "route_result",
   shortAssessment: "先看 JD 和材料的支撑关系。",
-  routeResult: {},
+  routeResult: {
+    jdKeyRequirements: ["内容整理"],
+    supportedByMaterial: ["整理过报名表"],
+    unclearFromMaterial: ["没有量化结果"],
+    minimalRevisionActions: ["补充整理报名表这一真实动作"],
+    afterSubmissionRecording: ["记录岗位、公司、时间和反馈"],
+  },
   missingInfo: null,
   todayAction: {
     actionTitle: "今天先对照 JD 做 1 条投递前最小修改",
@@ -37,7 +46,13 @@ const routeOutput: RouteOutput = {
     fieldsToRecord: ["beforeSnippet", "afterSnippet"],
     requiresUserConfirmation: true,
   },
-};
+  provenance: {
+    shortAssessment: {
+      kind: "fact",
+      sources: [{ sourceType: "user_input", path: "testFixture", quote: "test" }],
+    },
+  },
+});
 
 describe("local record storage", () => {
   beforeEach(() => {
@@ -116,7 +131,7 @@ describe("local record storage", () => {
       latestRecord: null,
       latestReview: null,
       hasUnfinishedAction: false,
-      progressLabel: "第 1 次推进",
+      progressLabel: "第 1 天",
     });
   });
 
@@ -134,6 +149,48 @@ describe("local record storage", () => {
 
     expect(loadRecords()[0].actualDone).toBe("Edited content.");
     expect(loadRecords()[0].payload.actualActions).toBe("edited");
+  });
+
+  it("rejects editing a confirmed application below the shared review sufficiency rule", () => {
+    const record = saveRecord({
+      routeKey: "applications_to_review",
+      recordType: "application",
+      actionTitle: "保存投递记录",
+      actualDone: "保存了一条完整投递记录。",
+      payload: {
+        jobTitle: "内容运营实习",
+        companyOrPlatform: "A 公司",
+        submittedAt: "7 月 1 日",
+        feedbackStatus: "暂无反馈",
+        jdSummary: "负责内容整理",
+        materialVersion: "社团经历版",
+      },
+      userConfirmed: true,
+    });
+
+    expect(updateRecord(record.id, {
+      payload: { ...record.payload, materialVersion: "" },
+      userConfirmed: true,
+    })).toBeNull();
+    expect(loadRecords()[0].payload.materialVersion).toBe("社团经历版");
+  });
+
+  it("ignores draft and stale records when deriving home progress", () => {
+    const action = saveCurrentAction(routeOutput);
+    saveRecord({
+      actionId: action.actionId,
+      routeKey: "jd_to_revision",
+      recordType: "jd_compare",
+      actionTitle: "未确认行动",
+      actualDone: "尚未确认。",
+      payload: { afterSnippet: "草稿" },
+      userConfirmed: false,
+    });
+
+    expect(loadHomeProgress()).toMatchObject({
+      latestRecord: null,
+      hasUnfinishedAction: true,
+    });
   });
 
   it("merges completed missing-info payloads back into the route draft", () => {
@@ -158,7 +215,7 @@ describe("local record storage", () => {
 
     expect(loadHomeProgress()).toMatchObject({
       hasUnfinishedAction: true,
-      progressLabel: "第 1 次推进",
+      progressLabel: "第 1 天",
     });
 
     const record = saveRecord({
@@ -175,7 +232,7 @@ describe("local record storage", () => {
       hasUnfinishedAction: false,
       latestRecord: expect.objectContaining({ id: record.id }),
       latestReview: null,
-      progressLabel: "已保存 1 次推进",
+      progressLabel: "第 1 天",
     });
 
     const review = saveReview({
@@ -217,5 +274,204 @@ describe("local record storage", () => {
     });
 
     expect(loadHomeProgress().hasUnfinishedAction).toBe(false);
+  });
+
+  it("rejects a persisted current action whose route and action schemas disagree", () => {
+    window.localStorage.setItem(
+      "mvp-current-action",
+      JSON.stringify({
+        ...routeOutput,
+        todayAction: {
+          ...routeOutput.todayAction,
+          actionType: "application_record",
+        },
+        recordGuide: {
+          ...routeOutput.recordGuide,
+          recordType: "application",
+        },
+      }),
+    );
+
+    expect(loadCurrentAction()).toBeNull();
+  });
+});
+
+describe("seven-day review", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it.each([
+    [
+      "direction_to_jobs",
+      "job_sample",
+      { jobTitle: "内容运营实习", companyOrPlatform: "A 公司", jdSummary: "内容整理" },
+      "再保存 1 个真实岗位样本，核对重复出现的岗位要求。",
+      "还缺更多真实岗位样本来验证方向。",
+    ],
+    [
+      "experience_to_resume",
+      "experience_fact",
+      { actualActions: "整理报名表", deliverable: "报名名单" },
+      "再核对 1 段真实经历，补清动作或交付物。",
+      "还可补充这段经历的对象、动作或交付物。",
+    ],
+    [
+      "jd_to_revision",
+      "jd_compare",
+      { beforeSnippet: "协助活动", afterSnippet: "整理报名表", jdRequirement: "数据记录" },
+      "再核对 1 条岗位要求与材料表述。",
+      "还需记录这次修改后的真实投递或反馈。",
+    ],
+  ] as const)(
+    "keeps the %s weekly next step inside its route",
+    (routeKey, recordType, payload, nextAction, missingInfo) => {
+      saveRecord({
+        routeKey,
+        recordType,
+        actionTitle: "完成一件真实行动",
+        actualDone: "保存了一条可核对记录。",
+        payload,
+        userConfirmed: true,
+      });
+
+      const review = savePastSevenDayReview();
+
+      expect(review).toMatchObject({
+        routeKey,
+        nextAction,
+        missingInfo: [missingInfo],
+      });
+    },
+  );
+
+  it("keeps all five weekly review blocks and chooses one next action from the latest route in mixed records", () => {
+    saveRecord({
+      actionId: "direction-action",
+      routeKey: "direction_to_jobs",
+      recordType: "job_sample",
+      actionTitle: "保存岗位样本",
+      actualDone: "保存了一个真实岗位样本。",
+      payload: {
+        jobTitle: "内容运营实习",
+        companyOrPlatform: "A 公司",
+        jdSummary: "负责内容整理",
+      },
+      userConfirmed: true,
+    });
+    saveRecord({
+      actionId: "jd-action",
+      routeKey: "jd_to_revision",
+      recordType: "jd_compare",
+      actionTitle: "核对岗位要求",
+      actualDone: "完成了一处投递前修改。",
+      payload: {
+        beforeSnippet: "协助活动",
+        afterSnippet: "整理活动报名表",
+        jdRequirement: "数据记录",
+      },
+      userConfirmed: true,
+    });
+
+    const review = savePastSevenDayReview();
+
+    expect(review).toMatchObject({
+      routeKey: "jd_to_revision",
+      actionTitles: ["核对岗位要求", "保存岗位样本"],
+      reviewBasis: ["完成了一处投递前修改。", "保存了一个真实岗位样本。"],
+      missingInfo: ["还需记录这次修改后的真实投递或反馈。"],
+      nextAction: "再核对 1 条岗位要求与材料表述。",
+    });
+    expect(review?.clues).toEqual([
+      "过去 7 天完成了 2 次真实推进",
+      "留下了 2 条确认记录",
+      "这些记录来自 2 条求职路径",
+    ]);
+    expect(review?.nextAction).toEqual(expect.any(String));
+  });
+
+  it("asks for another application only when fewer than two complete records exist", () => {
+    const completeApplication = {
+      companyOrPlatform: "A 公司",
+      submittedAt: "7 月 1 日",
+      feedbackStatus: "暂无反馈",
+      jdSummary: "负责内容整理",
+      materialVersion: "社团经历版",
+    };
+    saveRecord({
+      routeKey: "applications_to_review",
+      recordType: "application",
+      actionTitle: "确认投递记录",
+      actualDone: "确认了内容运营实习投递。",
+      payload: { ...completeApplication, jobTitle: "内容运营实习" },
+      userConfirmed: true,
+    });
+
+    expect(savePastSevenDayReview()).toMatchObject({
+      missingInfo: ["还需要第 2 条完整投递记录。"],
+      nextAction: "补齐第 2 条真实投递记录后再回看。",
+    });
+
+    saveRecord({
+      routeKey: "applications_to_review",
+      recordType: "application",
+      actionTitle: "确认投递记录",
+      actualDone: "确认了新媒体运营实习投递。",
+      payload: {
+        ...completeApplication,
+        jobTitle: "新媒体运营实习",
+        companyOrPlatform: "B 公司",
+      },
+      userConfirmed: true,
+    });
+
+    expect(savePastSevenDayReview()).toMatchObject({
+      missingInfo: ["还缺后续真实反馈来验证目前的线索。"],
+      nextAction: "选 1 条投递记录，写下 1 个需要后续反馈验证的问题。",
+    });
+  });
+
+  it("deduplicates action titles and review basis for records from the same action", () => {
+    saveRecord({
+      actionId: "same-action",
+      routeKey: "experience_to_resume",
+      recordType: "experience_fact",
+      actionTitle: "整理真实经历",
+      actualDone: "核对了报名经历。",
+      payload: { actualActions: "整理报名表" },
+      userConfirmed: true,
+    });
+    saveRecord({
+      actionId: "same-action",
+      routeKey: "experience_to_resume",
+      recordType: "resume_snippet",
+      actionTitle: "简历片段版本",
+      actualDone: "确认了片段。",
+      payload: { resumeSnippet: "整理报名表。" },
+      userConfirmed: true,
+    });
+
+    const review = savePastSevenDayReview();
+
+    expect(review?.actionTitles).toEqual(["简历片段版本"]);
+    expect(review?.reviewBasis).toEqual(["确认了片段。"]);
+  });
+
+  it("restores all MVP local data when a multi-step local write fails", () => {
+    window.localStorage.setItem("mvp-records", JSON.stringify([{ id: "before" }]));
+    window.localStorage.setItem("mvp-draft:jd_to_revision", JSON.stringify({ before: "yes" }));
+
+    expect(() =>
+      runLocalStoreTransaction(() => {
+        window.localStorage.setItem("mvp-records", JSON.stringify([{ id: "partial" }]));
+        window.localStorage.setItem("mvp-draft:jd_to_revision", JSON.stringify({ before: "no" }));
+        throw new Error("second write failed");
+      }),
+    ).toThrow("second write failed");
+
+    expect(window.localStorage.getItem("mvp-records")).toBe(JSON.stringify([{ id: "before" }]));
+    expect(window.localStorage.getItem("mvp-draft:jd_to_revision")).toBe(
+      JSON.stringify({ before: "yes" }),
+    );
   });
 });

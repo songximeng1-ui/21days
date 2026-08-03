@@ -11,12 +11,20 @@ import {
   type AiFailureReporter,
   type AiFailureStage,
 } from "@/ai/failure-diagnostics";
+import {
+  beginProviderAttempt,
+  getProviderRetryAfterMs,
+  recordProviderFailure,
+  recordProviderSuccess,
+} from "@/ai/orchestration-policy";
 import { validateRouteOutput } from "@/domain/action-card";
+import { selectJobTaxonomyDirections, validateDirectionCandidates } from "@/domain/job-taxonomy";
+import { attachOutputProvenance } from "@/domain/provenance";
 import { getRouteStrategy, isPlaceholderValue, isRouteInputSufficient } from "@/domain/routes";
 import { hasGroundedExperienceRoleStrength, scanRouteSafety } from "@/domain/safety";
 import type { ActionType, RecordType, RouteKey, RouteOutput } from "@/domain/types";
 import type { LocalRecord } from "@/lib/local-store";
-import { routeOutputSchema } from "@/schemas/route-output";
+import { routeOutputEnvelopeSchema } from "@/schemas/route-output";
 
 type GenerateRouteOutputInput = {
   routeKey: RouteKey;
@@ -26,16 +34,43 @@ type GenerateRouteOutputInput = {
   fallback?: AiProvider;
   reporter?: AiFailureReporter;
   requestId?: string;
+  signal?: AbortSignal;
+  deadlineMs?: number;
+  surfaceUpstreamUnavailable?: boolean;
 };
 
+type LightReviewRecord = Omit<
+  LocalRecord,
+  "status" | "version" | "updatedAt" | "completedAt"
+> &
+  Partial<Pick<LocalRecord, "status" | "version" | "updatedAt" | "completedAt">>;
+
+type LightReviewProviderRecord = Pick<
+  LocalRecord,
+  "routeKey" | "actualDone" | "payload" | "userConfirmed"
+>;
+
 type GenerateLightReviewInput = {
-  record: LocalRecord;
+  record?: LightReviewProviderRecord | LightReviewRecord;
+  records?: Array<LightReviewProviderRecord | LightReviewRecord>;
+  provenanceRecord?: LightReviewRecord;
+  provenanceRecords?: LightReviewRecord[];
   provider?: AiProvider;
   primary?: AiProvider;
   fallback?: AiProvider;
   reporter?: AiFailureReporter;
   requestId?: string;
+  signal?: AbortSignal;
+  deadlineMs?: number;
+  surfaceUpstreamUnavailable?: boolean;
 };
+
+export class AiUpstreamUnavailableError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super("AI service is temporarily unavailable");
+    this.name = "AiUpstreamUnavailableError";
+  }
+}
 
 export function makeFriendlyFailureOutput(routeKey: RouteKey): RouteOutput {
   return {
@@ -57,6 +92,7 @@ export function makeFriendlyFailureOutput(routeKey: RouteKey): RouteOutput {
       fieldsToRecord: ["draft"],
       requiresUserConfirmation: true,
     },
+    provenance: {},
   };
 }
 
@@ -67,9 +103,21 @@ export async function generateRouteOutput({
   primary,
   fallback,
   reporter,
+  requestId,
+  signal,
+  deadlineMs,
+  surfaceUpstreamUnavailable,
 }: GenerateRouteOutputInput): Promise<RouteOutput> {
   if (!isRouteInputSufficient(routeKey, input)) {
-    return makeMissingInfoOutput(routeKey, input);
+    const missing = makeMissingInfoOutput(routeKey, input);
+    const withProvenance = attachOutputProvenance(missing, input);
+    return withProvenance.ok ? withProvenance.output : makeFriendlyFailureOutput(routeKey);
+  }
+
+  if (routeKey === "direction_to_jobs" && !hasEnoughDirectionTaxonomyEvidence(input)) {
+    const missing = makeMissingInfoOutput(routeKey, input, directionEvidenceMissingInfoConfig);
+    const withProvenance = attachOutputProvenance(missing, input);
+    return withProvenance.ok ? withProvenance.output : makeFriendlyFailureOutput(routeKey);
   }
 
   return orchestrateOutput({
@@ -78,40 +126,74 @@ export async function generateRouteOutput({
     mode: "route",
     ...resolveProviders(provider, primary, fallback),
     reporter: reporter ?? noopAiFailureReporter,
-    requestId: createRequestId(),
+    requestId: sanitizeRequestId(requestId),
+    signal,
+    deadlineMs,
+    surfaceUpstreamUnavailable,
   });
 }
 
 export async function generateLightReviewOutput({
   record,
+  records,
+  provenanceRecord,
+  provenanceRecords,
   provider,
   primary,
   fallback,
   reporter,
+  requestId,
+  signal,
+  deadlineMs,
+  surfaceUpstreamUnavailable,
 }: GenerateLightReviewInput): Promise<RouteOutput> {
-  if (!record.userConfirmed || !record.actualDone.trim()) {
-    return makeFriendlyFailureOutput(record.routeKey as RouteKey);
+  const reviewRecords = records ?? (record ? [record] : []);
+  const sourceRecords =
+    provenanceRecords ??
+    (provenanceRecord ? [provenanceRecord] : reviewRecords as LightReviewRecord[]);
+  const routeKey = reviewRecords[0]?.routeKey as RouteKey | undefined;
+  if (
+    !routeKey ||
+    reviewRecords.some(
+      (item) => item.routeKey !== routeKey || !item.userConfirmed || !item.actualDone.trim(),
+    ) ||
+    sourceRecords.length !== reviewRecords.length ||
+    sourceRecords.some((item) => item.routeKey !== routeKey) ||
+    (routeKey === "applications_to_review" && reviewRecords.length < 2)
+  ) {
+    return makeFriendlyFailureOutput(routeKey ?? "applications_to_review");
   }
 
-  const routeKey = record.routeKey as RouteKey;
   return orchestrateOutput({
     routeKey,
-    input: { mode: "light_review", record },
+    input: routeKey === "applications_to_review"
+      ? { mode: "light_review", records: reviewRecords }
+      : { mode: "light_review", record: reviewRecords[0] },
+    provenanceInput: routeKey === "applications_to_review"
+      ? { mode: "light_review", records: sourceRecords }
+      : { mode: "light_review", record: sourceRecords[0] },
     mode: "light_review",
     ...resolveProviders(provider, primary, fallback),
     reporter: reporter ?? noopAiFailureReporter,
-    requestId: createRequestId(),
+    requestId: sanitizeRequestId(requestId),
+    signal,
+    deadlineMs,
+    surfaceUpstreamUnavailable,
   });
 }
 
 type OrchestrateOutputInput = {
   routeKey: RouteKey;
   input: Record<string, unknown>;
+  provenanceInput?: Record<string, unknown>;
   mode: "route" | "light_review";
   primary?: AiProvider;
   fallback?: AiProvider;
   reporter: AiFailureReporter;
   requestId: string;
+  signal?: AbortSignal;
+  deadlineMs?: number;
+  surfaceUpstreamUnavailable?: boolean;
 };
 
 type AttemptFailure = {
@@ -123,6 +205,7 @@ type AttemptFailure = {
   schemaPaths?: string[];
   httpStatusClass?: AiProviderError["httpStatusClass"];
   providerErrorCode?: AiProviderError["providerErrorCode"];
+  retryAfterMs?: number;
 };
 
 type AttemptResult =
@@ -131,116 +214,171 @@ type AttemptResult =
 
 async function orchestrateOutput(options: OrchestrateOutputInput): Promise<RouteOutput> {
   if (!options.primary) return makeFriendlyFailureOutput(options.routeKey);
+  const execution = createOrchestrationExecution(options.signal, options.deadlineMs ?? 28_000);
 
-  let primaryFailuresAllowFallback = true;
-  let retryFeedback: AiRetryFeedback | undefined;
-  let maxPrimaryAttempts = 2;
-  for (let attempt = 1; attempt <= maxPrimaryAttempts; attempt += 1) {
-    const result = await generateAndValidate(options.primary, options, retryFeedback);
-    if (result.output) return result.output;
+  try {
+    let primaryFailuresAllowFallback = true;
+    let unavailableRetryAfterMs: number | undefined;
+    let retryFeedback: AiRetryFeedback | undefined;
+    let maxPrimaryAttempts = 2;
+    for (let attempt = 1; attempt <= maxPrimaryAttempts; attempt += 1) {
+      if (execution.signal.aborted) break;
+      if (!beginProviderAttempt(options.primary)) {
+        unavailableRetryAfterMs = earliestRetryAfter(
+          unavailableRetryAfterMs,
+          getProviderRetryAfterMs(options.primary) ?? 1_000,
+        );
+        break;
+      }
+      const result = await generateAndValidate(
+        options.primary,
+        options,
+        retryFeedback,
+        execution.signal,
+        execution.deadlineAtMs,
+      );
+      if (result.output) return result.output;
 
-    primaryFailuresAllowFallback = primaryFailuresAllowFallback && result.failure.allowFallback;
-    await reportAttemptFailure(options, "primary", attempt, result.failure);
-    if (!result.failure.retryPrimary) return makeFriendlyFailureOutput(options.routeKey);
-    if (
-      attempt === 2 &&
-      maxPrimaryAttempts === 2 &&
-      !options.fallback &&
-      result.failure.stage === "provider_content"
-    ) {
-      maxPrimaryAttempts = 3;
+      primaryFailuresAllowFallback = primaryFailuresAllowFallback && result.failure.allowFallback;
+      unavailableRetryAfterMs = earliestRetryAfter(
+        unavailableRetryAfterMs,
+        result.failure.retryAfterMs,
+      );
+      await reportAttemptFailure(options, "primary", attempt, result.failure);
+      if (execution.signal.aborted) return makeFriendlyFailureOutput(options.routeKey);
+      if (!result.failure.retryPrimary) {
+        if (primaryFailuresAllowFallback && options.fallback) break;
+        return makeFriendlyFailureOutput(options.routeKey);
+      }
+      if (
+        attempt === 2 &&
+        maxPrimaryAttempts === 2 &&
+        !options.fallback &&
+        result.failure.stage === "provider_content"
+      ) {
+        maxPrimaryAttempts = 3;
+        retryFeedback = toRetryFeedback(result.failure);
+        continue;
+      }
+      if (
+        attempt === 2 &&
+        maxPrimaryAttempts === 2 &&
+        retryFeedback?.stage === "grounding" &&
+        result.failure.stage === "provider_content"
+      ) {
+        maxPrimaryAttempts = 3;
+        continue;
+      }
+      if (
+        attempt === 2 &&
+        maxPrimaryAttempts === 2 &&
+        retryFeedback?.code === "provider_retryable" &&
+        result.failure.stage === "grounding"
+      ) {
+        maxPrimaryAttempts = 3;
+        retryFeedback = toRetryFeedback(result.failure);
+        continue;
+      }
       retryFeedback = toRetryFeedback(result.failure);
-      continue;
     }
-    if (
-      attempt === 2 &&
-      maxPrimaryAttempts === 2 &&
-      retryFeedback?.stage === "grounding" &&
-      result.failure.stage === "provider_content"
-    ) {
-      maxPrimaryAttempts = 3;
-      continue;
-    }
-    if (
-      attempt === 2 &&
-      maxPrimaryAttempts === 2 &&
-      retryFeedback?.code === "provider_retryable" &&
-      result.failure.stage === "grounding"
-    ) {
-      maxPrimaryAttempts = 3;
-      retryFeedback = toRetryFeedback(result.failure);
-      continue;
-    }
-    retryFeedback = toRetryFeedback(result.failure);
-  }
 
-  if (primaryFailuresAllowFallback && options.fallback) {
-    const result = await generateAndValidate(options.fallback, options);
-    if (result.output) return result.output;
-    await reportAttemptFailure(options, "fallback", 1, result.failure);
-  }
+    if (!execution.signal.aborted && primaryFailuresAllowFallback && options.fallback) {
+      if (beginProviderAttempt(options.fallback)) {
+        const result = await generateAndValidate(
+          options.fallback,
+          options,
+          undefined,
+          execution.signal,
+          execution.deadlineAtMs,
+        );
+        if (result.output) return result.output;
+        unavailableRetryAfterMs = earliestRetryAfter(
+          unavailableRetryAfterMs,
+          result.failure.retryAfterMs,
+        );
+        await reportAttemptFailure(options, "fallback", 1, result.failure);
+      } else {
+        unavailableRetryAfterMs = earliestRetryAfter(
+          unavailableRetryAfterMs,
+          getProviderRetryAfterMs(options.fallback) ?? 1_000,
+        );
+      }
+    }
 
-  return makeFriendlyFailureOutput(options.routeKey);
+    if (options.surfaceUpstreamUnavailable && unavailableRetryAfterMs !== undefined) {
+      throw new AiUpstreamUnavailableError(unavailableRetryAfterMs);
+    }
+    return makeFriendlyFailureOutput(options.routeKey);
+  } finally {
+    execution.cleanup();
+  }
 }
 
 async function generateAndValidate(
   provider: AiProvider,
-  options: Pick<OrchestrateOutputInput, "routeKey" | "input" | "mode">,
+  options: Pick<OrchestrateOutputInput, "routeKey" | "input" | "provenanceInput" | "mode">,
   retryFeedback?: AiRetryFeedback,
+  signal?: AbortSignal,
+  deadlineAtMs?: number,
 ): Promise<AttemptResult> {
   const startedAt = nowMs();
   let rawOutput: RouteOutput;
 
   try {
-    rawOutput = await provider.generate({
+    rawOutput = await awaitProvider(provider.generate({
       routeKey: options.routeKey,
       input: options.input,
       ...(retryFeedback ? { retryFeedback } : {}),
-    });
+      signal,
+      deadlineAtMs,
+    }), signal);
   } catch (error) {
+    recordProviderFailure(provider, error);
     return { failure: providerFailure(error, nowMs() - startedAt) };
   }
 
   const durationMs = nowMs() - startedAt;
+  const rejectContent = (failure: AttemptFailure): AttemptResult => {
+    recordProviderFailure(provider, new AiProviderError("model_json"));
+    return { failure };
+  };
   const repairedOutput = repairCandidateBeforeSchema(rawOutput, options.routeKey);
-  const parsed = routeOutputSchema.safeParse(repairedOutput);
+  const parsed = routeOutputEnvelopeSchema.safeParse(repairedOutput);
   if (!parsed.success) {
-    return {
-      failure: {
-        stage: "candidate_schema",
-        code: "candidate_zod",
-        retryPrimary: true,
-        allowFallback: true,
-        durationMs,
-        schemaPaths: collectSchemaPaths(parsed.error.issues),
-      },
-    };
+    return rejectContent({
+      stage: "candidate_schema",
+      code: "candidate_zod",
+      retryPrimary: true,
+      allowFallback: true,
+      durationMs,
+      schemaPaths: collectSchemaPaths(parsed.error.issues),
+    });
   }
 
   const output = normalizeCandidateForInput(parsed.data as RouteOutput, options.routeKey, options.input);
   if (output.routeKey !== options.routeKey) {
-    return { failure: contentFailure("route_mismatch", "route_mismatch", durationMs) };
+    return rejectContent(contentFailure("route_mismatch", "route_mismatch", durationMs));
   }
 
   const expectedOutputType = options.mode === "light_review" ? "light_review" : "route_result";
   if (output.outputType !== expectedOutputType) {
-    return { failure: contentFailure("route_shape", "unexpected_output_type", durationMs) };
+    return rejectContent(contentFailure("route_shape", "unexpected_output_type", durationMs));
   }
 
   const hardContractIssue = validateHardRouteContract(options.routeKey, output, options.mode, options.input);
   if (hardContractIssue) {
-    return {
-      failure: contentFailure(
-        hardContractIssue,
-        hardContractIssue === "action" ? "action_contract" : "route_shape",
-        durationMs,
-      ),
-    };
+    return rejectContent(contentFailure(
+      hardContractIssue,
+      hardContractIssue === "action" ? "action_contract" : "route_shape",
+      durationMs,
+    ));
   }
 
   const qualityGateIssue = validateCandidateQuality(options.routeKey, output, options.input);
   if (qualityGateIssue) {
-    return { failure: contentFailure(qualityGateIssue.stage, qualityGateIssue.code, durationMs) };
+    return rejectContent(
+      contentFailure(qualityGateIssue.stage, qualityGateIssue.code, durationMs),
+    );
   }
 
   const validation = validateRouteOutput(output);
@@ -255,19 +393,37 @@ async function generateAndValidate(
   );
   const routeShapeIssues = nonSafetyIssues.filter((issue) => !isActionIssue(issue));
   if (routeShapeIssues.length > 0) {
-    return { failure: contentFailure("route_shape", "route_shape", durationMs) };
+    return rejectContent(contentFailure("route_shape", "route_shape", durationMs));
   }
   if (nonSafetyIssues.some(isActionIssue)) {
-    return { failure: contentFailure("action", "action_contract", durationMs) };
+    return rejectContent(contentFailure("action", "action_contract", durationMs));
   }
   if (safety.blockedReasons.length > 0) {
-    return { failure: contentFailure("safety", "safety_boundary", durationMs) };
+    return rejectContent(contentFailure("safety", "safety_boundary", durationMs));
   }
   if (!hasGroundedOutput(options.routeKey, output, options.input, options.mode)) {
     return { failure: contentFailure("grounding", "grounding_failure", durationMs) };
   }
 
-  return { output };
+  const withProvenance = attachOutputProvenance(
+    output,
+    options.mode === "light_review" && isPlainObject(options.provenanceInput?.record)
+      ? options.provenanceInput.record as Record<string, unknown>
+      : options.mode === "light_review" && Array.isArray(options.provenanceInput?.records)
+        ? { records: options.provenanceInput.records }
+        : options.mode === "light_review" && isPlainObject(options.input.record)
+          ? options.input.record as Record<string, unknown>
+          : options.mode === "light_review" && Array.isArray(options.input.records)
+            ? { records: options.input.records }
+            : options.input,
+    options.mode === "light_review" ? "confirmed_record" : "user_input",
+  );
+  if (!withProvenance.ok) {
+    return { failure: contentFailure("grounding", "grounding_failure", durationMs) };
+  }
+
+  recordProviderSuccess(provider);
+  return { output: withProvenance.output };
 }
 
 function repairCandidateBeforeSchema(rawOutput: unknown, routeKey: RouteKey): unknown {
@@ -303,12 +459,21 @@ function providerFailure(error: unknown, durationMs: number): AttemptFailure {
   return {
     stage: providerStage(error.kind),
     code: error.kind,
-    retryPrimary: eligible,
+    retryPrimary: eligible && error.kind !== "timeout",
     allowFallback: eligible,
     durationMs,
     httpStatusClass: error.httpStatusClass,
     providerErrorCode: error.providerErrorCode,
+    retryAfterMs: error.retryAfterMs,
   };
+}
+
+function earliestRetryAfter(
+  current: number | undefined,
+  candidate: number | undefined,
+): number | undefined {
+  if (candidate === undefined || !Number.isFinite(candidate) || candidate <= 0) return current;
+  return current === undefined ? candidate : Math.min(current, candidate);
 }
 
 function contentFailure(stage: AiFailureStage, code: string, durationMs: number): AttemptFailure {
@@ -334,7 +499,7 @@ const HARD_ROUTE_CONTRACTS: Record<
   jd_to_revision: {
     actionType: "jd_revision",
     recordType: "jd_compare",
-    fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
+    fieldsToRecord: ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
     routeResultKeys: [
       "jdKeyRequirements",
       "supportedByMaterial",
@@ -405,6 +570,7 @@ function normalizeCandidateForInput(
   input: Record<string, unknown>,
 ): RouteOutput {
   let normalized = normalizeCandidateLiterals(output, routeKey);
+  if (normalized.outputType !== "route_result") return normalized;
   normalized = normalizeExperienceActionLevelRoleDraft(normalized, routeKey, input);
   normalized = normalizeExperienceQuestionnaireRoleBoundary(normalized, routeKey, input);
   normalized = normalizeExperienceAntiExaggerationWarnings(normalized, routeKey);
@@ -412,6 +578,7 @@ function normalizeCandidateForInput(
   normalized = normalizeExperienceFabricationTrapEcho(normalized, routeKey);
   normalized = normalizeExperienceRecordAfterDone(normalized, routeKey);
   normalized = normalizeExperienceRouteListLimits(normalized, routeKey);
+  normalized = normalizeDirectionConstraintVisibility(normalized, routeKey, input);
   normalized = normalizeApplicationVisibleFieldNames(normalized, routeKey);
   normalized = normalizeApplicationReviewBasis(normalized, routeKey);
   normalized = normalizeJdAfterSubmissionRecordingLimit(normalized, routeKey);
@@ -426,6 +593,29 @@ function normalizeCandidateForInput(
   normalized = normalizeUnsupportedJdContextUpgrades(normalized, routeKey, input);
   normalized = ensurePersonalInfoForgeryRefusal(normalized, routeKey, input);
   return normalized;
+}
+
+function normalizeDirectionConstraintVisibility(
+  output: RouteOutput,
+  routeKey: RouteKey,
+  input: Record<string, unknown>,
+): RouteOutput {
+  if (routeKey !== "direction_to_jobs" || !isRecord(output.routeResult)) return output;
+  const constraints = typeof input.constraints === "string" ? input.constraints.trim() : "";
+  const directions = output.routeResult.explorableDirections;
+  if (!constraints || !Array.isArray(directions)) return output;
+  return {
+    ...output,
+    routeResult: {
+      ...output.routeResult,
+      explorableDirections: directions.map((direction) => {
+        if (!isRecord(direction) || !Array.isArray(direction.basisFromUserMaterial)) return direction;
+        const basis = direction.basisFromUserMaterial;
+        if (basis.includes(constraints) || basis.length >= 12) return direction;
+        return { ...direction, basisFromUserMaterial: [...basis, constraints] };
+      }),
+    },
+  };
 }
 
 function normalizeExperienceActionLevelRoleDraft(
@@ -1041,7 +1231,7 @@ function normalizeUnsupportedJdConditionalEvidenceGap(
       actionSteps: [
         `查看 JD 中“${missingRequirement}”这项要求`,
         "对照现有材料，确认目前没有对应正文片段",
-        "记录下一次需要补充的真实材料证据",
+        "记录下一次需要核验的真实材料证据",
       ],
       recordAfterDone: `记录“${missingRequirement}”仍缺少真实材料证据。`,
     },
@@ -1557,7 +1747,7 @@ function hasExactOrderedValues(actual: string[], expected: string[]): boolean {
 function hasExactDirectionItems(value: unknown): boolean {
   return (
     Array.isArray(value) &&
-    value.length > 0 &&
+    validateDirectionCandidates(value).ok &&
     value.every(
       (direction) =>
         isRecord(direction) &&
@@ -1631,11 +1821,13 @@ function toRetryFeedback(failure: AttemptFailure): AiRetryFeedback {
 }
 
 function isProviderFailureRetryable(kind: AiProviderErrorKind): boolean {
-  return kind !== "non_retryable_http";
+  return kind !== "non_retryable_http" && kind !== "cancelled" && kind !== "circuit_open";
 }
 
 function providerStage(kind: AiProviderErrorKind): AiFailureStage {
-  if (kind === "transport") return "provider_transport";
+  if (kind === "transport" || kind === "timeout" || kind === "cancelled" || kind === "circuit_open") {
+    return "provider_transport";
+  }
   if (kind === "retryable_http" || kind === "non_retryable_http") return "provider_http";
   if (kind === "envelope_json") return "provider_envelope";
   return "provider_content";
@@ -1651,12 +1843,71 @@ function hasGroundedOutput(
   input: Record<string, unknown>,
   mode: "route" | "light_review",
 ): boolean {
-  if (mode === "route") return hasGroundedRouteEvidence(routeKey, output.routeResult, input);
+  if (mode === "route") {
+    return hasGroundedRouteEvidence(routeKey, output.routeResult, input) &&
+      !hasUnsupportedDirectionConstraintAssertion(routeKey, output, input);
+  }
+  if (Array.isArray(input.records)) {
+    const records = input.records
+      .filter(isPlainObject)
+      .map((record) => ({
+        actualDone: record.actualDone,
+        payload: record.payload,
+      }));
+    return records.length > 0 &&
+      lightReviewBasisIsGrounded(output.routeResult?.reviewBasis, { records });
+  }
   const record = asRecord(input.record);
   return lightReviewBasisIsGrounded(output.routeResult?.reviewBasis, {
     actualDone: record.actualDone,
     payload: record.payload,
   });
+}
+
+const DIRECTION_PERSONAL_CONSTRAINT_MARKER =
+  /不太想|不怎么想|不接受|不考虑|不愿意|不希望|只接受|仅考虑|不能接受|不想|拒绝|排除|必须留在|希望留在/g;
+const DIRECTION_EMPLOYER_SUBJECTS = ["岗位", "职位", "公司", "jd", "招聘方", "用人方", "雇主"] as const;
+const DIRECTION_USER_SUBJECTS = ["你", "用户", "求职者"] as const;
+
+function hasUnsupportedDirectionConstraintAssertion(
+  routeKey: RouteKey,
+  output: RouteOutput,
+  input: Record<string, unknown>,
+): boolean {
+  if (routeKey !== "direction_to_jobs" || !isRecord(output.routeResult)) return false;
+  const groundedSource = [input.interestsOrAcceptables, input.constraints]
+    .filter((value): value is string => typeof value === "string")
+    .join("；");
+  const directions = Array.isArray(output.routeResult.explorableDirections)
+    ? output.routeResult.explorableDirections
+    : [];
+  const candidateTexts = directions.flatMap((direction) => isRecord(direction)
+    ? [direction.riskOrGap, direction.validationFocus]
+    : []).concat([
+      output.todayAction.actionTitle,
+      output.todayAction.actionReason,
+      ...output.todayAction.actionSteps,
+      output.todayAction.recordAfterDone,
+    ]).filter((value): value is string => typeof value === "string");
+  return candidateTexts.some((text) => text
+    .split(/[，,。；;！？!?\n]/)
+    .some((clause) => {
+      DIRECTION_PERSONAL_CONSTRAINT_MARKER.lastIndex = 0;
+      for (const match of clause.matchAll(DIRECTION_PERSONAL_CONSTRAINT_MARKER)) {
+        const prefix = clause.slice(0, match.index);
+        const normalizedPrefix = prefix.toLowerCase();
+        const employerIndex = lastIndexOfAny(normalizedPrefix, DIRECTION_EMPLOYER_SUBJECTS);
+        const userIndex = lastIndexOfAny(normalizedPrefix, DIRECTION_USER_SUBJECTS);
+        if (employerIndex > userIndex) continue;
+        const claim = clause.slice(match.index).trim();
+        if (!groundedSource.includes(claim)) return true;
+      }
+      return false;
+    }));
+}
+
+function lastIndexOfAny(value: string, terms: readonly string[]): number {
+  return terms.reduce((latest, term) => Math.max(latest, value.lastIndexOf(term)), -1);
 }
 
 function lightReviewBasisIsGrounded(claims: unknown, source: unknown): boolean {
@@ -1724,6 +1975,49 @@ function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? "untracked-request";
 }
 
+function sanitizeRequestId(candidate: string | undefined): string {
+  return candidate && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(candidate)
+    ? candidate
+    : createRequestId();
+}
+
+function createOrchestrationExecution(callerSignal: AbortSignal | undefined, deadlineMs: number) {
+  const controller = new AbortController();
+  const boundedDeadlineMs = Math.max(1, Math.min(deadlineMs, 30_000));
+  const deadlineAtMs = Date.now() + boundedDeadlineMs;
+  const timeout = setTimeout(() => controller.abort("deadline"), boundedDeadlineMs);
+  const onCallerAbort = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) onCallerAbort();
+  else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  return {
+    signal: controller.signal,
+    deadlineAtMs,
+    cleanup() {
+      clearTimeout(timeout);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
+async function awaitProvider<T>(pending: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return pending;
+  if (signal.aborted) throw new AiProviderError("cancelled");
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new AiProviderError("cancelled"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 function resolveProviders(
   legacyProvider?: AiProvider,
   primary?: AiProvider,
@@ -1740,8 +2034,11 @@ function isProviderSet(provider: AiProvider): provider is AiProviderSet {
   return "primary" in provider && isRecord(provider.primary) && typeof provider.primary.generate === "function";
 }
 
-function makeMissingInfoOutput(routeKey: RouteKey, input: Record<string, unknown>): RouteOutput {
-  const config = getMissingInfoConfig(routeKey, input);
+function makeMissingInfoOutput(
+  routeKey: RouteKey,
+  input: Record<string, unknown>,
+  config = getMissingInfoConfig(routeKey, input),
+): RouteOutput {
 
   return {
     routeKey,
@@ -1796,7 +2093,43 @@ type MissingInfoConfig = {
     recordType: RouteOutput["recordGuide"]["recordType"];
 };
 
+const directionEvidenceMissingInfoConfig: MissingInfoConfig = {
+  shortAssessment: "现在还不能可靠生成岗位方向，因为现有材料还没有对应到至少两个不同的岗位方向。",
+  cannotJudge: "哪些岗位方向值得先看",
+  missingFields: ["至少两个不同岗位方向的真实线索"],
+  actionTitle: "今天先补 2 条不同岗位方向的真实线索",
+  actionReason: "先补能对应岗位方向的真实经历、课程或可接受工作内容，才能避免系统替你默认方向。",
+  actionSteps: [
+    "从真实经历、课程或可接受工作内容中选 2 条线索",
+    "每条线索分别写清可对应的岗位方向或工作内容",
+    "保存后回来继续看岗位样本",
+  ],
+  recordAfterDone: "记录两条分别对应不同岗位方向的真实线索。",
+  fieldsToRecord: ["realExperiences"],
+  recordType: "fill_info",
+};
+
+function hasEnoughDirectionTaxonomyEvidence(input: Record<string, unknown>): boolean {
+  const material = [
+    input.educationBackground,
+    input.realExperiences,
+    input.interestsOrAcceptables,
+  ].filter((value): value is string => typeof value === "string").join(" ");
+  return selectJobTaxonomyDirections(material).length >= 2;
+}
+
 const missingFieldCopy: Record<string, MissingInfoConfig> = {
+  constraints: {
+    shortAssessment: "现在还不能可靠缩小岗位样本，因为还不知道哪些工作条件你暂时不能接受。",
+    cannotJudge: "哪些岗位样本在现实条件下值得先看",
+    missingFields: ["暂时不想接受的工作条件"],
+    actionTitle: "今天先写 1 条暂不接受的工作条件",
+    actionReason: "现实约束是筛选岗位样本的必要依据，不能由系统替你猜。",
+    actionSteps: ["写下地点、时间、出差、班次或工作方式上的一条限制", "如果目前没有明确限制，填写“暂无限制”", "保存后回来继续"],
+    recordAfterDone: "记录暂不接受的工作条件。",
+    fieldsToRecord: ["constraints"],
+    recordType: "fill_info",
+  },
   educationBackground: {
     shortAssessment: "现在还不能可靠把方向落到岗位样本，因为还缺你的真实背景或偏好。",
     cannotJudge: "哪些岗位样本值得先看",
@@ -2038,7 +2371,13 @@ function hasGroundedRouteEvidence(
     const directions = Array.isArray(routeResult.explorableDirections)
       ? routeResult.explorableDirections
       : [];
-    return directions.every((direction) =>
+    const constraints = typeof input.constraints === "string" ? input.constraints.trim() : "";
+    const constraintsAreVisible = !constraints || directions.every((direction) =>
+      isRecord(direction) &&
+      Array.isArray(direction.basisFromUserMaterial) &&
+      direction.basisFromUserMaterial.includes(constraints)
+    );
+    return constraintsAreVisible && directions.every((direction) =>
       isRecord(direction) && directionBasisClaimsAreGrounded(direction.basisFromUserMaterial, {
         educationBackground: input.educationBackground,
         realExperiences: input.realExperiences,

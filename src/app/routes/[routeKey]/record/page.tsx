@@ -4,7 +4,15 @@ import { FormEvent, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import type { RouteKey, RouteOutput } from "@/domain/types";
-import { loadCurrentAction, loadDraft, mergeDraft, saveRecord, type CurrentAction } from "@/lib/local-store";
+import { isResumeSnippetGrounded, splitApplicationRecordPayload } from "@/domain/record-rules";
+import {
+  loadCurrentAction,
+  loadDraft,
+  mergeDraft,
+  runLocalStoreTransaction,
+  saveRecord,
+  type CurrentAction,
+} from "@/lib/local-store";
 
 export default function RecordPage() {
   const router = useRouter();
@@ -14,6 +22,7 @@ export default function RecordPage() {
   const [payload, setPayload] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -22,6 +31,18 @@ export default function RecordPage() {
       if (current?.routeKey === "applications_to_review" && current.outputType === "route_result") {
         const draft = loadDraft(params.routeKey);
         setPayload(pickFields(draft, applicationRecordFields));
+      } else if (
+        current?.routeKey === "jd_to_revision" &&
+        current.outputType === "route_result"
+      ) {
+        const draft = loadDraft(params.routeKey);
+        setPayload({
+          targetJobTitle: draft.targetJobTitle ?? "",
+          beforeSnippet: draft.userMaterial ?? "",
+          jdRequirement: draft.jdTextOrRequirements ?? "",
+        });
+      } else if (current?.routeKey === "experience_to_resume" && current.outputType === "route_result") {
+        setPayload(experiencePayloadFromOutput(current));
       }
       setIsLoaded(true);
     });
@@ -29,20 +50,89 @@ export default function RecordPage() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!output || !canSaveRecord()) return;
+    if (!output) return;
+    const missing = getMissingRequirements(output, payload, actualDone, confirmed);
+    if (missing.length > 0) {
+      event.currentTarget
+        .querySelector<HTMLElement>('[aria-invalid="true"]')
+        ?.focus();
+      return;
+    }
+    if (!canSaveRecord()) return;
+    setSaveError("");
 
+    try {
     if (output.outputType === "missing_info") {
-      saveRecord({
-        actionId: output.actionId,
-        routeKey: output.routeKey,
-        recordType: output.recordGuide.recordType,
-        actionTitle: output.todayAction.actionTitle,
-        actualDone: summarizeFillInfo(payload),
-        payload,
-        userConfirmed: confirmed,
+      runLocalStoreTransaction(() => {
+        saveRecord({
+          actionId: output.actionId,
+          routeKey: output.routeKey,
+          recordType: output.recordGuide.recordType,
+          actionTitle: output.todayAction.actionTitle,
+          actualDone: actualDone.trim() || summarizeFillInfo(payload),
+          payload,
+          userConfirmed: confirmed,
+        });
+        mergeDraft(params.routeKey, payload);
       });
-      mergeDraft(params.routeKey, payload);
       router.push(`/routes/${params.routeKey}/input`);
+      return;
+    }
+
+    if (output.routeKey === "experience_to_resume" && output.outputType === "route_result") {
+      runLocalStoreTransaction(() => {
+        const experience = saveRecord({
+          actionId: output.actionId,
+          routeKey: output.routeKey,
+          recordType: "experience_fact",
+          actionTitle: output.todayAction.actionTitle,
+          actualDone,
+          payload: {
+            confirmedFacts: payload.confirmedFacts ?? "",
+            supportingFacts: payload.supportingFacts ?? "",
+            missingFacts: payload.missingFacts ?? "",
+          },
+          userConfirmed: confirmed,
+        });
+        saveRecord({
+          actionId: output.actionId,
+          routeKey: output.routeKey,
+          recordType: "resume_snippet",
+          actionTitle: "简历片段版本",
+          actualDone,
+          payload: {
+            sourceExperienceId: experience.id,
+            resumeSnippet: payload.resumeSnippet ?? "",
+            supportingFacts: payload.supportingFacts ?? "",
+            stillMissing: payload.missingFacts ?? "",
+          },
+          userConfirmed: confirmed,
+        });
+      });
+      router.push("/review");
+      return;
+    }
+
+    if (output.routeKey === "applications_to_review" && output.outputType === "route_result") {
+      runLocalStoreTransaction(() => {
+        for (const application of splitApplicationRecordPayload(payload)) {
+          saveRecord({
+            actionId: output.actionId,
+            routeKey: output.routeKey,
+            recordType: "application",
+            actionTitle: output.todayAction.actionTitle,
+            actualDone,
+            payload: application,
+            userConfirmed: confirmed,
+          });
+        }
+        if (output.reducedContinuation) mergeDraft(params.routeKey, payload);
+      });
+      router.push(
+        output.reducedContinuation
+          ? "/routes/applications_to_review/input"
+          : "/review",
+      );
       return;
     }
 
@@ -56,6 +146,9 @@ export default function RecordPage() {
       userConfirmed: confirmed,
     });
     router.push("/review");
+    } catch {
+      setSaveError("这次没有保存成功。你填写的内容还在本页，请稍后重试。");
+    }
   }
 
   function updatePayload(field: string, value: string) {
@@ -68,10 +161,31 @@ export default function RecordPage() {
     }
 
     const requiredFields = requiredRecordFields(output);
-    return requiredFields.length > 0 && requiredFields.every((field) => payload[field]?.trim());
+    const hasAllRequiredFields =
+      requiredFields.length > 0 &&
+      requiredFields.every((field) => payload[field]?.trim());
+    if (!hasAllRequiredFields) return false;
+    if (
+      output.routeKey === "experience_to_resume" &&
+      output.outputType === "route_result" &&
+      !isResumeSnippetGrounded(payload)
+    ) {
+      return false;
+    }
+
+    if (output.routeKey === "applications_to_review" && output.outputType === "route_result") {
+      const expectedRecordCount = output.reducedContinuation ? 1 : 2;
+      return splitApplicationRecordPayload(payload).length === expectedRecordCount;
+    }
+
+    return true;
   }
 
   const hasRouteMismatch = output && output.routeKey !== params.routeKey;
+  const missingRequirements =
+    output && isRecordableOutput(output)
+      ? getMissingRequirements(output, payload, actualDone, confirmed)
+      : [];
 
   if (!isLoaded) {
     return (
@@ -119,14 +233,20 @@ export default function RecordPage() {
         )}
 
         {!hasRouteMismatch && isRecordableOutput(output) && (
-        <form className="form-stack" onSubmit={submit}>
+        <form className="form-stack" onSubmit={submit} noValidate>
           <div className="field-group">
             <label className="field">
               <span>实际完成了什么？</span>
-              <textarea
-                id="actual-done"
-                aria-describedby="actual-done-help"
-                value={actualDone}
+               <textarea
+                 id="actual-done"
+                 aria-describedby="actual-done-help record-missing-requirements"
+                 required={output.outputType !== "missing_info"}
+                 aria-invalid={
+                   output.outputType !== "missing_info" && !actualDone.trim()
+                     ? true
+                     : undefined
+                 }
+                 value={actualDone}
                 onChange={(event) => setActualDone(event.target.value)}
               />
             </label>
@@ -146,9 +266,20 @@ export default function RecordPage() {
                     {recordFieldLabels[field] ?? "补充信息"}
                     {!requiredRecordFields(output).includes(field) && "（想补充时再填）"}
                   </span>
-                  <textarea
-                    id={fieldId}
-                    aria-describedby={help ? helpId : undefined}
+                   <textarea
+                     id={fieldId}
+                     aria-describedby={
+                       [help ? helpId : "", "record-missing-requirements"]
+                         .filter(Boolean)
+                         .join(" ")
+                     }
+                     required={requiredRecordFields(output).includes(field)}
+                     aria-invalid={
+                       requiredRecordFields(output).includes(field) &&
+                       !payload[field]?.trim()
+                         ? true
+                         : undefined
+                     }
                     value={payload[field] ?? ""}
                     onChange={(event) => updatePayload(field, event.target.value)}
                     placeholder={recordFieldPlaceholder(field)}
@@ -159,21 +290,56 @@ export default function RecordPage() {
             );
           })}
 
+          {output.routeKey === "experience_to_resume" &&
+            output.outputType === "route_result" &&
+            payload.resumeSnippet?.trim() &&
+            !isResumeSnippetGrounded(payload) && (
+              <p className="notice" role="alert">
+                片段里仍有无法从来源经历或支撑事实核对的内容，请删除或补充真实支撑后再保存。
+              </p>
+            )}
+
+          {output.routeKey === "applications_to_review" &&
+            output.outputType === "route_result" &&
+            !output.reducedContinuation &&
+            splitApplicationRecordPayload(payload).length < 2 && (
+              <p className="notice">还需要补齐第 2 条真实投递记录，才能进入回看。</p>
+            )}
+
           <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={confirmed}
+           <input
+             type="checkbox"
+             aria-describedby="record-missing-requirements"
+             aria-invalid={!confirmed ? true : undefined}
+             checked={confirmed}
               onChange={(event) => setConfirmed(event.target.checked)}
             />
             <span>我确认这条记录反映了我实际做过的事；如果没有做过，不要保留。</span>
-          </label>
+           </label>
+
+          {saveError && <p className="notice" role="alert">{saveError}</p>}
+          <p
+            className="muted"
+            id="record-missing-requirements"
+            role="status"
+            aria-label="保存前还需完成"
+            aria-live="polite"
+          >
+            {missingRequirements.length > 0
+              ? `保存前还需完成：${missingRequirements.join("、")}。`
+              : "保存所需信息已经齐全。"}
+          </p>
 
           <button
             className="primary-button"
             type="submit"
-            disabled={(output?.outputType !== "missing_info" && !actualDone.trim()) || !canSaveRecord()}
+            disabled={missingRequirements.length === 0 && !canSaveRecord()}
           >
-            {output?.outputType === "missing_info" ? "保存补充信息，继续判断" : "保存并看看下一步"}
+            {output?.outputType === "missing_info"
+              ? "保存补充信息，继续判断"
+              : output?.routeKey === "applications_to_review" && output.reducedContinuation
+                ? "保存第 1 条，继续补第 2 条"
+                : "保存并看看下一步"}
           </button>
           <p className="muted">
             {output?.outputType === "missing_info"
@@ -189,15 +355,25 @@ export default function RecordPage() {
 }
 
 function isRecordableOutput(output: RouteOutput) {
-  return output.outputType === "route_result" || output.outputType === "missing_info";
+  return (
+    output.outputType === "route_result" ||
+    output.outputType === "missing_info" ||
+    output.outputType === "light_review"
+  );
 }
 
 function requiredRecordFields(output: RouteOutput): string[] {
+  if (output.routeKey === "experience_to_resume" && output.outputType === "route_result") {
+    return ["confirmedFacts", "supportingFacts", "resumeSnippet"];
+  }
   if (output.recordGuide.recordType === "application") {
     if (output.outputType === "missing_info") {
       return output.recordGuide.fieldsToRecord;
     }
     return applicationReviewRequiredFields;
+  }
+  if (output.routeKey === "jd_to_revision" && output.outputType === "route_result") {
+    return jdComparisonRecordFields;
   }
 
   return output.recordGuide.fieldsToRecord;
@@ -217,6 +393,9 @@ function recordHelpText(output: RouteOutput | null) {
 }
 
 const recordFieldLabels: Record<string, string> = {
+  confirmedFacts: "来源经历与已确认事实",
+  supportingFacts: "支撑这段表达的事实",
+  resumeSnippet: "克制简历片段",
   jobTitle: "岗位名称",
   companyOrPlatform: "公司或平台",
   jdSummary: "这份岗位主要要求",
@@ -273,9 +452,25 @@ const applicationReviewRequiredFields = [
   "materialVersion",
 ];
 
+const jdComparisonRecordFields = [
+  "targetJobTitle",
+  "beforeSnippet",
+  "afterSnippet",
+  "jdRequirement",
+  "submitted",
+];
+
 function recordFieldsForOutput(output: RouteOutput): string[] {
+  if (output.routeKey === "experience_to_resume" && output.outputType === "route_result") {
+    return ["confirmedFacts", "supportingFacts", "missingFacts", "resumeSnippet"];
+  }
   if (output.routeKey === "applications_to_review" && output.outputType === "route_result") {
-    return applicationRecordFields;
+    return "reducedContinuation" in output && output.reducedContinuation
+      ? output.recordGuide.fieldsToRecord
+      : applicationRecordFields;
+  }
+  if (output.routeKey === "jd_to_revision" && output.outputType === "route_result") {
+    return jdComparisonRecordFields;
   }
   return output.recordGuide.fieldsToRecord;
 }
@@ -296,4 +491,37 @@ function recordFieldPlaceholder(field: string): string {
 
 function pickFields(values: Record<string, string>, fields: string[]): Record<string, string> {
   return Object.fromEntries(fields.flatMap((field) => values[field] === undefined ? [] : [[field, values[field]]]));
+}
+
+function getMissingRequirements(
+  output: RouteOutput,
+  payload: Record<string, string>,
+  actualDone: string,
+  confirmed: boolean,
+): string[] {
+  const missing = requiredRecordFields(output)
+    .filter((field) => !payload[field]?.trim())
+    .map((field) => recordFieldLabels[field] ?? "补充信息");
+  if (output.outputType !== "missing_info" && !actualDone.trim()) {
+    missing.unshift("实际完成了什么");
+  }
+  if (!confirmed) missing.push("真实性确认");
+  return missing;
+}
+
+function experiencePayloadFromOutput(output: RouteOutput): Record<string, string> {
+  const result = output.routeResult ?? {};
+  return {
+    confirmedFacts: joinStringArray(result.confirmedFacts),
+    supportingFacts: joinStringArray(result.supportingFacts),
+    missingFacts: joinStringArray(result.missingFacts),
+    resumeSnippet:
+      typeof result.resumeSnippetDraft === "string" ? result.resumeSnippetDraft : "",
+  };
+}
+
+function joinStringArray(value: unknown): string {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).join("；")
+    : "";
 }

@@ -6,7 +6,9 @@ import {
   type AiProviderSet,
   type AiRetryFeedback,
 } from "@/ai/provider";
+import { normalizeProviderBaseUrl } from "@/ai/provider-url-policy";
 import { MockAiProvider } from "@/ai/mock-provider";
+import { APPLICATION_RECORD_FIELDS, getRouteContract } from "@/domain/route-contracts";
 import type { ActionType, RecordType, RouteKey, RouteOutput } from "@/domain/types";
 
 type FetchLike = typeof fetch;
@@ -16,28 +18,45 @@ type ChatCompletionProviderOptions = {
   baseUrl: string;
   model: string;
   fetchFn?: FetchLike;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
 };
 
 type ProviderEnv = Record<string, string | undefined>;
 export class ChatCompletionProvider implements AiProvider {
+  readonly circuitKey: string;
   private readonly fetchFn: FetchLike;
   private readonly completionsUrl: string;
+  private readonly timeoutMs: number;
+  private readonly maxResponseBytes: number;
 
   constructor(private readonly options: ChatCompletionProviderOptions) {
     this.fetchFn = options.fetchFn ?? fetch;
-    this.completionsUrl = `${options.baseUrl.replace(/\/$/, "")}/chat/completions`;
+    const normalizedBaseUrl = normalizeProviderBaseUrl(options.baseUrl);
+    this.completionsUrl = `${normalizedBaseUrl}/chat/completions`;
+    this.circuitKey = `chat-completion:${normalizedBaseUrl}:${options.model}`;
+    this.timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 12_000, 30_000));
+    this.maxResponseBytes = Math.max(64, Math.min(options.maxResponseBytes ?? 512 * 1024, 1024 * 1024));
   }
 
   async generate(input: AiProviderInput): Promise<RouteOutput> {
+    if (input.signal?.aborted) throw new AiProviderError("cancelled");
+    if (input.deadlineAtMs !== undefined && input.deadlineAtMs <= Date.now()) {
+      throw new AiProviderError("timeout");
+    }
+
     let response: Response;
+    const requestSignal = createProviderRequestSignal(input.signal, input.deadlineAtMs, this.timeoutMs);
 
     try {
       response = await this.fetchFn(this.completionsUrl, {
         method: "POST",
+        redirect: "error",
         headers: {
           Authorization: `Bearer ${this.options.apiKey}`,
           "Content-Type": "application/json",
         },
+        signal: requestSignal.signal,
         body: JSON.stringify({
           model: this.options.model,
           temperature: 0.2,
@@ -56,18 +75,40 @@ export class ChatCompletionProvider implements AiProvider {
         }),
       });
     } catch {
+      requestSignal.cleanup();
+      if (input.signal?.aborted) throw new AiProviderError("cancelled");
+      if (requestSignal.didTimeout()) throw new AiProviderError("timeout");
       throw new AiProviderError("transport");
     }
-
+    let responseText: string;
+    try {
+      responseText = await readBoundedResponseText(
+        response,
+        this.maxResponseBytes,
+        requestSignal.signal,
+      );
+    } catch (error) {
+      if (error instanceof AiProviderError) throw error;
+      if (input.signal?.aborted) throw new AiProviderError("cancelled");
+      if (requestSignal.didTimeout()) throw new AiProviderError("timeout");
+      throw new AiProviderError("transport");
+    } finally {
+      requestSignal.cleanup();
+    }
     if (!response.ok) {
       const kind = isRetryableProviderStatus(response.status) ? "retryable_http" : "non_retryable_http";
-      throw new AiProviderError(kind, getHttpStatusClass(response.status), await readSafeProviderErrorCode(response));
+      throw new AiProviderError(
+        kind,
+        getHttpStatusClass(response.status),
+        readSafeProviderErrorCode(responseText),
+        readRetryAfterMs(response),
+      );
     }
 
     let payload: unknown;
 
     try {
-      payload = await response.json();
+      payload = JSON.parse(responseText);
     } catch {
       throw new AiProviderError("envelope_json");
     }
@@ -87,6 +128,45 @@ function maxTokensForRoute(routeKey: RouteKey): number {
 
 function isRetryableProviderStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
+}
+
+function createProviderRequestSignal(
+  callerSignal: AbortSignal | undefined,
+  deadlineAtMs: number | undefined,
+  timeoutMs: number,
+) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const remainingMs = deadlineAtMs === undefined
+    ? timeoutMs
+    : Math.max(0, Math.min(timeoutMs, deadlineAtMs - Date.now()));
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, remainingMs);
+  const onCallerAbort = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) onCallerAbort();
+  else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    cleanup() {
+      clearTimeout(timeout);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
+function readRetryAfterMs(response: Response): number | undefined {
+  const value = response.headers.get("Retry-After")?.trim();
+  if (!value) return undefined;
+  const seconds = Number(value);
+  const rawMs = Number.isFinite(seconds)
+    ? seconds * 1000
+    : Date.parse(value) - Date.now();
+  if (!Number.isFinite(rawMs) || rawMs <= 0) return undefined;
+  return Math.min(Math.ceil(rawMs), 30_000);
 }
 
 function readEnvelopeContent(payload: unknown): string {
@@ -134,14 +214,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 class ConfiguredAiProviderSet implements AiProviderSet {
+  readonly circuitKey: string;
+
   constructor(
     readonly primary: AiProvider,
     readonly fallback?: AiProvider,
-  ) {}
+  ) {
+    this.circuitKey = [
+      readProviderCircuitKey(primary),
+      fallback ? readProviderCircuitKey(fallback) : undefined,
+    ].filter(Boolean).join("|");
+  }
 
   generate(input: AiProviderInput): Promise<RouteOutput> {
     return this.primary.generate(input);
   }
+}
+
+function readProviderCircuitKey(provider: AiProvider): string {
+  const candidate = (provider as AiProvider & { circuitKey?: unknown }).circuitKey;
+  return typeof candidate === "string" && candidate.length > 0
+    ? candidate
+    : provider.constructor.name;
 }
 
 function getHttpStatusClass(status: number): AiHttpStatusClass | undefined {
@@ -151,10 +245,10 @@ function getHttpStatusClass(status: number): AiHttpStatusClass | undefined {
   return undefined;
 }
 
-async function readSafeProviderErrorCode(response: Response): Promise<string | undefined> {
+function readSafeProviderErrorCode(responseText: string): string | undefined {
   let payload: unknown;
   try {
-    payload = JSON.parse(await response.text());
+    payload = JSON.parse(responseText);
   } catch {
     return undefined;
   }
@@ -164,6 +258,58 @@ async function readSafeProviderErrorCode(response: Response): Promise<string | u
       ? payload.code
       : undefined;
   return typeof code === "string" && /^[a-zA-Z0-9_.:-]{1,80}$/.test(code) ? code : undefined;
+}
+
+async function readBoundedResponseText(
+  response: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const declaredLength = Number(response.headers.get("Content-Length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new AiProviderError("response_too_large");
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  while (true) {
+    const { done, value } = await readStreamChunk(reader, signal);
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      throw new AiProviderError("response_too_large");
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+async function readStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) throw new DOMException("aborted", "AbortError");
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      void reader.cancel().catch(() => undefined);
+      reject(new DOMException("aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (result) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?: FetchLike): AiProvider {
@@ -209,7 +355,12 @@ function buildUserPrompt(input: AiProviderInput): string {
   }
 
   const config = ROUTE_PROMPT_CONFIG[input.routeKey];
-  const routeInput = pickRouteInput(input.routeKey, input.input, config.inputFields);
+  const contract = getRouteContract(input.routeKey);
+  const inputFields = [
+    ...contract.inputFields,
+    ...(contract.optionalInputFields ?? []).filter((field) => input.input[field] !== undefined),
+  ];
+  const routeInput = pickRouteInput(input.routeKey, input.input, inputFields);
 
   return [
     `当前且唯一的路线：${input.routeKey}`,
@@ -229,7 +380,7 @@ function buildUserPrompt(input: AiProviderInput): string {
     "ACTIVE_ROUTE_INPUT_END",
     "ALLOWED_EVIDENCE_BEGIN",
     `证据字段映射：${config.evidenceMapping}`,
-    JSON.stringify(collectAllowedEvidence(routeInput, config.evidenceFields), null, 2),
+    JSON.stringify(collectAllowedEvidence(routeInput, [...contract.evidenceFields]), null, 2),
     "证据字段只能逐字引用用户输入中的事实，并且必须严格连续逐字引用同一个白名单来源值。",
     "不得添加前缀或后缀；不得跨字段拼接；不得用同义词改写。",
     "非证据摘要与行动字段可以谨慎改写，但不得引入新事实。",
@@ -325,7 +476,7 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
     evidenceMapping: "jdKeyRequirements <- jdTextOrRequirements; supportedByMaterial <- userMaterial",
     actionType: "jd_revision",
     recordType: "jd_compare",
-    fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
+    fieldsToRecord: ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
     routeResult: {
       jdKeyRequirements: ["strict quote from jdTextOrRequirements (1-5 items)"],
       supportedByMaterial: ["strict quote from userMaterial (0-5 items; use [] when none directly supports the JD)"],
@@ -394,6 +545,8 @@ function buildRouteSemanticRules(routeKey: RouteKey): string[] {
   if (routeKey === "direction_to_jobs") {
     return [
       "方向内容必须使用“可以先探索”这种暂定表达，不得写成确定结论。",
+      "如果 constraints 非空，每个方向的 basisFromUserMaterial 必须逐字包含完整 constraints；不要改写、缩短或省略。",
+      "riskOrGap、validationFocus 和今日行动不得新增用户没有提供的地点、班次、出差、薪资或工作方式限制；引用个人限制时必须逐字来自 constraints 或 interestsOrAcceptables。",
       "所有输出字段都不得使用匹配、适合、录取、概率或强烈推荐类结论。",
       "即使作为守则提醒，也不要在任何输出字段复述这些禁用术语名称。",
     ];
@@ -516,10 +669,13 @@ function buildRouteExampleAction(routeKey: RouteKey): {
 function buildLightReviewPrompt(input: AiProviderInput): string {
   const config = ROUTE_PROMPT_CONFIG[input.routeKey];
   const record = isRecord(input.input.record) ? input.input.record : {};
+  const records = Array.isArray(input.input.records)
+    ? input.input.records.filter(isRecord)
+    : [record];
   const contract = buildLightReviewContract(input.routeKey, config);
   return [
     `当前且唯一的路线：${input.routeKey}`,
-    "任务：基于用户已确认保存的一条真实记录，生成一次 light_review 轻复盘。",
+    `任务：基于用户已确认保存的${input.routeKey === "applications_to_review" ? "至少两条投递" : "一条"}真实记录，生成一次 light_review 轻复盘。`,
     `固定映射：todayAction.actionType 必须为 ${config.actionType}，recordType: ${config.recordType}。`,
     ...buildLightReviewSemanticRules(input.routeKey),
     "ACTIVE_ROUTE_CONTRACT_BEGIN",
@@ -529,8 +685,14 @@ function buildLightReviewPrompt(input: AiProviderInput): string {
     JSON.stringify(buildLightReviewExample(input.routeKey, config), null, 2),
     "ACTIVE_ROUTE_EXAMPLE_END",
     "ALLOWED_EVIDENCE_BEGIN",
-    "reviewBasis 只能引用 record.actualDone 或 record.payload 中已经存在的事实。",
-    JSON.stringify(collectEvidenceLeaves(pickFields(record, ["actualDone", "payload"]), "record"), null, 2),
+    "reviewBasis 只能引用 records 中各条记录的 actualDone 或 payload 已经存在的事实。",
+    JSON.stringify(
+      records.flatMap((item, index) =>
+        collectEvidenceLeaves(pickFields(item, ["actualDone", "payload"]), `records.${index}`),
+      ),
+      null,
+      2,
+    ),
     "证据必须严格连续逐字引用同一个白名单来源值，不得添加前缀或后缀；不得跨字段拼接；不得用同义词改写。",
     "ALLOWED_EVIDENCE_END",
     ...buildRetryCorrection(input.retryFeedback, input.routeKey, true),
@@ -750,12 +912,7 @@ function pickFields(input: Record<string, unknown>, fields: string[]): Record<st
 }
 
 const APPLICATION_INPUT_FIELDS = [
-  "jobTitle",
-  "companyOrPlatform",
-  "submittedAt",
-  "feedbackStatus",
-  "jdSummary",
-  "materialVersion",
+  ...APPLICATION_RECORD_FIELDS,
   "userSuspicion",
 ];
 

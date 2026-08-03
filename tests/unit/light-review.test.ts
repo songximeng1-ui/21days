@@ -17,7 +17,23 @@ const record: LocalRecord = {
     feedbackStatus: "暂无反馈",
   },
   userConfirmed: true,
+  status: "confirmed",
+  version: 1,
   createdAt: "2026-07-21T00:00:00.000Z",
+  updatedAt: "2026-07-21T00:00:00.000Z",
+  completedAt: "2026-07-21T00:00:00.000Z",
+};
+
+const secondRecord: LocalRecord = {
+  ...record,
+  id: "record-2",
+  actualDone: "补了新媒体运营实习、B 公司、7 月 3 日投递、已查看。",
+  payload: {
+    jobTitle: "新媒体运营实习",
+    companyOrPlatform: "B 公司",
+    submittedAt: "7 月 3 日",
+    feedbackStatus: "已查看",
+  },
 };
 
 describe("light review workflow", () => {
@@ -55,7 +71,7 @@ describe("light review workflow", () => {
 
   it("generates a light review from a confirmed local record", async () => {
     const output = await generateLightReviewOutput({
-      record,
+      records: [record, secondRecord],
       provider: new MockAiProvider("success"),
     });
 
@@ -75,7 +91,7 @@ describe("light review workflow", () => {
     expect(JSON.stringify(output)).not.toMatch(/You moved|Next time|基础版报告|匹配度/);
   });
 
-  it("keeps both confirmed application entries in the light-review basis", async () => {
+  it("rejects a legacy combined application payload instead of treating it as two records", async () => {
     const output = await generateLightReviewOutput({
       record: {
         ...record,
@@ -90,9 +106,8 @@ describe("light review workflow", () => {
       provider: new MockAiProvider("success"),
     });
 
-    expect(output.routeResult?.reviewBasis).toEqual(
-      expect.arrayContaining(["内容运营实习 / A 公司", "新媒体运营实习 / B 公司"]),
-    );
+    expect(output.outputType).toBe("friendly_failure");
+    expect(output.routeResult).toBeNull();
   });
 
   it("saves and loads the latest light review locally", () => {

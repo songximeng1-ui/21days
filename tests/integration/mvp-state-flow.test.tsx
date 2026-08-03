@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Home from "@/app/page";
@@ -7,6 +7,7 @@ import RouteInputPage from "@/app/routes/[routeKey]/input/page";
 import RecordPage from "@/app/routes/[routeKey]/record/page";
 import TrackPage from "@/app/track/page";
 import type { RouteKey, RouteOutput } from "@/domain/types";
+import { withTestProvenance } from "../helpers/test-provenance";
 import {
   loadCurrentAction,
   loadDraft,
@@ -25,13 +26,16 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
 }));
 
-const jdActionOutput: RouteOutput = {
+const jdActionOutput: RouteOutput = withTestProvenance({
   routeKey: "jd_to_revision",
   outputType: "route_result",
   shortAssessment: "这份材料可以先做一处投递前最小修改。",
   routeResult: {
+    jdKeyRequirements: ["内容整理"],
     supportedByMaterial: ["材料里能看到内容整理经历"],
     unclearFromMaterial: ["还看不出具体交付物"],
+    minimalRevisionActions: ["补充整理报名表这一真实动作"],
+    afterSubmissionRecording: ["记录岗位、公司、时间和反馈"],
   },
   missingInfo: null,
   todayAction: {
@@ -44,12 +48,18 @@ const jdActionOutput: RouteOutput = {
   },
   recordGuide: {
     recordType: "jd_compare",
-    fieldsToRecord: ["beforeSnippet", "afterSnippet"],
+    fieldsToRecord: ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
     requiresUserConfirmation: true,
   },
-};
+  provenance: {
+    shortAssessment: {
+      kind: "fact",
+      sources: [{ sourceType: "user_input", path: "testFixture", quote: "test" }],
+    },
+  },
+});
 
-const missingInfoOutput: RouteOutput = {
+const missingInfoOutput: RouteOutput = withTestProvenance({
   ...jdActionOutput,
   outputType: "missing_info",
   shortAssessment: "现在还不能可靠判断这份岗位和你的材料，因为还缺真实 JD。",
@@ -72,7 +82,7 @@ const missingInfoOutput: RouteOutput = {
     fieldsToRecord: ["targetJobTitle", "jdTextOrRequirements"],
     requiresUserConfirmation: true,
   },
-};
+});
 
 const friendlyFailureOutput: RouteOutput = {
   ...jdActionOutput,
@@ -104,17 +114,22 @@ describe("MVP page state flow", () => {
   });
 
   it("continues from action to record, light review, and returning home", async () => {
+    saveDraft("jd_to_revision", {
+      targetJobTitle: "内容运营实习生",
+      jdTextOrRequirements: "负责内容整理",
+      userMaterial: "原片段",
+    });
     saveCurrentAction(jdActionOutput);
     render(<RecordPage />);
 
     fireEvent.change(await screen.findByLabelText("实际完成了什么？"), {
       target: { value: "改完 JD 相关的一句话。" },
     });
-    fireEvent.change(screen.getByLabelText("修改前片段"), {
-      target: { value: "原片段" },
-    });
     fireEvent.change(screen.getByLabelText("修改后片段"), {
       target: { value: "加入真实动作后的片段" },
+    });
+    fireEvent.change(screen.getByLabelText("是否已经投递"), {
+      target: { value: "尚未投递" },
     });
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
     fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
@@ -125,7 +140,7 @@ describe("MVP page state flow", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
-        json: async () => ({
+        json: async () => withTestProvenance({
           routeKey: "jd_to_revision",
           outputType: "light_review",
           shortAssessment: "这条记录可以先回头看一眼。",
@@ -142,12 +157,18 @@ describe("MVP page state flow", () => {
             actionSteps: ["打开这条记录", "补这次投递用的简历/材料", "保存修改"],
             estimatedTime: "15-30 分钟",
             recordAfterDone: "记录这次投递用的简历/材料。",
-            actionType: "fill_info",
+            actionType: "jd_revision",
           },
           recordGuide: {
-            recordType: "fill_info",
+            recordType: "jd_compare",
             fieldsToRecord: ["materialVersion"],
             requiresUserConfirmation: true,
+          },
+          provenance: {
+            shortAssessment: {
+              kind: "fact",
+              sources: [{ sourceType: "confirmed_record", path: "actualDone", quote: "test" }],
+            },
           },
         }),
       }),
@@ -155,6 +176,7 @@ describe("MVP page state flow", () => {
 
     cleanup();
     render(<ReviewPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "同意并生成这次回看" }));
     expect(await screen.findByText("已根据这条记录整理出下一步。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "设为下一次行动" }));
 
@@ -194,7 +216,7 @@ describe("MVP page state flow", () => {
       expect.objectContaining({
         routeKey: "jd_to_revision",
         recordType: "fill_info",
-        actualDone: "补充了 2 项信息",
+        actualDone: "补了真实 JD 和岗位要求。",
       }),
     ]);
 
@@ -214,7 +236,7 @@ describe("MVP page state flow", () => {
       feedbackStatus: "暂无反馈",
       userSuspicion: "经历写得太泛",
     });
-    saveCurrentAction({
+    saveCurrentAction(withTestProvenance({
       routeKey: "applications_to_review",
       outputType: "missing_info",
       shortAssessment: "第 1 条投递已经有最低记录，再补两项就能用于对照复盘。",
@@ -237,17 +259,26 @@ describe("MVP page state flow", () => {
         fieldsToRecord: ["jdSummary", "materialVersion"],
         requiresUserConfirmation: true,
       },
-    });
+      provenance: {
+        shortAssessment: {
+          kind: "fact",
+          sources: [{ sourceType: "user_input", path: "testFixture", quote: "test" }],
+        },
+      },
+    }));
 
     render(<RecordPage />);
     const saveButton = await screen.findByRole("button", { name: "保存补充信息，继续判断" });
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
-    expect(saveButton).toBeDisabled();
+    expect(saveButton).toBeEnabled();
+    fireEvent.click(saveButton);
+    expect(screen.getByLabelText("这份岗位主要要求")).toHaveFocus();
 
     fireEvent.change(screen.getByLabelText("这份岗位主要要求"), {
       target: { value: "负责内容整理和数据记录" },
     });
-    expect(saveButton).toBeDisabled();
+    fireEvent.click(saveButton);
+    expect(screen.getByLabelText("这次投递用的简历/材料")).toHaveFocus();
 
     fireEvent.change(screen.getByLabelText("这次投递用的简历/材料"), {
       target: { value: "社团经历版 V1" },
@@ -265,9 +296,16 @@ describe("MVP page state flow", () => {
       materialVersion: "社团经历版 V1",
     });
 
-    const completedOutput = {
+    const completedOutput = withTestProvenance({
       ...jdActionOutput,
       routeKey: "applications_to_review" as const,
+      routeResult: {
+        reviewBasis: ["两条真实投递记录"],
+        recordSufficiency: "两条记录足够做一次轻复盘",
+        possibleClues: ["两条岗位都要求内容整理"],
+        informationGaps: ["还缺后续反馈"],
+        nextValidationAction: "继续记录下一次真实反馈",
+      },
       todayAction: {
         ...jdActionOutput.todayAction,
         actionTitle: "今天先对照两条投递记录看一个线索",
@@ -278,7 +316,7 @@ describe("MVP page state flow", () => {
         fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
         requiresUserConfirmation: true,
       },
-    };
+    });
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => completedOutput,
@@ -288,6 +326,7 @@ describe("MVP page state flow", () => {
     cleanup();
     render(<RouteInputPage />);
     fireEvent.click(await screen.findByRole("button", { name: "生成今天先做的一步" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/routes/applications_to_review/action"));
 
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(requestBody.input.applications[0]).toEqual({
@@ -299,7 +338,7 @@ describe("MVP page state flow", () => {
       materialVersion: "社团经历版 V1",
       userSuspicion: "经历写得太泛",
     });
-    expect((await fetchMock.mock.results[0].value).json()).resolves.toMatchObject({
+    await expect((await fetchMock.mock.results[0].value).json()).resolves.toMatchObject({
       outputType: "route_result",
       todayAction: { actionTitle: "今天先对照两条投递记录看一个线索" },
     });
@@ -329,7 +368,15 @@ describe("MVP page state flow", () => {
     routeKeyParam = "applications_to_review";
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => missingInfoOutput,
+      json: async () => withTestProvenance({
+        ...missingInfoOutput,
+        routeKey: "applications_to_review",
+        recordGuide: {
+          recordType: "application",
+          fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
+          requiresUserConfirmation: true,
+        },
+      }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -344,7 +391,7 @@ describe("MVP page state flow", () => {
       target: { value: "A 公司" },
     });
     fireEvent.change(screen.getByLabelText("第 1 条投递：投递时间"), {
-      target: { value: "7 月 1 日" },
+      target: { value: "2026-07-01" },
     });
     fireEvent.change(screen.getByLabelText("第 1 条投递：当前反馈状态"), {
       target: { value: "暂无反馈" },
@@ -354,7 +401,7 @@ describe("MVP page state flow", () => {
     expect(screen.getByText(/这份岗位主要要求示例：负责内容整理、活动执行和数据记录/)).toBeInTheDocument();
     expect(screen.getByText(/这次投递用的简历\/材料示例：社团经历版 V1/)).toBeInTheDocument();
     expect(screen.getByText(/示例：经历写得太泛/)).toBeInTheDocument();
-    expect(screen.queryByText(/JD/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^JD$/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("第 2 条投递：岗位名称")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("第 1 条投递：这份岗位主要要求"), {
@@ -372,7 +419,7 @@ describe("MVP page state flow", () => {
       target: { value: "B 公司" },
     });
     fireEvent.change(screen.getByLabelText("第 2 条投递：投递时间"), {
-      target: { value: "7 月 3 日" },
+      target: { value: "2026-07-03" },
     });
     fireEvent.change(screen.getByLabelText("第 2 条投递：当前反馈状态"), {
       target: { value: "已查看" },
@@ -384,13 +431,14 @@ describe("MVP page state flow", () => {
       target: { value: "项目经历版" },
     });
     fireEvent.click(screen.getByRole("button", { name: "生成今天先做的一步" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/routes/applications_to_review/action"));
 
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(requestBody.input.applications).toEqual([
       {
         jobTitle: "内容运营实习",
         companyOrPlatform: "A 公司",
-        submittedAt: "7 月 1 日",
+        submittedAt: "2026-07-01",
         feedbackStatus: "暂无反馈",
         jdSummary: "负责内容整理",
         materialVersion: "社团经历版",
@@ -399,7 +447,7 @@ describe("MVP page state flow", () => {
       {
         jobTitle: "新媒体运营实习",
         companyOrPlatform: "B 公司",
-        submittedAt: "7 月 3 日",
+        submittedAt: "2026-07-03",
         feedbackStatus: "已查看",
         jdSummary: "负责选题和数据记录",
         materialVersion: "项目经历版",
@@ -425,10 +473,10 @@ describe("MVP page state flow", () => {
   });
 
   it("keeps clear my records accessible when only a current action exists", async () => {
-    saveCurrentAction({
+    saveCurrentAction(withTestProvenance({
       ...jdActionOutput,
       todayAction: { ...jdActionOutput.todayAction, actionTitle: "仅当前行动中的敏感内容" },
-    });
+    }));
     expect(loadRecords()).toEqual([]);
 
     render(<TrackPage />);
@@ -445,10 +493,10 @@ describe("MVP page state flow", () => {
 
   it("returns home without restoring sensitive state after clicking clear my records", async () => {
     saveDraft("jd_to_revision", { userMaterial: "敏感旧简历片段" });
-    saveCurrentAction({
+    saveCurrentAction(withTestProvenance({
       ...jdActionOutput,
       todayAction: { ...jdActionOutput.todayAction, actionTitle: "敏感旧行动" },
-    });
+    }));
     const record = saveRecord({
       routeKey: "jd_to_revision",
       recordType: "jd_compare",

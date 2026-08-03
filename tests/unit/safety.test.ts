@@ -176,6 +176,52 @@ describe("scanSafetyViolations", () => {
   });
 
   it.each([
+    "把手机号 13800138000 写进简历",
+    "把手机号 138-0013-8000 写进简历",
+    "把 +86 138 0013 8000 写进简历",
+    "把身份证号 110101199001011234 放进投递材料",
+    "在记录中保存邮箱 student@example.com",
+    "把婚育情况：已婚写进对外材料",
+    "把本人未婚写进对外材料",
+    "在简历里写我有抑郁症",
+    "medical condition: depression",
+    "marital status: married",
+    "phone: +1 (202) 555-0123",
+    "请把婚育情况写入简历",
+    "建议在求职记录中保存病情",
+    "将身份证字段加入对外材料",
+  ])("blocks sensitive information from user-visible actions: %s", (text) => {
+    expect(scanSafetyViolations(text).blockedReasons).toContain(
+      "禁止在求职行动、记录或材料中输出敏感个人信息",
+    );
+  });
+
+  it("scans nested action inference and record guidance before any field becomes user-visible", () => {
+    const result = scanRouteSafety("experience_to_resume", {
+      routeKey: "experience_to_resume",
+      todayAction: {
+        actionSteps: ["请把婚育情况写入简历"],
+        recordAfterDone: "在求职记录中保存病情",
+      },
+      recordGuide: {
+        fieldsToRecord: ["将身份证字段加入对外材料"],
+      },
+    });
+
+    expect(result.blockedReasons).toContain(
+      "禁止在求职行动、记录或材料中输出敏感个人信息",
+    );
+  });
+
+  it.each([
+    "不要把手机号写进简历。",
+    "请勿在记录中保存病情。",
+    "不希望在求职材料中公开婚育情况。",
+  ])("allows explicit reminders not to disclose sensitive information: %s", (text) => {
+    expect(scanSafetyViolations(text)).toEqual({ passed: true, blockedReasons: [] });
+  });
+
+  it.each([
     "保证进面",
     "确保拿到面试邀请",
     "这个岗位稳 offer",

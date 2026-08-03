@@ -34,6 +34,7 @@ export type TodayAction = {
   estimatedTime: string;
   recordAfterDone: string;
   actionType: ActionType;
+  completionStandard?: string;
 };
 
 export type RecordGuide = {
@@ -57,4 +58,5 @@ export type RouteOutput = {
   missingInfo: MissingInfo | null;
   todayAction: TodayAction;
   recordGuide: RecordGuide;
+  provenance?: import("@/domain/provenance").OutputProvenance;
 };

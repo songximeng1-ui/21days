@@ -19,6 +19,7 @@ export const ROUTE_SAMPLES: RouteSample[] = [
       educationBackground: "普通本科，市场营销专业",
       realExperiences: "做过社团公众号排版和活动报名表整理",
       interestsOrAcceptables: "能接受内容运营、用户运营、行政助理",
+      constraints: "不接受长期出差",
     },
     expectedFocus: "保存 1-3 个真实岗位样本",
   },

@@ -3,8 +3,6 @@ import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ActionPage from "@/app/routes/[routeKey]/action/page";
 import RecordPage from "@/app/routes/[routeKey]/record/page";
-import { generateRouteOutput } from "@/ai/orchestrator";
-import { MockAiProvider } from "@/ai/mock-provider";
 import { loadCurrentAction, loadDraft, mergeDraft, saveRecord, type CurrentAction } from "@/lib/local-store";
 
 const push = vi.fn();
@@ -20,6 +18,7 @@ vi.mock("@/lib/local-store", () => ({
   loadDraft: vi.fn(() => ({})),
   saveRecord: vi.fn(),
   mergeDraft: vi.fn(),
+  runLocalStoreTransaction: vi.fn((operation: () => unknown) => operation()),
 }));
 
 const missingInfoOutput: CurrentAction = {
@@ -119,6 +118,24 @@ describe("ActionPage", () => {
     const recordLink = await screen.findByRole("link", { name: "我补完了，去记录" });
 
     expect(recordLink).toHaveAttribute("href", "/routes/jd_to_revision/record");
+  });
+
+  it("keeps the reduced action completion standard visible on the action page", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      reducedContinuation: true,
+      todayAction: {
+        ...routeResultOutput.todayAction,
+        estimatedTime: "5-10 分钟",
+        completionStandard: "完成并保存 1 个可核对结果。",
+      },
+    } as CurrentAction);
+
+    render(<ActionPage />);
+
+    expect(
+      await screen.findByText("完成标准：完成并保存 1 个可核对结果。"),
+    ).toBeInTheDocument();
   });
 
   it("shows a real loading state before an empty current-action state", async () => {
@@ -249,8 +266,8 @@ describe("ActionPage", () => {
     expect(action).not.toBeNull();
     expect(evidence).not.toBeNull();
     expect(details).not.toBeNull();
-    expect(action?.compareDocumentPosition(evidence as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(action?.compareDocumentPosition(details as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(action!.compareDocumentPosition(evidence as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(action!.compareDocumentPosition(details as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("blocks action pages when the saved action belongs to another route", async () => {
@@ -285,6 +302,7 @@ describe("RecordPage", () => {
 
     await waitFor(() => expect(screen.getAllByRole("textbox")).toHaveLength(3));
     const textboxes = screen.getAllByRole("textbox");
+    fireEvent.change(textboxes[0], { target: { value: "补齐并核对了真实岗位要求" } });
     fireEvent.change(textboxes[1], { target: { value: "product operations intern" } });
     fireEvent.change(textboxes[2], { target: { value: "research, data整理, activity review" } });
     fireEvent.click(screen.getByRole("checkbox"));
@@ -296,7 +314,7 @@ describe("RecordPage", () => {
       routeKey: "jd_to_revision",
       recordType: "fill_info",
       actionTitle: "今天先补这份岗位的真实 JD 或 3-5 条岗位要求",
-      actualDone: "补充了 2 项信息",
+      actualDone: "补齐并核对了真实岗位要求",
       payload: {
         targetJobTitle: "product operations intern",
         jdTextOrRequirements: "research, data整理, activity review",
@@ -310,8 +328,39 @@ describe("RecordPage", () => {
     expect(push).toHaveBeenCalledWith("/routes/jd_to_revision/input");
   });
 
+  it("rolls back the fill-info transaction and stays put when draft merge fails", async () => {
+    vi.mocked(mergeDraft).mockImplementation(() => {
+      throw new Error("quota");
+    });
+    render(<RecordPage />);
+
+    await waitFor(() => expect(screen.getAllByRole("textbox")).toHaveLength(3));
+    const textboxes = screen.getAllByRole("textbox");
+    fireEvent.change(textboxes[0], { target: { value: "补齐并核对了真实岗位要求" } });
+    fireEvent.change(textboxes[1], { target: { value: "运营实习" } });
+    fireEvent.change(textboxes[2], { target: { value: "负责数据整理" } });
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(saveRecord).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "这次没有保存成功。你填写的内容还在本页，请稍后重试。",
+    );
+    expect(textboxes[1]).toHaveValue("运营实习");
+    expect(push).not.toHaveBeenCalled();
+
+    vi.mocked(mergeDraft).mockReset();
+    fireEvent.click(screen.getByRole("button"));
+    expect(push).toHaveBeenCalledWith("/routes/jd_to_revision/input");
+  });
+
   it("saves completed route actions with their action id and continues to review", async () => {
     vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
+    vi.mocked(loadDraft).mockReturnValue({
+      targetJobTitle: "内容运营实习生",
+      userMaterial: "原片段",
+      jdTextOrRequirements: "负责内容整理",
+    });
 
     render(<RecordPage />);
 
@@ -324,6 +373,9 @@ describe("RecordPage", () => {
     fireEvent.change(screen.getByLabelText("修改后片段"), {
       target: { value: "加入了真实动作后的片段" },
     });
+    fireEvent.change(screen.getByLabelText("是否已经投递"), {
+      target: { value: "尚未投递" },
+    });
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
 
     fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
@@ -335,12 +387,258 @@ describe("RecordPage", () => {
       actionTitle: "今天先对照 JD 做 1 条投递前最小修改",
       actualDone: "改完 JD 相关的一句话",
       payload: {
+        targetJobTitle: "内容运营实习生",
         beforeSnippet: "原片段",
         afterSnippet: "加入了真实动作后的片段",
+        jdRequirement: "负责内容整理",
+        submitted: "尚未投递",
       },
       userConfirmed: true,
     });
     expect(push).toHaveBeenCalledWith("/review");
+  });
+
+  it("upgrades a legacy JD action to the canonical required record fields", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
+    vi.mocked(loadDraft).mockReturnValue({
+      targetJobTitle: "内容运营实习生",
+      userMaterial: "整理社团推文并记录阅读数据",
+      jdTextOrRequirements: "负责内容整理和数据复盘",
+    });
+
+    render(<RecordPage />);
+
+    expect(await screen.findByLabelText("目标岗位名称")).toHaveValue("内容运营实习生");
+    expect(screen.getByLabelText("修改前片段")).toHaveValue("整理社团推文并记录阅读数据");
+    expect(screen.getByLabelText("对应的岗位要求")).toHaveValue("负责内容整理和数据复盘");
+    expect(screen.getByLabelText("修改后片段")).toBeRequired();
+    expect(screen.getByLabelText("是否已经投递")).toBeRequired();
+    expect(screen.getByRole("status", { name: "保存前还需完成" })).toHaveTextContent(
+      "实际完成了什么、修改后片段、是否已经投递、真实性确认",
+    );
+  });
+
+  it("names the exact missing requirements instead of only disabling save", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
+
+    render(<RecordPage />);
+
+    expect(await screen.findByRole("status", { name: "保存前还需完成" })).toHaveTextContent(
+      "实际完成了什么、目标岗位名称、修改前片段、修改后片段、对应的岗位要求、是否已经投递、真实性确认",
+    );
+    expect(screen.getByLabelText("实际完成了什么？")).toBeRequired();
+    expect(screen.getByLabelText("修改前片段")).toBeRequired();
+    expect(screen.getByLabelText("修改后片段")).toBeRequired();
+
+    const actualDone = screen.getByLabelText("实际完成了什么？");
+    expect(actualDone).toHaveAttribute("aria-invalid", "true");
+    expect(actualDone.getAttribute("aria-describedby")).toContain(
+      "record-missing-requirements",
+    );
+
+    const saveButton = screen.getByRole("button", { name: "保存并看看下一步" });
+    expect(saveButton).toBeEnabled();
+    fireEvent.click(saveButton);
+    expect(actualDone).toHaveFocus();
+    expect(saveRecord).not.toHaveBeenCalled();
+  });
+
+  it("keeps typed record data on screen and does not navigate when local save fails", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
+    vi.mocked(loadDraft).mockReturnValue({
+      targetJobTitle: "内容运营实习生",
+      userMaterial: "原片段",
+      jdTextOrRequirements: "负责内容整理",
+    });
+    vi.mocked(saveRecord).mockImplementation(() => {
+      throw new Error("quota");
+    });
+    render(<RecordPage />);
+    const actualDoneField = await screen.findByLabelText("实际完成了什么？");
+    fireEvent.change(actualDoneField, { target: { value: "改完了一句话" } });
+    fireEvent.change(screen.getByLabelText("修改前片段"), {
+      target: { value: "原片段" },
+    });
+    fireEvent.change(screen.getByLabelText("修改后片段"), {
+      target: { value: "加入真实动作后的片段" },
+    });
+    fireEvent.change(screen.getByLabelText("是否已经投递"), {
+      target: { value: "尚未投递" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "这次没有保存成功。你填写的内容还在本页，请稍后重试。",
+    );
+    expect(actualDoneField).toHaveValue("改完了一句话");
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("prefills canonical JD record facts and keeps them when the first save fails", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      recordGuide: {
+        recordType: "jd_compare",
+        fieldsToRecord: [
+          "targetJobTitle",
+          "beforeSnippet",
+          "afterSnippet",
+          "jdRequirement",
+          "submitted",
+        ],
+        requiresUserConfirmation: true,
+      },
+    });
+    vi.mocked(loadDraft).mockReturnValue({
+      targetJobTitle: "内容运营实习生",
+      userMaterial: "整理社团推文并记录阅读数据",
+      jdTextOrRequirements: "负责选题和数据记录",
+    });
+    vi.mocked(saveRecord).mockImplementationOnce(() => {
+      throw new Error("quota");
+    });
+
+    render(<RecordPage />);
+
+    expect(await screen.findByLabelText("目标岗位名称")).toHaveValue("内容运营实习生");
+    expect(screen.getByLabelText("目标岗位名称")).toBeRequired();
+    expect(screen.getByLabelText("修改前片段")).toHaveValue("整理社团推文并记录阅读数据");
+    expect(screen.getByLabelText("对应的岗位要求")).toHaveValue("负责选题和数据记录");
+    expect(screen.getByLabelText("修改后片段")).toHaveValue("");
+    expect(screen.getByLabelText("是否已经投递")).toHaveValue("");
+
+    fireEvent.change(screen.getByLabelText("实际完成了什么？"), {
+      target: { value: "完成了针对目标岗位的一处修改" },
+    });
+    fireEvent.change(screen.getByLabelText("修改后片段"), {
+      target: { value: "整理社团推文，并记录阅读数据用于复盘" },
+    });
+    fireEvent.change(screen.getByLabelText("是否已经投递"), {
+      target: { value: "尚未投递" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("这次没有保存成功");
+    expect(screen.getByLabelText("目标岗位名称")).toHaveValue("内容运营实习生");
+    expect(screen.getByLabelText("修改后片段")).toHaveValue("整理社团推文，并记录阅读数据用于复盘");
+    expect(push).not.toHaveBeenCalled();
+
+    vi.mocked(saveRecord).mockReset();
+    fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
+    expect(saveRecord).toHaveBeenCalledWith(expect.objectContaining({
+      payload: {
+        targetJobTitle: "内容运营实习生",
+        beforeSnippet: "整理社团推文并记录阅读数据",
+        afterSnippet: "整理社团推文，并记录阅读数据用于复盘",
+        jdRequirement: "负责选题和数据记录",
+        submitted: "尚未投递",
+      },
+    }));
+  });
+
+  it("prefills a resume snippet with its facts and saves a confirmed linked version", async () => {
+    routeKeyParam = "experience_to_resume";
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeKey: "experience_to_resume",
+      actionId: "action-resume-snippet",
+      routeResult: {
+        confirmedFacts: ["参与社团招新", "整理报名表"],
+        supportingFacts: ["整理报名表", "形成报名名单"],
+        missingFacts: ["还缺报名人数"],
+        resumeSnippetDraft: "参与社团招新，整理报名信息并形成名单。",
+      },
+      todayAction: {
+        ...routeResultOutput.todayAction,
+        actionTitle: "确认并保存这一段克制简历片段",
+        actionType: "resume_snippet",
+      },
+      recordGuide: {
+        recordType: "experience_fact",
+        fieldsToRecord: ["actualActions", "deliverable", "missingFacts"],
+        requiresUserConfirmation: true,
+      },
+    });
+    vi.mocked(saveRecord)
+      .mockReturnValueOnce({ id: "experience-1" } as never)
+      .mockReturnValueOnce({ id: "snippet-1" } as never);
+
+    render(<RecordPage />);
+
+    expect(await screen.findByDisplayValue("参与社团招新；整理报名表")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("整理报名表；形成报名名单")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("还缺报名人数")).toBeInTheDocument();
+    const snippet = screen.getByLabelText("克制简历片段");
+    expect(snippet).toHaveValue("参与社团招新，整理报名信息并形成名单。");
+    fireEvent.change(snippet, {
+      target: { value: "参与社团招新，整理报名信息并形成报名名单。" },
+    });
+    fireEvent.change(screen.getByLabelText("实际完成了什么？"), {
+      target: { value: "核对并保存了这段简历片段" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
+
+    expect(saveRecord).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      actionId: "action-resume-snippet",
+      recordType: "experience_fact",
+      actualDone: "核对并保存了这段简历片段",
+      payload: expect.objectContaining({
+        confirmedFacts: "参与社团招新；整理报名表",
+        supportingFacts: "整理报名表；形成报名名单",
+        missingFacts: "还缺报名人数",
+      }),
+      userConfirmed: true,
+    }));
+    expect(saveRecord).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      actionId: "action-resume-snippet",
+      recordType: "resume_snippet",
+      payload: {
+        sourceExperienceId: "experience-1",
+        resumeSnippet: "参与社团招新，整理报名信息并形成报名名单。",
+        supportingFacts: "整理报名表；形成报名名单",
+        stillMissing: "还缺报名人数",
+      },
+      userConfirmed: true,
+    }));
+    expect(push).toHaveBeenCalledWith("/review");
+  });
+
+  it("blocks a post-generation resume edit that adds facts absent from its sources", async () => {
+    routeKeyParam = "experience_to_resume";
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeKey: "experience_to_resume",
+      actionId: "action-unsafe-resume-edit",
+      routeResult: {
+        confirmedFacts: ["参与社团招新", "整理报名表"],
+        supportingFacts: ["整理报名表", "形成报名名单"],
+        missingFacts: ["还缺报名人数"],
+        resumeSnippetDraft: "参与社团招新，整理报名表并形成报名名单。",
+      },
+      recordGuide: {
+        recordType: "experience_fact",
+        fieldsToRecord: ["actualActions", "deliverable", "missingFacts"],
+        requiresUserConfirmation: true,
+      },
+    });
+
+    render(<RecordPage />);
+
+    fireEvent.change(await screen.findByLabelText("克制简历片段"), {
+      target: { value: "使用 Python 整理 1000 条数据，推动报名增长 30%。" },
+    });
+    fireEvent.change(screen.getByLabelText("实际完成了什么？"), {
+      target: { value: "核对了片段" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+
+    expect(screen.getByText(/片段里仍有无法从来源经历或支撑事实核对的内容/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存并看看下一步" })).toBeDisabled();
+    expect(saveRecord).not.toHaveBeenCalled();
   });
 
   it("requires JD summary and material version before saving an application review record", async () => {
@@ -394,6 +692,18 @@ describe("RecordPage", () => {
       "placeholder",
       expect.stringContaining("例如"),
     );
+    const saveButton = screen.getByRole("button", { name: "保存并看看下一步" });
+    expect(saveButton).toBeEnabled();
+    fireEvent.click(saveButton);
+    expect(screen.getByLabelText("这份岗位主要要求")).toHaveFocus();
+    expect(saveRecord).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("这份岗位主要要求"), {
+      target: { value: "不知道" },
+    });
+    fireEvent.change(screen.getByLabelText("这次投递用的简历/材料"), {
+      target: { value: "无明确结果" },
+    });
     expect(screen.getByRole("button", { name: "保存并看看下一步" })).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText("这份岗位主要要求"), {
@@ -403,37 +713,78 @@ describe("RecordPage", () => {
       target: { value: "社团经历版 V1" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
+    expect(screen.getByRole("button", { name: "保存并看看下一步" })).toBeDisabled();
+    expect(screen.getByText("还需要补齐第 2 条真实投递记录，才能进入回看。")).toBeInTheDocument();
+    expect(saveRecord).not.toHaveBeenCalled();
+  });
 
-    expect(saveRecord).toHaveBeenCalledWith({
-      actionId: "action-application-record",
+  it("lets a reduced continuation save one application only to continue adding the second", async () => {
+    routeKeyParam = "applications_to_review";
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...applicationOutput,
+      reducedContinuation: true,
+      recordGuide: {
+        ...applicationOutput.recordGuide,
+        fieldsToRecord: [
+          "jobTitle",
+          "companyOrPlatform",
+          "submittedAt",
+          "feedbackStatus",
+          "jdSummary",
+          "materialVersion",
+        ],
+      },
+    });
+    vi.mocked(loadDraft).mockReturnValue({
+      jobTitle: "内容运营实习",
+      companyOrPlatform: "A 公司",
+      submittedAt: "7 月 1 日",
+      feedbackStatus: "暂无反馈",
+      jdSummary: "负责内容整理和活动执行",
+      materialVersion: "社团经历版 V1",
+    });
+
+    render(<RecordPage />);
+
+    fireEvent.change(await screen.findByLabelText("实际完成了什么？"), {
+      target: { value: "确认了第 1 条投递记录" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    fireEvent.click(screen.getByRole("button", { name: "保存第 1 条，继续补第 2 条" }));
+
+    expect(saveRecord).toHaveBeenCalledTimes(1);
+    expect(saveRecord).toHaveBeenCalledWith(expect.objectContaining({
       routeKey: "applications_to_review",
       recordType: "application",
-      actionTitle: "今天先选择 1 条投递记录，补齐这次投递用的简历/材料",
-      actualDone: "补了一条投递记录",
-      payload: {
-        jobTitle: "内容运营实习",
-        companyOrPlatform: "A 公司",
-        submittedAt: "7 月 1 日",
-        feedbackStatus: "暂无反馈",
-        jdSummary: "负责内容整理和活动执行",
-        materialVersion: "社团经历版 V1",
-      },
-      userConfirmed: true,
-    });
+      payload: expect.objectContaining({ jobTitle: "内容运营实习" }),
+    }));
+    expect(push).toHaveBeenCalledWith("/routes/applications_to_review/input");
   });
 
   it("saves an application fill-info record and merges the payload into the draft", async () => {
     routeKeyParam = "applications_to_review";
-    const output = await generateRouteOutput({
+    const output: CurrentAction = {
+      ...missingInfoOutput,
       routeKey: "applications_to_review",
-      input: { applications: {} },
-      provider: new MockAiProvider("success"),
-    });
-    vi.mocked(loadCurrentAction).mockReturnValue({
-      ...output,
       actionId: "action-application-missing",
       actionCreatedAt: "2026-07-21T05:30:00.000Z",
+      todayAction: {
+        ...missingInfoOutput.todayAction,
+        actionTitle: "今天先补齐第 1 条最低字段投递记录",
+      },
+      recordGuide: {
+        recordType: "application",
+        fieldsToRecord: [
+          "jobTitle",
+          "companyOrPlatform",
+          "submittedAt",
+          "feedbackStatus",
+        ],
+        requiresUserConfirmation: true,
+      },
+    };
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...output,
     });
 
     render(<RecordPage />);
@@ -504,11 +855,34 @@ describe("RecordPage", () => {
     fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
     fireEvent.click(screen.getByRole("button", { name: "保存并看看下一步" }));
 
-    expect(saveRecord).toHaveBeenCalledWith(expect.objectContaining({
+    expect(saveRecord).toHaveBeenNthCalledWith(1, expect.objectContaining({
       routeKey: "applications_to_review",
       recordType: "application",
       actualDone: "确认了两条投递记录",
-      payload: twoApplications,
+      payload: {
+        jobTitle: "内容运营实习",
+        companyOrPlatform: "A 公司",
+        submittedAt: "7 月 1 日",
+        feedbackStatus: "暂无反馈",
+        jdSummary: "负责内容整理",
+        materialVersion: "社团经历版",
+        userSuspicion: "表达可能太泛",
+      },
+      userConfirmed: true,
+    }));
+    expect(saveRecord).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      routeKey: "applications_to_review",
+      recordType: "application",
+      actualDone: "确认了两条投递记录",
+      payload: {
+        jobTitle: "新媒体运营实习",
+        companyOrPlatform: "B 公司",
+        submittedAt: "7 月 3 日",
+        feedbackStatus: "已查看",
+        jdSummary: "负责选题和数据记录",
+        materialVersion: "项目经历版",
+        userSuspicion: "缺少数据记录细节",
+      },
       userConfirmed: true,
     }));
   });
@@ -528,9 +902,9 @@ describe("RecordPage", () => {
     render(<RecordPage />);
 
     const field = await screen.findByLabelText("这份岗位主要要求");
-    const helpId = field.getAttribute("aria-describedby");
-    expect(helpId).toBeTruthy();
-    expect(document.getElementById(helpId ?? "")).toHaveTextContent(
+    const describedByIds = field.getAttribute("aria-describedby")?.split(" ") ?? [];
+    expect(describedByIds).toContain("record-missing-requirements");
+    expect(document.getElementById(describedByIds[0] ?? "")).toHaveTextContent(
       "这份岗位主要要求会用来对照这次投递的岗位到底在要什么。",
     );
   });
@@ -540,7 +914,7 @@ describe("RecordPage", () => {
       ...missingInfoOutput,
       outputType: "friendly_failure",
       recordGuide: {
-        recordType: "draft",
+        recordType: "fill_info",
         fieldsToRecord: ["draft"],
         requiresUserConfirmation: false,
       },

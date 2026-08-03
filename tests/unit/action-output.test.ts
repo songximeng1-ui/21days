@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { routeOutputSchema } from "@/schemas/route-output";
 import { validateRouteOutput } from "@/domain/action-card";
+import type { RouteOutput } from "@/domain/types";
 
 function makeDirectionOutput(directionCount: number, keywordCount: number) {
-  return routeOutputSchema.parse({
+  const candidate = {
     routeKey: "direction_to_jobs",
     outputType: "route_result",
     shortAssessment: "可以先把方向落到岗位样本。",
@@ -31,10 +32,24 @@ function makeDirectionOutput(directionCount: number, keywordCount: number) {
       fieldsToRecord: ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"],
       requiresUserConfirmation: true,
     },
-  });
+  };
+  return directionCount >= 2 && directionCount <= 3
+    ? routeOutputSchema.parse(candidate)
+    : candidate as RouteOutput;
 }
 
 describe("route output contract", () => {
+  it("rejects an oversized visible model field before it reaches storage", () => {
+    const output = makeDirectionOutput(2, 2);
+
+    expect(
+      routeOutputSchema.safeParse({
+        ...output,
+        shortAssessment: "过".repeat(2_001),
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts one grounded today action", () => {
     const output = routeOutputSchema.parse({
       routeKey: "experience_to_resume",
@@ -67,14 +82,9 @@ describe("route output contract", () => {
   });
 
   it("rejects an action framed as multiple separate tasks", () => {
-    const output = routeOutputSchema.parse({
-      routeKey: "direction_to_jobs",
-      outputType: "route_result",
-      shortAssessment: "Several directions can be explored.",
-      routeResult: {
-        explorableDirections: [],
-      },
-      missingInfo: null,
+    const valid = makeDirectionOutput(2, 3);
+    const output: RouteOutput = {
+      ...valid,
       todayAction: {
         actionTitle: "Finish three job-search tasks today",
         actionReason: "Direction, resume, and applications all matter.",
@@ -83,18 +93,13 @@ describe("route output contract", () => {
         recordAfterDone: "Record the jobs.",
         actionType: "job_sample",
       },
-      recordGuide: {
-        recordType: "job_sample",
-        fieldsToRecord: ["jobTitle"],
-        requiresUserConfirmation: true,
-      },
-    });
+    };
 
     expect(validateRouteOutput(output).passed).toBe(false);
   });
 
   it("rejects JD route output that misses route-specific support fields", () => {
-    const output = routeOutputSchema.parse({
+    const candidate = {
       routeKey: "jd_to_revision",
       outputType: "route_result",
       shortAssessment: "这里先看材料和 JD 的支撑关系。",
@@ -115,34 +120,19 @@ describe("route output contract", () => {
         fieldsToRecord: ["beforeSnippet", "afterSnippet"],
         requiresUserConfirmation: true,
       },
-    });
+    };
 
-    expect(validateRouteOutput(output).passed).toBe(false);
+    expect(routeOutputSchema.safeParse(candidate).success).toBe(false);
   });
 
   it("rejects direction route output without explorable directions and search keywords", () => {
-    const output = routeOutputSchema.parse({
-      routeKey: "direction_to_jobs",
-      outputType: "route_result",
-      shortAssessment: "可以先把方向落到岗位样本。",
+    const valid = makeDirectionOutput(2, 3);
+    const output: RouteOutput = {
+      ...valid,
       routeResult: {
         explorableDirections: [],
       },
-      missingInfo: null,
-      todayAction: {
-        actionTitle: "今天先保存 1-3 个真实岗位样本",
-        actionReason: "先用真实 JD 验证方向。",
-        actionSteps: ["搜索一个关键词", "保存岗位要求摘要"],
-        estimatedTime: "15-30 分钟",
-        recordAfterDone: "记录岗位名称、JD 摘要和担心点。",
-        actionType: "job_sample",
-      },
-      recordGuide: {
-        recordType: "job_sample",
-        fieldsToRecord: ["jobTitle"],
-        requiresUserConfirmation: true,
-      },
-    });
+    };
 
     expect(validateRouteOutput(output).passed).toBe(false);
   });

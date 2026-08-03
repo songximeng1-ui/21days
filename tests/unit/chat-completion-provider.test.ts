@@ -46,7 +46,7 @@ async function capturePrompt(input: AiProviderInput): Promise<string> {
   });
   const provider = new ChatCompletionProvider({
     apiKey: "test-key",
-    baseUrl: "https://api.example.com",
+    baseUrl: "https://api.deepseek.com",
     model: "test-model",
     fetchFn: fetchMock,
   });
@@ -110,7 +110,7 @@ const routePromptCases: Array<{
     routeResultFields: ["jdKeyRequirements", "supportedByMaterial", "unclearFromMaterial", "minimalRevisionActions", "afterSubmissionRecording"],
     actionType: "jd_revision",
     recordType: "jd_compare",
-    fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
+    fieldsToRecord: ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
   },
   {
     routeKey: "applications_to_review",
@@ -142,6 +142,36 @@ const routePromptCases: Array<{
 ];
 
 describe("ChatCompletionProvider", () => {
+  it("rejects provider redirects instead of replaying the prompt outside the allowlisted host", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      if (init?.redirect !== "error") {
+        throw new Error("redirects were not disabled");
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(validOutput) } }],
+        }),
+        { status: 200 },
+      );
+    });
+    const provider = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+
+    await expect(provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    })).resolves.toMatchObject({ outputType: "route_result" });
+  });
+
   it.each(routePromptCases)(
     "sends the complete forced result contract for $routeKey",
     async ({ routeKey, input, routeResultFields, actionType, recordType, fieldsToRecord }) => {
@@ -839,7 +869,7 @@ describe("ChatCompletionProvider", () => {
     });
     const provider = new ChatCompletionProvider({
       apiKey: "test-key",
-      baseUrl: "https://api.example.com",
+      baseUrl: "https://api.deepseek.com",
       model: "test-model",
       fetchFn: fetchMock,
     });
@@ -856,7 +886,7 @@ describe("ChatCompletionProvider", () => {
 
     expect(result.todayAction.actionType).toBe("experience_fact");
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.example.com/chat/completions",
+      "https://api.deepseek.com/chat/completions",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
@@ -890,7 +920,7 @@ describe("ChatCompletionProvider", () => {
     );
     const provider = new ChatCompletionProvider({
       apiKey: "test-key",
-      baseUrl: "https://api.example.com",
+      baseUrl: "https://api.deepseek.com",
       model: "test-model",
       fetchFn: fetchMock as typeof fetch,
     });
@@ -919,7 +949,7 @@ describe("ChatCompletionProvider", () => {
     );
     const provider = new ChatCompletionProvider({
       apiKey: "test-key",
-      baseUrl: "https://api.example.com",
+      baseUrl: "https://api.deepseek.com",
       model: "test-model",
       fetchFn: fetchMock as typeof fetch,
     });
@@ -933,7 +963,8 @@ describe("ChatCompletionProvider", () => {
       },
     });
 
-    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    const call = fetchMock.mock.calls[0] as unknown as [unknown, RequestInit];
+    const body = JSON.parse(call[1].body as string);
     expect(body.max_tokens).toBe(2400);
   });
 
@@ -948,7 +979,7 @@ describe("ChatCompletionProvider", () => {
     );
     const provider = new ChatCompletionProvider({
       apiKey: "test-key",
-      baseUrl: "https://api.example.com",
+      baseUrl: "https://api.deepseek.com",
       model: "test-model",
       fetchFn: fetchMock as typeof fetch,
     });
@@ -994,7 +1025,7 @@ describe("ChatCompletionProvider", () => {
     });
     const provider = new ChatCompletionProvider({
       apiKey: "test-key",
-      baseUrl: "https://api.example.com",
+      baseUrl: "https://api.deepseek.com",
       model: "test-model",
       fetchFn: fetchMock,
     });
@@ -1310,7 +1341,7 @@ describe("ChatCompletionProvider", () => {
     const fetchMock = vi.fn(response);
     const provider = new ChatCompletionProvider({
       apiKey: "secret-test-key",
-      baseUrl: "https://api.example.com?secret=query-value",
+      baseUrl: "https://api.deepseek.com",
       model: "test-model",
       fetchFn: fetchMock,
     });
@@ -1356,7 +1387,7 @@ describe("ChatCompletionProvider", () => {
     );
     const provider = new ChatCompletionProvider({
       apiKey: "secret-test-key",
-      baseUrl: "https://api.example.com?secret=query-value",
+      baseUrl: "https://api.deepseek.com",
       model: "test-model",
       fetchFn: fetchMock,
     });
@@ -1382,9 +1413,9 @@ describe("ChatCompletionProvider", () => {
     const provider = createAiProviderFromEnv(
       {
         DEEPSEEK_API_KEY: "deepseek-key",
-        DEEPSEEK_BASE_URL: "https://deepseek.example.com",
+        DEEPSEEK_BASE_URL: "https://api.deepseek.com",
         QWEN_API_KEY: "qwen-key",
-        QWEN_BASE_URL: "https://qwen.example.com/compatible-mode/v1",
+        QWEN_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       },
       fetchMock,
     );
@@ -1420,5 +1451,226 @@ describe("ChatCompletionProvider", () => {
         input: {},
       }),
     ).rejects.toThrow();
+  });
+
+  it.each([
+    "http://api.deepseek.com",
+    "https://api.deepseek.com.evil.example",
+    "https://user:password@api.deepseek.com",
+    "https://api.deepseek.com:8443",
+    "https://api.deepseek.com?redirect=https://evil.example",
+  ])("rejects an unsafe provider endpoint before any credential can be sent: %s", (baseUrl) => {
+    const fetchMock = vi.fn();
+
+    expect(
+      () =>
+        new ChatCompletionProvider({
+          apiKey: "secret-test-key",
+          baseUrl,
+          model: "test-model",
+          fetchFn: fetchMock,
+        }),
+    ).toThrow("Invalid AI provider endpoint");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves a bounded Retry-After delay without retaining the provider body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { code: "rate_limit", message: "sensitive upstream body" } }),
+        { status: 429, headers: { "Retry-After": "7" } },
+      ),
+    );
+    const provider = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+
+    const error = await provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AiProviderError);
+    expect(error).toMatchObject({
+      kind: "retryable_http",
+      retryAfterMs: 7000,
+      providerErrorCode: "rate_limit",
+    });
+    expect(JSON.stringify(error)).not.toMatch(/sensitive upstream body|secret-test-key/i);
+  });
+
+  it("aborts the upstream fetch when the per-provider timeout expires", async () => {
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      }),
+    );
+    const provider = new ChatCompletionProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+      timeoutMs: 5,
+    });
+
+    await expect(provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    })).rejects.toMatchObject({ kind: "timeout" });
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
+  it("propagates caller cancellation to the upstream fetch without converting it into a retryable failure", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      }),
+    );
+    const provider = new ChatCompletionProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+    const pending = provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ kind: "cancelled" });
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
+  it("rejects an oversized streamed provider response before parsing or logging its body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        choices: [{ message: { content: "SENSITIVE_PROVIDER_BODY".repeat(20) } }],
+      }), { status: 200 }),
+    );
+    const provider = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+      maxResponseBytes: 64,
+    });
+
+    const error = await provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ kind: "response_too_large" });
+    expect(JSON.stringify(error)).not.toMatch(/SENSITIVE_PROVIDER_BODY|secret-test-key/i);
+  });
+
+  it("keeps the provider timeout active while a response body is still streaming", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new ReadableStream<Uint8Array>({ start() {} }), { status: 200 }),
+    );
+    const provider = new ChatCompletionProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+      timeoutMs: 5,
+    });
+
+    await expect(provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    })).rejects.toMatchObject({ kind: "timeout" });
+  });
+
+  it("absorbs a rejected stream cancellation after the provider timeout", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(new ReadableStream<Uint8Array>({
+          start() {},
+          cancel() {
+            return Promise.reject(new DOMException("aborted", "AbortError"));
+          },
+        }), { status: 200 }),
+      );
+      const provider = new ChatCompletionProvider({
+        apiKey: "test-key",
+        baseUrl: "https://api.deepseek.com",
+        model: "test-model",
+        fetchFn: fetchMock,
+        timeoutMs: 5,
+      });
+
+      await expect(provider.generate({
+        routeKey: "experience_to_resume",
+        input: {
+          targetDirection: "运营",
+          rawExperience: "社团活动",
+          actualActions: "整理报名表",
+          deliverableOrResult: "报名名单",
+        },
+      })).rejects.toMatchObject({ kind: "timeout" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("does not start an upstream request after the orchestration deadline has elapsed", async () => {
+    const fetchMock = vi.fn();
+    const provider = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+
+    await expect(provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "运营",
+        rawExperience: "社团推文发布",
+        actualActions: "整理信息并排版",
+        deliverableOrResult: "发布 2 篇推文",
+      },
+      deadlineAtMs: Date.now() - 1,
+    })).rejects.toMatchObject({ kind: "timeout" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

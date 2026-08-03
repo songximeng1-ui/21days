@@ -76,6 +76,11 @@ export default function ActionPage() {
             <div className="action-meta">
               <span>{output.todayAction.estimatedTime}</span>
               <span>{output.todayAction.recordAfterDone}</span>
+              {"completionStandard" in output.todayAction &&
+                typeof output.todayAction.completionStandard === "string" &&
+                output.todayAction.completionStandard.trim() && (
+                  <span>完成标准：{output.todayAction.completionStandard}</span>
+                )}
             </div>
           </article>
         )}
@@ -93,7 +98,7 @@ export default function ActionPage() {
           </div>
         )}
 
-        {output.outputType === "route_result" ? (
+        {output.outputType === "route_result" || output.outputType === "light_review" ? (
           <Link className="primary-button" href={`/routes/${params.routeKey}/record`}>我做完了，记录结果</Link>
         ) : output.outputType === "missing_info" ? (
           <Link className="primary-button" href={`/routes/${params.routeKey}/record`}>我补完了，去记录</Link>

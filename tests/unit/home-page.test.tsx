@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Home from "@/app/page";
 import {
   loadCurrentAction,
@@ -10,19 +10,41 @@ import {
   saveReview,
 } from "@/lib/local-store";
 import type { RouteOutput } from "@/domain/types";
+import { withTestProvenance } from "../helpers/test-provenance";
 
-const currentAction: RouteOutput = {
+function reviewProvenance(record: { id: string; version: number; actualDone: string }) {
+  return {
+    "routeResult.reviewBasis.0": {
+      kind: "fact" as const,
+      sources: [{
+        sourceType: "confirmed_record" as const,
+        path: "actualDone",
+        quote: record.actualDone.slice(0, 12),
+        recordId: record.id,
+        recordVersion: record.version,
+      }],
+    },
+  };
+}
+
+const currentAction: RouteOutput = withTestProvenance({
   routeKey: "jd_to_revision",
   outputType: "route_result",
   shortAssessment: "这里先看材料和 JD 的支撑关系。",
-  routeResult: {},
+  routeResult: {
+    jdKeyRequirements: ["内容整理"],
+    supportedByMaterial: ["整理过报名表"],
+    unclearFromMaterial: ["没有量化结果"],
+    minimalRevisionActions: ["补充整理报名表这一真实动作"],
+    afterSubmissionRecording: ["记录岗位、公司、时间和反馈"],
+  },
   missingInfo: null,
   todayAction: {
-    actionTitle: "今天先对照 JD 做 1 条投递前最小修改",
+    actionTitle: "今天先对照 JD 做 1-2 条投递前最小修改",
     actionReason: "先改最能支撑 JD 的一处表达。",
     actionSteps: ["圈出 JD 的 1 条关键要求", "找到材料里对应经历", "补 1 个真实动作"],
     estimatedTime: "15-30 分钟",
-    recordAfterDone: "记录修改前后片段。",
+    recordAfterDone: "记录 2 组修改前后片段。",
     actionType: "jd_revision",
   },
   recordGuide: {
@@ -30,23 +52,41 @@ const currentAction: RouteOutput = {
     fieldsToRecord: ["beforeSnippet", "afterSnippet"],
     requiresUserConfirmation: true,
   },
-};
+  provenance: {
+    shortAssessment: {
+      kind: "fact",
+      sources: [{ sourceType: "user_input", path: "testFixture", quote: "test" }],
+    },
+  },
+});
 
 describe("Home", () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses user-facing language while finding saved progress", async () => {
+    render(<Home />);
+
+    expect(screen.getByText(/正在找回上次进度/)).toBeInTheDocument();
+    expect(screen.queryByText(/正在读取本地进度/)).not.toBeInTheDocument();
+    await screen.findByText("21 天陪跑 · 第 1 天");
+  });
+
   it("keeps the first-time question entry when there is no local progress", async () => {
     render(<Home />);
 
-    expect(await screen.findByText("21 天陪跑 · 第 1 次推进")).toBeInTheDocument();
+    expect(await screen.findByText("21 天陪跑 · 第 1 天")).toBeInTheDocument();
     expect(screen.getByText("你现在最想先解决哪件事？")).toBeInTheDocument();
     expect(screen.getByText("我不知道能投哪些岗位")).toBeInTheDocument();
   });
 
   it("shows a smaller continuation when the last action has not been recorded", async () => {
-    saveCurrentAction(currentAction);
+    const original = saveCurrentAction(currentAction);
 
     render(<Home />);
 
@@ -54,17 +94,51 @@ describe("Home", () => {
     expect(await screen.findByText("上次这一步还没做完，今天可以把它缩小一点。")).toBeInTheDocument();
     expect(screen.getByText("今天先对照 JD 做 1 条投递前最小修改")).toBeInTheDocument();
     expect(screen.getByText("今天先完成一个更小版本。")).toBeInTheDocument();
-    expect(screen.getByText("只做第一步：圈出 JD 的 1 条关键要求")).toBeInTheDocument();
-    expect(screen.getByText("15-30 分钟")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "继续一个更小版本" })).toHaveAttribute(
+    expect(screen.getByText("圈出 JD 的 1 条关键要求")).toBeInTheDocument();
+    expect(screen.getByText("5-10 分钟")).toBeInTheDocument();
+    expect(screen.getByText("记录 1 组修改前后片段。")).toBeInTheDocument();
+    expect(screen.getByText("完成标准：完成并保存 1 个可核对结果。")).toBeInTheDocument();
+    const continueLink = screen.getByRole("link", { name: "继续一个更小版本" });
+    expect(continueLink).toHaveAttribute(
       "href",
       "/routes/jd_to_revision/action",
     );
+    continueLink.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(continueLink);
+    expect(loadCurrentAction()).toMatchObject({
+      actionId: original.actionId,
+      actionCreatedAt: original.actionCreatedAt,
+      todayAction: {
+        actionTitle: "今天先对照 JD 做 1 条投递前最小修改",
+        estimatedTime: "5-10 分钟",
+        recordAfterDone: "记录 1 组修改前后片段。",
+        completionStandard: "完成并保存 1 个可核对结果。",
+      },
+    });
     expect(screen.queryByText("我不知道能投哪些岗位")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "换一个当前问题" }));
     expect(screen.getByText("你现在想换成哪个问题？")).toBeInTheDocument();
     expect(screen.getByText("我不知道能投哪些岗位")).toBeInTheDocument();
+  });
+
+  it("keeps the smaller action on screen and prevents navigation when saving it fails", async () => {
+    saveCurrentAction(currentAction);
+    render(<Home />);
+    const continueLink = await screen.findByRole("link", { name: "继续一个更小版本" });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+
+    expect(fireEvent.click(continueLink)).toBe(false);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "下一次行动没有保存成功，请留在本页稍后重试。",
+    );
+
+    setItem.mockRestore();
+    continueLink.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(continueLink);
+    expect(loadCurrentAction()?.todayAction.estimatedTime).toBe("5-10 分钟");
   });
 
   it("keeps the current action unfinished when an unrelated route has the same action title", async () => {
@@ -119,6 +193,7 @@ describe("Home", () => {
     const review = saveReview({
       basedOnRecordIds: [record.id],
       routeKey: "experience_to_resume",
+      provenance: reviewProvenance(record),
       reviewBasis: ["整理了社团招新报名表"],
       clues: ["这段经历可以继续补交付物"],
       missingInfo: ["还缺交付物"],
@@ -128,14 +203,22 @@ describe("Home", () => {
 
     render(<Home />);
 
-    expect(await screen.findByText("21 天陪跑 · 已保存 1 次推进")).toBeInTheDocument();
+    expect(await screen.findByText("21 天陪跑 · 第 1 天")).toBeInTheDocument();
     expect(screen.getByText("最近推进：整理了社团招新报名表，并记录了自己负责的动作。")).toBeInTheDocument();
     expect(screen.getByText("今天继续这一件事")).toBeInTheDocument();
     expect(screen.getByText("下一步先补这段经历的交付物。")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "继续：下一步先补这段经历的交付物。" })).toHaveAttribute(
+    const continueLink = screen.getByRole("link", { name: "继续：下一步先补这段经历的交付物。" });
+    expect(continueLink).toHaveAttribute(
       "href",
       "/routes/experience_to_resume/action",
     );
+    continueLink.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(continueLink);
+    expect(loadCurrentAction()).toMatchObject({
+      routeKey: "experience_to_resume",
+      todayAction: { actionType: "experience_fact" },
+      recordGuide: { recordType: "experience_fact" },
+    });
     expect(screen.queryByText("我不知道能投哪些岗位")).not.toBeInTheDocument();
   });
 
@@ -151,6 +234,7 @@ describe("Home", () => {
     const review = saveReview({
       basedOnRecordIds: [record.id],
       routeKey: "applications_to_review",
+      provenance: reviewProvenance(record),
       reviewBasis: ["两条投递记录"],
       clues: ["可以继续补材料版本"],
       missingInfo: ["还缺材料版本"],
@@ -170,12 +254,26 @@ describe("Home", () => {
 
     expect(loadCurrentAction()).toMatchObject({
       routeKey: "applications_to_review",
+      outputType: "light_review",
       todayAction: { actionType: "application_record" },
       recordGuide: {
         recordType: "application",
         fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"],
       },
     });
+    const continuation = loadCurrentAction();
+    const sourceIds = Object.values(continuation?.provenance ?? {})
+      .flatMap((claim) => claim.sources.map((source) => source.recordId))
+      .filter(Boolean);
+    expect(sourceIds).toContain(record.id);
+    expect(sourceIds).not.toContain(review.id);
+    expect(continuation?.routeResult).toMatchObject({
+      reviewBasis: review.reviewBasis,
+      clues: review.clues,
+      missingInfo: review.missingInfo,
+      nextAction: review.nextAction,
+    });
+    expect(continuation?.routeResult).not.toHaveProperty("jdKeyRequirements");
   });
 
   it("sends the latest record to light review when it has not been reviewed", async () => {

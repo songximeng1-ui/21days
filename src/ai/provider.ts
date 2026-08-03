@@ -11,6 +11,8 @@ export type AiProviderInput = {
   routeKey: RouteKey;
   input: Record<string, unknown>;
   retryFeedback?: AiRetryFeedback;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
 };
 
 export type AiRetryFeedback = {
@@ -44,6 +46,10 @@ export interface AiProviderSet extends AiProvider {
 
 export type AiProviderErrorKind =
   | "transport"
+  | "timeout"
+  | "cancelled"
+  | "circuit_open"
+  | "response_too_large"
   | "retryable_http"
   | "non_retryable_http"
   | "envelope_json"
@@ -57,6 +63,7 @@ export class AiProviderError extends Error {
     readonly kind: AiProviderErrorKind = "transport",
     readonly httpStatusClass?: AiHttpStatusClass,
     readonly providerErrorCode?: string,
+    readonly retryAfterMs?: number,
   ) {
     super("AI provider request failed");
     this.name = "AiProviderError";

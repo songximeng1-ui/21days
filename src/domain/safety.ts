@@ -8,8 +8,31 @@ type RouteSafetyContext = {
 };
 
 const EXAGGERATION_REASON = "禁止夸大职责或成果";
+const SENSITIVE_PERSONAL_INFO_REASON =
+  "禁止在求职行动、记录或材料中输出敏感个人信息";
+
+const SENSITIVE_PERSONAL_INFO_PATTERNS = [
+  /(?<!\d)(?:\+?86[\s-]*)?1[3-9](?:[\s-]*\d){9}(?!\d)/,
+  /\b(?:phone|mobile|telephone)\s*[:：#]?\s*(?:\+?\d[\s().-]*){7,15}\d\b/i,
+  /(?<!\d)\d(?:[\s-]*\d){16}[\s-]*[\dXx](?!\d)/,
+  /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
+  /(?:婚育情况|婚姻状况|是否婚育|生育情况)\s*[:：]?\s*(?:已婚|未婚|已育|未育|怀孕)/i,
+  /(?:本人|我|用户)\s*(?:目前|现在)?\s*(?:已婚|未婚|已育|未育|怀孕)/i,
+  /(?:病史|疾病|病情|健康状况|残疾情况|诊断)\s*[:：]?\s*(?:抑郁症|焦虑症|精神疾病|癌症|艾滋病?|HIV|残疾|慢性病)/i,
+  /(?:本人|我|用户)\s*(?:有|患有|确诊|诊断为|正在治疗)?\s*(?:抑郁症|焦虑症|精神疾病|癌症|艾滋病?|HIV|残疾|慢性病)/i,
+  /\b(?:medical|health)\s+condition\s*[:：]\s*(?:depression|anxiety|cancer|HIV|AIDS|disability|chronic illness)\b/i,
+  /\b(?:diagnosed with|diagnosis)\s*[:：]?\s*(?:depression|anxiety|cancer|HIV|AIDS|chronic illness)\b/i,
+  /\bmarital\s+status\s*[:：]\s*(?:married|single|divorced|pregnant|has children)\b/i,
+  /(?:(?<!不要)(?<!不得)(?<!不能)(?<!请勿)把|(?<!不要)(?<!不得)(?<!不能)(?<!请勿)将|请把|建议|可以|应当|需要|务必)[^。；;.!?]{0,50}(?:手机号|联系电话|身份证(?:号|字段)?|邮箱|婚育情况|婚姻状况|病情|疾病|健康状况)[^。；;.!?]{0,50}(?:写入|写进|填写|加入|放进|保存|记录|公开|提供)[^。；;.!?]{0,30}(?:简历|求职记录|记录|对外材料|投递材料|申请材料)/i,
+  /(?:建议|请|可以|应当|需要|务必)[^。；;.!?]{0,30}(?:简历|求职记录|记录|对外材料|投递材料|申请材料)[^。；;.!?]{0,30}(?:写入|写进|填写|加入|放进|保存|记录|公开|提供)[^。；;.!?]{0,30}(?:手机号|联系电话|身份证(?:号|字段)?|邮箱|婚育情况|婚姻状况|病情|疾病|健康状况)/i,
+  /\b(?:add|include|put|save|record|disclose)\s+(?:your\s+)?(?:phone|mobile|national id|id number|email|marital status|medical condition|diagnosis)\s+(?:in|to)\s+(?:a\s+)?(?:resume|job record|application material)/i,
+];
 
 const BLOCKERS: Array<{ reason: string; patterns: RegExp[] }> = [
+  {
+    reason: SENSITIVE_PERSONAL_INFO_REASON,
+    patterns: SENSITIVE_PERSONAL_INFO_PATTERNS,
+  },
   {
     reason: "禁止输出匹配度、录取概率或适合度评分",
     patterns: [
@@ -70,9 +93,20 @@ const BLOCKERS: Array<{ reason: string; patterns: RegExp[] }> = [
   },
 ];
 
+export function containsSensitivePersonalInfo(value: unknown): boolean {
+  const text = stripCompliantSensitiveInfoReminders(
+    typeof value === "string" ? value : JSON.stringify(value),
+  );
+  return SENSITIVE_PERSONAL_INFO_PATTERNS.some((pattern) =>
+    pattern.test(text),
+  );
+}
+
 export function scanSafetyViolations(text: string): SafetyScanResult {
   const textWithoutGuardrailReminders = stripCompliantGuardrailReminders(
-    stripCompliantOutcomePromiseReminders(text),
+    stripCompliantOutcomePromiseReminders(
+      stripCompliantSensitiveInfoReminders(text),
+    ),
   );
   const blockedReasons = BLOCKERS.filter((blocker) =>
     blocker.patterns.some((pattern) => pattern.test(textWithoutGuardrailReminders))
@@ -82,6 +116,16 @@ export function scanSafetyViolations(text: string): SafetyScanResult {
     passed: blockedReasons.length === 0,
     blockedReasons,
   };
+}
+
+function stripCompliantSensitiveInfoReminders(text: string): string {
+  return text.replace(
+    /(?:不要|不得|不能|请勿|避免|不应|不希望|do not|don't|never)[^。；;.!?]{0,120}(?:手机号|联系电话|身份证(?:号|字段)?|邮箱|婚育情况|婚姻状况|病情|疾病|健康状况|phone|mobile|national id|id number|email|marital status|medical condition|diagnosis)[^。；;.!?]*(?=。|；|;|\.|!|\?|$)/gi,
+    (match) =>
+      /但|却|改为|随后|同时|然后|however|but|instead/i.test(match)
+        ? match
+        : "",
+  );
 }
 
 function stripCompliantOutcomePromiseReminders(text: string): string {

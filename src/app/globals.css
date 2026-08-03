@@ -31,7 +31,9 @@ a {
 }
 
 button,
-textarea {
+textarea,
+input:not([type="checkbox"]),
+select {
   font: inherit;
 }
 
@@ -161,7 +163,8 @@ textarea {
 }
 
 .panel :where(h1, h2, h3, p, li, span, strong, a),
-.panel textarea {
+.panel textarea,
+.panel select {
   max-width: 100%;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -205,12 +208,11 @@ textarea {
   line-height: 1.6;
 }
 
-textarea {
+textarea,
+select {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 116px;
-  resize: vertical;
   border: 1px solid #d8d5cc;
   border-radius: 8px;
   padding: 12px;
@@ -219,7 +221,19 @@ textarea {
   line-height: 1.6;
 }
 
-textarea:focus {
+textarea {
+  min-height: 116px;
+  resize: vertical;
+}
+
+input:not([type="checkbox"]),
+select {
+  min-height: 46px;
+}
+
+textarea:focus,
+input:not([type="checkbox"]):focus,
+select:focus {
   border-color: var(--primary);
   outline: 2px solid rgba(37, 108, 104, 0.14);
 }

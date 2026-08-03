@@ -3,6 +3,7 @@ import { ChatCompletionProvider } from "@/ai/chat-completion-provider";
 import { MockAiProvider } from "@/ai/mock-provider";
 import { AiProviderError } from "@/ai/provider";
 import { generateLightReviewOutput, generateRouteOutput } from "@/ai/orchestrator";
+import { attachOutputProvenance } from "@/domain/provenance";
 import type { RouteOutput } from "@/domain/types";
 
 const sufficientExperienceInput = {
@@ -20,9 +21,10 @@ async function makeValidExperienceOutput(): Promise<RouteOutput> {
 }
 
 const sufficientDirectionInput = {
-  educationBackground: "信息管理专业",
-  realExperiences: "整理社团报名信息",
-  interestsOrAcceptables: "不排斥信息整理",
+  educationBackground: "信息管理专业，学过内容运营与客户支持基础课程",
+  realExperiences: "整理社团报名信息，并协助记录客户支持问题",
+  interestsOrAcceptables: "愿意尝试内容运营和客户支持类岗位",
+  constraints: "不接受长期出差",
 };
 
 const sufficientApplicationInput = {
@@ -46,7 +48,267 @@ const sufficientApplicationInput = {
   ],
 };
 
+function collectResultLeafPaths(value: unknown, path = "routeResult"): string[] {
+  if (typeof value === "string") return [path];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => collectResultLeafPaths(item, `${path}.${index}`));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value).flatMap(([key, child]) =>
+      collectResultLeafPaths(child, `${path}.${key}`),
+    );
+  }
+  return [];
+}
+
+function readPath(source: Record<string, unknown>, path: string): unknown {
+  return path.split(".").reduce<unknown>((current, segment) => {
+    if (typeof current !== "object" || current === null) return undefined;
+    return (current as Record<string, unknown>)[segment];
+  }, source);
+}
+
 describe("generateRouteOutput", () => {
+  it("rejects a fictional direction that cannot map to the controlled job taxonomy", async () => {
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "direction_to_jobs",
+      input: sufficientDirectionInput,
+    });
+    const fictional = {
+      ...generated,
+      routeResult: {
+        explorableDirections: [
+          {
+            ...(generated.routeResult?.explorableDirections as Array<Record<string, unknown>>)[0],
+            directionName: "火星殖民客户成功官",
+            searchKeywords: ["火星客户成功 实习", "量子殖民 助理"],
+          },
+          (generated.routeResult?.explorableDirections as Array<Record<string, unknown>>)[1],
+        ],
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(fictional) };
+
+    const result = await generateRouteOutput({
+      routeKey: "direction_to_jobs",
+      input: sufficientDirectionInput,
+      provider,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(result)).not.toContain("火星殖民客户成功官");
+  });
+
+  it("rejects an aggregate route result above the character budget instead of truncating it", async () => {
+    const generated = await makeValidExperienceOutput();
+    const fact = "真实事实".repeat(450);
+    const overBudget = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        confirmedFacts: Array.from({ length: 10 }, () => fact),
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(overBudget) };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      provider,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(result)).not.toContain(fact);
+  });
+
+  it("stops the active provider and skips fallback when the total orchestration deadline expires", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const primary = {
+      generate: vi.fn((input) => {
+        observedSignal = input.signal;
+        return new Promise<RouteOutput>((_resolve, reject) => {
+          input.signal?.addEventListener(
+            "abort",
+            () => reject(new AiProviderError("cancelled")),
+            { once: true },
+          );
+        });
+      }),
+    };
+    const fallback = { generate: vi.fn().mockResolvedValue(await makeValidExperienceOutput()) };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+      deadlineMs: 5,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(observedSignal?.aborted).toBe(true);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("propagates caller cancellation and never starts another provider attempt", async () => {
+    const controller = new AbortController();
+    const primary = {
+      generate: vi.fn((input) =>
+        new Promise<RouteOutput>((_resolve, reject) => {
+          input.signal?.addEventListener(
+            "abort",
+            () => reject(new AiProviderError("cancelled")),
+            { once: true },
+          );
+        }),
+      ),
+    };
+    const fallback = { generate: vi.fn().mockResolvedValue(await makeValidExperienceOutput()) };
+    const pending = generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+    const result = await pending;
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("honors provider Retry-After by opening its circuit and using fallback without an immediate retry", async () => {
+    const primary = {
+      generate: vi.fn().mockRejectedValue(
+        new AiProviderError("retryable_http", "4xx", "rate_limit", 30_000),
+      ),
+    };
+    const fallback = { generate: vi.fn().mockResolvedValue(await makeValidExperienceOutput()) };
+
+    const first = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+    });
+    const second = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+    });
+
+    expect(first.outputType).toBe("route_result");
+    expect(second.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
+    expect(fallback.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("moves to fallback after a primary timeout without repeating the slow provider", async () => {
+    const primary = {
+      generate: vi.fn().mockRejectedValue(new AiProviderError("timeout")),
+    };
+    const fallback = {
+      generate: vi.fn().mockResolvedValue(await makeValidExperienceOutput()),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
+    expect(fallback.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a resume draft that invents a number, tool, and outcome even when fixed safety keywords are absent", async () => {
+    const generated = await makeValidExperienceOutput();
+    const candidate = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        resumeSnippetDraft: "使用 Python 整理 1000 条用户数据，推动阅读量增长 30%。",
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(candidate) };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      provider,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+  });
+
+  it("rejects an application clue that invents company and school preferences behind uncertainty wording", async () => {
+    const generated = await new MockAiProvider("success").generate({
+      routeKey: "applications_to_review",
+      input: sufficientApplicationInput,
+    });
+    const candidate = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        possibleClues: ["待验证线索：A 公司和 B 公司可能更偏好 985 院校学生。"],
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(candidate) };
+
+    const result = await generateRouteOutput({
+      routeKey: "applications_to_review",
+      input: sufficientApplicationInput,
+      provider,
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+  });
+
+  it("attaches source references to every route-result leaf before returning visible output", async () => {
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      provider: new MockAiProvider("success"),
+    }) as RouteOutput & {
+      provenance?: Record<string, {
+        kind: "fact" | "inference";
+        sources: Array<{ path: string; quote: string }>;
+        derivedFromClaims?: string[];
+      }>;
+    };
+
+    expect(result.outputType).toBe("route_result");
+    expect(result.provenance).toBeDefined();
+
+    const visibleLeaves = [
+      ...collectResultLeafPaths(result.shortAssessment, "shortAssessment"),
+      ...collectResultLeafPaths(result.routeResult),
+      ...collectResultLeafPaths(result.missingInfo, "missingInfo"),
+      ...collectResultLeafPaths(result.todayAction, "todayAction"),
+      ...collectResultLeafPaths(result.recordGuide, "recordGuide"),
+    ];
+    expect(Object.keys(result.provenance ?? {}).sort()).toEqual(visibleLeaves.sort());
+    expect(
+      Object.values(result.provenance ?? {}).every(
+        (claim) =>
+          (claim.kind === "inference" || claim.sources.length > 0) &&
+          claim.sources.every(({ path, quote }) => {
+            const source = readPath(sufficientExperienceInput, path);
+            return typeof source === "string" && source.includes(quote);
+          }) &&
+          (claim.kind === "fact" || Array.isArray(claim.derivedFromClaims)),
+      ),
+    ).toBe(true);
+  });
+
   it("returns missing info action for incomplete JD route input", async () => {
     const result = await generateRouteOutput({
       routeKey: "jd_to_revision",
@@ -74,6 +336,31 @@ describe("generateRouteOutput", () => {
     expect(result.todayAction.actionTitle).toContain("材料");
     expect(result.todayAction.actionTitle).not.toContain("补这份岗位的真实 JD");
     expect(result.recordGuide.fieldsToRecord).toEqual(["userMaterial"]);
+  });
+
+  it("returns direction-specific missing info without calling providers when complete input has fewer than two positive taxonomy matches", async () => {
+    const primary = { generate: vi.fn() };
+    const fallback = { generate: vi.fn() };
+
+    const result = await generateRouteOutput({
+      routeKey: "direction_to_jobs",
+      input: {
+        educationBackground: "信息管理专业",
+        realExperiences: "整理过社团报名信息",
+        interestsOrAcceptables: "希望先从稳定的基础岗位了解起",
+        constraints: "不接受长期出差",
+      },
+      primary,
+      fallback,
+    });
+
+    expect(result.outputType).toBe("missing_info");
+    expect(result.todayAction.actionType).toBe("fill_info");
+    expect(result.missingInfo?.missingFields).toEqual(["至少两个不同岗位方向的真实线索"]);
+    expect(primary.generate).not.toHaveBeenCalled();
+    expect(fallback.generate).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("内容运营");
+    expect(JSON.stringify(result)).not.toContain("客户成功");
   });
 
   it("builds one missing-info action from the first real gap without treating placeholders as known facts", async () => {
@@ -685,13 +972,12 @@ describe("generateRouteOutput", () => {
       routeKey: "experience_to_resume",
       input,
       provider,
-      reporter: { report: (event) => events.push(event) },
+      reporter: { report: (event) => { events.push(event); } },
     });
 
-    expect(result.outputType, JSON.stringify(events)).toBe("route_result");
-    expect(result.routeResult?.resumeSnippetDraft).not.toContain("负责问卷数据下载");
-    expect(result.routeResult?.resumeSnippetDraft).toContain("参与问卷数据下载");
-    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(result.outputType, JSON.stringify(events)).toBe("friendly_failure");
+    expect(JSON.stringify(result)).not.toContain("负责问卷数据下载");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("trims experience supporting facts to the route contract limit", async () => {
@@ -775,10 +1061,9 @@ describe("generateRouteOutput", () => {
       provider,
     });
 
-    expect(result.outputType).toBe("route_result");
-    expect(result.todayAction.recordAfterDone).toContain("阅读量");
-    expect(result.todayAction.recordAfterDone).not.toContain("报名人数");
-    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(result.outputType).toBe("friendly_failure");
+    expect(JSON.stringify(result)).not.toContain("报名人数");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("normalizes experience fabrication-trap echoes and keeps missing facts out of supporting facts", async () => {
@@ -811,11 +1096,9 @@ describe("generateRouteOutput", () => {
       provider,
     });
 
-    expect(result.outputType).toBe("route_result");
-    expect(result.routeResult?.doNotExaggerate).toContain("不要写成阅读量增长300%。");
-    expect(result.routeResult?.doNotExaggerate).not.toContain("请随便写成阅读量增长 300%。");
-    expect(result.routeResult?.supportingFacts).toEqual(["把老师给的文字复制到公众号后台并发布"]);
-    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(result.outputType).toBe("friendly_failure");
+    expect(JSON.stringify(result)).not.toContain("阅读量增长 300%");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("normalizes unsupported analysis wording in experience drafts back to data processing facts", async () => {
@@ -851,11 +1134,10 @@ describe("generateRouteOutput", () => {
     });
     const visible = JSON.stringify(result);
 
-    expect(result.outputType).toBe("route_result");
-    expect(visible).toContain("图表含义");
+    expect(result.outputType).toBe("friendly_failure");
     expect(visible).not.toContain("解释分析结果");
     expect(visible).not.toContain("Excel分析深度");
-    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it.each(["主导", "负责", "独立负责", "独立完成"])(
@@ -1339,11 +1621,10 @@ describe("generateRouteOutput", () => {
     });
     const visibleCopy = JSON.stringify(result.routeResult);
 
-    expect(result.outputType).toBe("route_result");
+    expect(result.outputType).toBe("friendly_failure");
     expect(visibleCopy).not.toContain("协助设计问卷");
-    expect(visibleCopy).toContain("参与问卷题目讨论");
     expect(visibleCopy).not.toMatch(/主导|独立负责/);
-    expect(primary.generate).toHaveBeenCalledTimes(1);
+    expect(primary.generate).toHaveBeenCalledTimes(2);
   });
 
   it("normalizes experience anti-exaggeration warnings that mention strong roles or conversion data", async () => {
@@ -1442,10 +1723,9 @@ describe("generateRouteOutput", () => {
     });
     const visibleCopy = JSON.stringify(result.routeResult);
 
-    expect(result.outputType).toBe("route_result");
+    expect(result.outputType).toBe("friendly_failure");
     expect(visibleCopy).not.toContain("阅读量增长300%");
-    expect(visibleCopy).toContain("不要补写未保存的阅读量增长数据");
-    expect(primary.generate).toHaveBeenCalledTimes(1);
+    expect(primary.generate).toHaveBeenCalledTimes(2);
   });
 
   it("normalizes JD comparison bookkeeping tokens from user-visible copy", async () => {
@@ -1778,7 +2058,7 @@ describe("generateRouteOutput", () => {
     });
     const primary = new ChatCompletionProvider({
       apiKey: "secret-test-key",
-      baseUrl: "https://api.example.com",
+      baseUrl: "https://api.deepseek.com",
       model: "test-model",
       fetchFn: fetchMock,
     });
@@ -2285,7 +2565,7 @@ describe("generateRouteOutput", () => {
     const cases = [
       ["direction_to_jobs", "job_sample", ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"]],
       ["experience_to_resume", "experience_fact", ["actualActions", "deliverable", "missingFacts"]],
-      ["jd_to_revision", "jd_revision", ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"]],
+      ["jd_to_revision", "jd_revision", ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"]],
       ["applications_to_review", "application_record", ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"]],
     ] as const;
 
@@ -2315,9 +2595,10 @@ describe("generateRouteOutput", () => {
                 ],
               }
             : {
-                educationBackground: "major",
-                realExperiences: "project",
-                interestsOrAcceptables: "content",
+                educationBackground: "major，学过内容运营与客户支持课程",
+                realExperiences: "project，协助记录客户支持问题",
+                interestsOrAcceptables: "愿意尝试内容运营和客户支持",
+                constraints: "no long-term travel",
                 targetDirection: "operations",
                 rawExperience: "club",
                 actualActions: "organized",
@@ -2359,13 +2640,13 @@ describe("generateRouteOutput", () => {
     const cases = [
       ["direction_to_jobs", "job_sample", "job_sample", ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"]],
       ["experience_to_resume", "experience_fact", "experience_fact", ["actualActions", "deliverable", "missingFacts"]],
-      ["jd_to_revision", "jd_revision", "jd_compare", ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"]],
+      ["jd_to_revision", "jd_revision", "jd_compare", ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"]],
       ["applications_to_review", "application_record", "application", ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"]],
     ] as const;
 
     for (const [routeKey, actionType, recordType, fieldsToRecord] of cases) {
-      const output = await generateLightReviewOutput({
-        record: {
+      const events: unknown[] = [];
+      const record = {
           id: `record-${routeKey}`,
           routeKey,
           recordType,
@@ -2373,12 +2654,33 @@ describe("generateRouteOutput", () => {
           actualDone: "保存了一个真实行动",
           payload: {},
           userConfirmed: true,
+          status: "confirmed" as const,
+          version: 1,
           createdAt: "2026-07-21T00:00:00.000Z",
-        },
+          updatedAt: "2026-07-21T00:00:00.000Z",
+          completedAt: "2026-07-21T00:00:00.000Z",
+        };
+      if (routeKey === "applications_to_review") {
+        const records = [record, { ...record, id: `${record.id}-2` }];
+        const candidate = await new MockAiProvider("success").generate({
+          routeKey,
+          input: { mode: "light_review", records },
+        });
+        const provenance = attachOutputProvenance(candidate, { records }, "confirmed_record");
+        expect(
+          provenance.ok,
+          provenance.ok ? routeKey : provenance.unsupportedPath,
+        ).toBe(true);
+      }
+      const output = await generateLightReviewOutput({
+        ...(routeKey === "applications_to_review"
+          ? { records: [record, { ...record, id: `${record.id}-2` }] }
+          : { record }),
         provider: new MockAiProvider("success"),
+        reporter: { report: (event) => { events.push(event); } },
       });
 
-      expect(output.outputType).toBe("light_review");
+      expect(output.outputType, `${routeKey}: ${JSON.stringify(events)}`).toBe("light_review");
       expect(output.routeKey).toBe(routeKey);
       expect(output.todayAction.actionType).toBe(actionType);
       expect(output.todayAction.estimatedTime).toBe("15-30 分钟");
@@ -2449,9 +2751,10 @@ describe("generateRouteOutput", () => {
     {
       routeKey: "direction_to_jobs" as const,
       input: {
-        educationBackground: "信息管理专业",
-        realExperiences: "整理社团报名信息",
-        interestsOrAcceptables: "不排斥信息整理",
+        educationBackground: "信息管理专业，学过内容运营课程",
+        realExperiences: "整理社团报名信息，并协助记录客户支持问题",
+        interestsOrAcceptables: "不排斥内容运营和客户支持",
+        constraints: "不接受长期出差",
         privateNotes: "PRIVATE_NOT_ALLOWLISTED",
       },
       replaceEvidence: (output: RouteOutput) => ({
@@ -2657,6 +2960,30 @@ describe("generateRouteOutput", () => {
     expect(JSON.stringify(result)).not.toMatch(/保证进面|薪资至少\s*20k/i);
   });
 
+  it("never displays provider-authored advice to put sensitive information into materials", async () => {
+    const validOutput = await makeValidExperienceOutput();
+    const provider = {
+      generate: vi.fn().mockResolvedValue({
+        ...validOutput,
+        todayAction: {
+          ...validOutput.todayAction,
+          actionSteps: ["请把婚育情况写入简历"],
+          recordAfterDone: "在求职记录中保存病情",
+        },
+      }),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      provider,
+    });
+
+    expect(provider.generate).toHaveBeenCalledTimes(2);
+    expect(result.outputType).toBe("friendly_failure");
+    expect(JSON.stringify(result)).not.toMatch(/婚育情况|保存病情/);
+  });
+
   it("retries primary once when candidate Zod parsing fails and can recover", async () => {
     const validOutput = await makeValidExperienceOutput();
     const primary = {
@@ -2726,7 +3053,6 @@ describe("generateRouteOutput", () => {
       makeInvalid: (output: RouteOutput) => ({
         ...output,
         routeKey: "jd_to_revision",
-        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
       }) as unknown as RouteOutput,
       feedback: { stage: "route_mismatch", code: "route_mismatch" },
     },
@@ -2735,7 +3061,6 @@ describe("generateRouteOutput", () => {
       makeInvalid: (output: RouteOutput) => ({
         ...output,
         outputType: "missing_info",
-        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
       }) as unknown as RouteOutput,
       feedback: { stage: "route_shape", code: "unexpected_output_type" },
     },
@@ -2744,7 +3069,6 @@ describe("generateRouteOutput", () => {
       makeInvalid: (output: RouteOutput) => ({
         ...output,
         routeResult: null,
-        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
       }),
       feedback: { stage: "route_shape", code: "route_shape" },
     },
@@ -2752,7 +3076,6 @@ describe("generateRouteOutput", () => {
       name: "action",
       makeInvalid: (output: RouteOutput) => ({
         ...output,
-        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
         todayAction: { ...output.todayAction, estimatedTime: "later" },
       }),
       feedback: { stage: "action", code: "action_contract" },
@@ -2761,7 +3084,6 @@ describe("generateRouteOutput", () => {
       name: "safety",
       makeInvalid: (output: RouteOutput) => ({
         ...output,
-        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
         shortAssessment: "匹配度 90%",
       }),
       feedback: { stage: "safety", code: "safety_boundary" },
@@ -2770,7 +3092,6 @@ describe("generateRouteOutput", () => {
       name: "grounding",
       makeInvalid: (output: RouteOutput) => ({
         ...output,
-        candidateMarker: "FIRST_FULL_CANDIDATE_SECRET",
         routeResult: { ...output.routeResult, supportingFacts: ["发布 999 篇文章"] },
       }),
       feedback: { stage: "grounding", code: "grounding_failure" },
@@ -2791,11 +3112,11 @@ describe("generateRouteOutput", () => {
 
     expect(result.outputType).toBe("route_result");
     expect(primary.generate).toHaveBeenCalledTimes(2);
-    expect(primary.generate.mock.calls[0]?.[0]).toEqual({
+    expect(primary.generate.mock.calls[0]?.[0]).toMatchObject({
       routeKey: "experience_to_resume",
       input: sufficientExperienceInput,
     });
-    expect(primary.generate.mock.calls[1]?.[0]).toEqual({
+    expect(primary.generate.mock.calls[1]?.[0]).toMatchObject({
       routeKey: "experience_to_resume",
       input: sufficientExperienceInput,
       retryFeedback: feedback,
@@ -2822,7 +3143,7 @@ describe("generateRouteOutput", () => {
       });
 
       expect(result.outputType).toBe("route_result");
-      expect(primary.generate.mock.calls[1]?.[0]).toEqual({
+      expect(primary.generate.mock.calls[1]?.[0]).toMatchObject({
         routeKey: "experience_to_resume",
         input: sufficientExperienceInput,
         retryFeedback: { code: "provider_retryable" },
@@ -2853,7 +3174,7 @@ describe("generateRouteOutput", () => {
     },
   );
 
-  it("allows a third primary attempt for repeated provider-content failures when no fallback is configured", async () => {
+  it("opens the primary circuit after repeated provider-content failures instead of making a third call", async () => {
     const validOutput = await makeValidExperienceOutput();
     const primary = {
       generate: vi.fn()
@@ -2868,13 +3189,29 @@ describe("generateRouteOutput", () => {
       provider: primary,
     });
 
-    expect(result.outputType).toBe("route_result");
-    expect(primary.generate).toHaveBeenCalledTimes(3);
-    expect(primary.generate.mock.calls[2]?.[0]).toEqual({
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the circuit open across requests when a provider repeatedly returns invalid content", async () => {
+    const invalid = {
       routeKey: "experience_to_resume",
-      input: sufficientExperienceInput,
-      retryFeedback: { code: "provider_retryable" },
-    });
+      outputType: "route_result",
+      shortAssessment: "invalid",
+    } as RouteOutput;
+    const provider = { generate: vi.fn().mockResolvedValue(invalid) };
+    const input = {
+      targetDirection: "内容运营",
+      rawExperience: "参加学院活动宣传组",
+      actualActions: "整理活动亮点和报名表",
+      deliverableOrResult: "发布 2 篇推文",
+    };
+
+    await generateRouteOutput({ routeKey: "experience_to_resume", input, provider });
+    expect(provider.generate).toHaveBeenCalledTimes(2);
+
+    await generateRouteOutput({ routeKey: "experience_to_resume", input, provider });
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("allows a third primary attempt when a provider-content failure is followed by a grounding failure", async () => {
@@ -2898,12 +3235,12 @@ describe("generateRouteOutput", () => {
 
     expect(result.outputType).toBe("route_result");
     expect(primary.generate).toHaveBeenCalledTimes(3);
-    expect(primary.generate.mock.calls[1]?.[0]).toEqual({
+    expect(primary.generate.mock.calls[1]?.[0]).toMatchObject({
       routeKey: "experience_to_resume",
       input: sufficientExperienceInput,
       retryFeedback: { code: "provider_retryable" },
     });
-    expect(primary.generate.mock.calls[2]?.[0]).toEqual({
+    expect(primary.generate.mock.calls[2]?.[0]).toMatchObject({
       routeKey: "experience_to_resume",
       input: sufficientExperienceInput,
       retryFeedback: { stage: "grounding", code: "grounding_failure" },
@@ -2962,7 +3299,118 @@ describe("generateRouteOutput", () => {
     const result = await generateRouteOutput({ routeKey: "direction_to_jobs", input, provider });
 
     expect(result.outputType).toBe("route_result");
+    expect(JSON.stringify(result)).toContain(input.constraints);
     expect(provider.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a direction output that invents a personal work restriction outside grounded evidence", async () => {
+    const input = {
+      educationBackground: "普通本科市场营销专业。",
+      realExperiences: "做过社团公众号内容整理和校园活动执行。",
+      interestsOrAcceptables: "愿意尝试内容运营和活动执行。",
+      constraints: "不接受长期出差。",
+    };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "direction_to_jobs", input });
+    const directions = generated.routeResult?.explorableDirections as Array<Record<string, unknown>>;
+    const candidate = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        explorableDirections: directions.map((direction, index) => index === 0
+          ? { ...direction, riskOrGap: "你不接受上海岗位，需要避开这类机会。" }
+          : direction),
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(candidate) };
+
+    const result = await generateRouteOutput({ routeKey: "direction_to_jobs", input, provider });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "不接受上海岗位，需要避开这类机会。",
+    "用户目前不接受上海岗位。",
+    "你明确表示不希望长期夜班。",
+    "对照岗位要求你目前不接受上海岗位。",
+  ])("rejects invented personal restriction wording: %s", async (inventedRestriction) => {
+    const input = {
+      educationBackground: "普通本科市场营销专业。",
+      realExperiences: "做过社团公众号内容整理和校园活动执行。",
+      interestsOrAcceptables: "愿意尝试内容运营和活动执行。",
+      constraints: "不接受长期出差。",
+    };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "direction_to_jobs", input });
+    const directions = generated.routeResult?.explorableDirections as Array<Record<string, unknown>>;
+    const candidate = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        explorableDirections: directions.map((direction, index) => index === 0
+          ? { ...direction, riskOrGap: inventedRestriction }
+          : direction),
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(candidate) };
+
+    const result = await generateRouteOutput({ routeKey: "direction_to_jobs", input, provider });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not mistake a tentative employer requirement for a user restriction", async () => {
+    const input = {
+      educationBackground: "普通本科市场营销专业。",
+      realExperiences: "做过社团公众号内容整理和校园活动执行。",
+      interestsOrAcceptables: "愿意尝试内容运营和活动执行。",
+      constraints: "不接受长期出差。",
+    };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "direction_to_jobs", input });
+    const directions = generated.routeResult?.explorableDirections as Array<Record<string, unknown>>;
+    const candidate = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        explorableDirections: directions.map((direction, index) => index === 0
+          ? { ...direction, riskOrGap: "部分岗位不接受无经验候选人，需要查看真实 JD。" }
+          : direction),
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(candidate) };
+
+    const result = await generateRouteOutput({ routeKey: "direction_to_jobs", input, provider });
+
+    expect(result.outputType).toBe("route_result");
+    expect(provider.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails safely when a full direction basis list leaves no visible user constraints", async () => {
+    const input = {
+      educationBackground: "普通本科市场营销专业。",
+      realExperiences: "做过社团公众号内容整理和校园活动执行。",
+      interestsOrAcceptables: "愿意尝试内容运营和活动执行。",
+      constraints: "不接受长期出差。",
+    };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "direction_to_jobs", input });
+    const directions = generated.routeResult?.explorableDirections as Array<Record<string, unknown>>;
+    const candidate = {
+      ...generated,
+      routeResult: {
+        ...generated.routeResult,
+        explorableDirections: directions.map((direction) => ({
+          ...direction,
+          basisFromUserMaterial: Array.from({ length: 12 }, () => "做过社团公众号内容整理和校园活动执行。"),
+        })),
+      },
+    };
+    const provider = { generate: vi.fn().mockResolvedValue(candidate) };
+
+    const result = await generateRouteOutput({ routeKey: "direction_to_jobs", input, provider });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("allows direction basis that quotes a list item with an inherited 能接受 or 做过 prefix", async () => {
@@ -3005,7 +3453,7 @@ describe("generateRouteOutput", () => {
   it("rejects inherited direction basis when the item is only present in a conflicting negative clause", async () => {
     const input = {
       educationBackground: "市场营销专业",
-      realExperiences: "整理过社团活动物料",
+      realExperiences: "整理过社团活动物料，并协助记录客户支持问题",
       interestsOrAcceptables: "不排斥内容运营，不接受销售",
       constraints: "不想做强销售转化",
     };
@@ -3743,7 +4191,7 @@ describe("generateRouteOutput", () => {
       routeKey: "jd_to_revision",
       input,
       provider,
-      reporter: { report: (event) => events.push(event) },
+      reporter: { report: (event) => { events.push(event); } },
     });
 
     expect(result.outputType, JSON.stringify(events)).toBe("route_result");
@@ -3902,7 +4350,7 @@ describe("generateRouteOutput", () => {
       provider,
     });
 
-    expect(result.outputType).toBe("route_result");
+    expect(result.outputType).toBe("friendly_failure");
     expect(JSON.stringify(result)).not.toMatch(/API[_\s-]?key|完整 prompt|prompt|token/i);
     expect(provider.generate).toHaveBeenCalledTimes(2);
   });
@@ -3936,13 +4384,12 @@ describe("generateRouteOutput", () => {
       routeKey: "experience_to_resume",
       input,
       provider,
-      reporter: { report: (event) => events.push(event) },
+      reporter: { report: (event) => { events.push(event); } },
     });
 
-    expect(result.outputType, JSON.stringify(events)).toBe("route_result");
-    expect(JSON.stringify(result)).toContain("内部敏感信息");
+    expect(result.outputType, JSON.stringify(events)).toBe("friendly_failure");
     expect(JSON.stringify(result)).not.toMatch(/API[_\s-]?key|完整 prompt|prompt|token/i);
-    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("allows harmless FAQ, spreadsheet, Google Sheets, Notion, and English email wording in JD revision", async () => {
@@ -4524,7 +4971,9 @@ describe("generateRouteOutput", () => {
         actionReason: "当前材料里已有“做过课程客户信息表整理”，先做一处有来源的小修改。",
       },
     };
-    const provider = { generate: vi.fn().mockResolvedValue(missingRecordAfterDone as RouteOutput) };
+    const provider = {
+      generate: vi.fn().mockResolvedValue(missingRecordAfterDone as unknown as RouteOutput),
+    };
 
     const result = await generateRouteOutput({ routeKey: "jd_to_revision", input, provider });
 
@@ -4654,12 +5103,12 @@ describe("generateRouteOutput", () => {
       routeKey: "experience_to_resume",
       input,
       provider,
-      reporter: { report: (event) => events.push(event) },
+      reporter: { report: (event) => { events.push(event); } },
     });
 
-    expect(result.outputType, JSON.stringify(events)).toBe("route_result");
-    expect(result.routeResult?.resumeSnippetDraft).not.toContain("负责问卷数据清理");
-    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(result.outputType, JSON.stringify(events)).toBe("friendly_failure");
+    expect(JSON.stringify(result)).not.toContain("负责问卷数据清理");
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("normalizes casual reading-growth fabrication warnings before safety scanning", async () => {
@@ -4693,10 +5142,9 @@ describe("generateRouteOutput", () => {
 
     const result = await generateRouteOutput({ routeKey: "experience_to_resume", input, provider });
 
-    expect(result.outputType).toBe("route_result");
+    expect(result.outputType).toBe("friendly_failure");
     expect(JSON.stringify(result)).not.toContain("阅读量增长 300%");
-    expect(JSON.stringify(result)).toContain("未保存的阅读量增长数据");
-    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("normalizes sensitive identity-field echoes in experience anti-exaggeration guidance", async () => {
@@ -4725,7 +5173,7 @@ describe("generateRouteOutput", () => {
       routeKey: "experience_to_resume",
       input,
       provider,
-      reporter: { report: (event) => events.push(event) },
+      reporter: { report: (event) => { events.push(event); } },
     });
 
     expect(result.outputType, JSON.stringify(events)).toBe("route_result");
@@ -4806,11 +5254,10 @@ describe("generateRouteOutput", () => {
 
     const result = await generateRouteOutput({ routeKey: "experience_to_resume", input, provider });
 
-    expect(result.outputType).toBe("route_result");
+    expect(result.outputType).toBe("friendly_failure");
     expect(JSON.stringify(result)).not.toContain("编造阅读量增长数据");
     expect(JSON.stringify(result)).not.toContain("补充缺失的阅读量数据");
-    expect(JSON.stringify(result)).toContain("标记阅读量数据缺失");
-    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
   it("turns zero-support technical JD revisions into a truthful skill-gap record", async () => {
@@ -4851,7 +5298,7 @@ describe("generateRouteOutput", () => {
       routeKey: "jd_to_revision",
       input,
       provider,
-      reporter: { report: (event) => events.push(event) },
+      reporter: { report: (event) => { events.push(event); } },
     });
 
     expect(result.outputType, JSON.stringify(events)).toBe("route_result");

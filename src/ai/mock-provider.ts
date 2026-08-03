@@ -1,4 +1,5 @@
 import { AiProviderError, type AiProvider, type AiProviderInput, type AiProviderScenario } from "@/ai/provider";
+import { selectJobTaxonomyDirections } from "@/domain/job-taxonomy";
 import type { RouteOutput } from "@/domain/types";
 
 export class MockAiProvider implements AiProvider {
@@ -30,7 +31,8 @@ export class MockAiProvider implements AiProvider {
 }
 
 function makeLightReviewOutput(input: AiProviderInput): RouteOutput {
-  const record = input.input.record as {
+  const record = (input.input.record ??
+    (Array.isArray(input.input.records) ? input.input.records[0] : undefined)) as {
     actualDone?: string;
     payload?: Record<string, unknown>;
   } | undefined;
@@ -44,7 +46,12 @@ function makeLightReviewOutput(input: AiProviderInput): RouteOutput {
     outputType: "light_review",
     shortAssessment: "这条记录可以先做一次轻复盘。",
     routeResult: {
-      reviewBasis: collectLightReviewBasis(input.routeKey, actualDone, record?.payload),
+      reviewBasis: collectLightReviewBasis(
+        input.routeKey,
+        actualDone,
+        record?.payload,
+        Array.isArray(input.input.records) ? input.input.records : [],
+      ),
       clues: ["这一步已经从模糊想法变成了一条可回看的记录"],
       missingInfo: ["还可以补一项更具体的材料版本或事实依据"],
       nextAction: next.actionTitle,
@@ -92,17 +99,23 @@ function collectLightReviewBasis(
   routeKey: AiProviderInput["routeKey"],
   actualDone: string,
   payload?: Record<string, unknown>,
+  records: unknown[] = [],
 ): string[] {
   if (routeKey !== "applications_to_review" || !payload) {
     return [actualDone];
   }
 
+  const persistedJobTitles = records
+    .map((item) => isRecord(item) && isRecord(item.payload)
+      ? readText(item.payload.jobTitle)
+      : "")
+    .filter(Boolean);
+  if (persistedJobTitles.length > 0) {
+    return [actualDone, ...persistedJobTitles].slice(0, 3);
+  }
+
   const applications = ["", "2"]
-    .map((suffix) => {
-      const jobTitle = readText(payload[`jobTitle${suffix}`]);
-      const companyOrPlatform = readText(payload[`companyOrPlatform${suffix}`]);
-      return jobTitle && companyOrPlatform ? `${jobTitle} / ${companyOrPlatform}` : "";
-    })
+    .map((suffix) => readText(payload[`jobTitle${suffix}`]))
     .filter(Boolean);
 
   return [actualDone, ...applications];
@@ -143,7 +156,7 @@ function lightReviewNextStep(routeKey: AiProviderInput["routeKey"]): {
       recordAfterDone: "记录修改前后片段和对应 JD 要求。",
       actionType: "jd_revision",
       recordType: "jd_compare",
-      fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
+      fieldsToRecord: ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
     };
   }
   return {
@@ -159,38 +172,33 @@ function lightReviewNextStep(routeKey: AiProviderInput["routeKey"]): {
 function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
   const { routeKey } = input;
   if (routeKey === "direction_to_jobs") {
-    const directionName = readText(input.input.interestsOrAcceptables) || readText(input.input.educationBackground);
-    const secondaryDirectionName = readText(input.input.educationBackground) || `${directionName}支持`;
+    const directions = selectJobTaxonomyDirections(
+      compactTextValues([
+        input.input.educationBackground,
+        input.input.realExperiences,
+        input.input.interestsOrAcceptables,
+      ]).join(" "),
+    );
     const basis = compactTextValues([
       input.input.educationBackground,
       input.input.realExperiences,
       input.input.interestsOrAcceptables,
+      input.input.constraints,
     ]);
     return {
       routeKey,
       outputType: "route_result",
       shortAssessment: "可以先把方向落到真实岗位样本。",
       routeResult: {
-        explorableDirections: [
-          {
-            directionName,
-            searchKeywords: [`${directionName}实习`, `${directionName}助理`, `${directionName}专员`],
+        explorableDirections: directions.map((direction, index) => ({
+            directionName: direction.directionName,
+            searchKeywords: direction.searchKeywords,
             basisFromUserMaterial: basis,
             riskOrGap: "还缺真实 JD 样本验证",
-            validationFocus: "可以先探索：观察岗位要求里反复出现的工具和交付物",
-          },
-          {
-            directionName: secondaryDirectionName,
-            searchKeywords: [
-              `${secondaryDirectionName}实习`,
-              `${secondaryDirectionName}助理`,
-              `${secondaryDirectionName}专员`,
-            ],
-            basisFromUserMaterial: basis,
-            riskOrGap: "还缺真实 JD 样本验证",
-            validationFocus: "可以先探索：观察岗位日常是否符合已知兴趣和限制",
-          },
-        ],
+            validationFocus: index === 0
+              ? "可以先探索：观察岗位要求里反复出现的工具和交付物"
+              : "可以先探索：观察岗位日常是否符合已知兴趣和限制",
+          })),
       },
       missingInfo: null,
       todayAction: {
@@ -266,7 +274,7 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
       },
       recordGuide: {
         recordType: "jd_compare",
-        fieldsToRecord: ["beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
+        fieldsToRecord: ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
         requiresUserConfirmation: true,
       },
     };
@@ -287,21 +295,21 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
       routeResult: {
         reviewBasis,
         recordSufficiency: "enough",
-        possibleClues: ["可能需要继续验证材料版本与反馈状态之间是否存在差异"],
-        informationGaps: ["JD 摘要", "使用的材料版本"],
-        nextValidationAction: "补齐 1 条投递记录的材料版本",
+        possibleClues: ["两条真实投递已经可以对照，但目前不能确认反馈差异由哪个因素造成，仍需验证"],
+        informationGaps: ["还缺后续真实反馈"],
+        nextValidationAction: "选 1 条投递记录，写下 1 个需要后续反馈验证的问题",
       },
       missingInfo: null,
       todayAction: {
-        actionTitle: "今天先选择 1 条投递记录补齐材料版本",
-        actionReason: "先让这条记录可复盘，再决定下一次需要补哪项材料证据。",
+        actionTitle: "今天先选 1 条投递记录，写下 1 个待验证问题",
+        actionReason: "现有字段已经完整，下一步只提出一个需要真实反馈验证的问题，不先下结论。",
         actionSteps: [
           "选最近一条投递",
-          "按这个格式补：岗位 / 公司或平台 / 投递时间 / 反馈状态 / JD 摘要 / 材料版本",
-          "只写能确认的真实信息，先把这条记录补到可以复盘",
+          "对照已记录的 JD 摘要、材料版本和反馈状态",
+          "把自己的怀疑写成一个问题，并标明要等什么真实反馈来验证",
         ],
         estimatedTime: "15-30 分钟",
-        recordAfterDone: "记录岗位、公司或平台、投递时间、反馈状态、JD 摘要和材料版本。",
+        recordAfterDone: "记录所选岗位、待验证问题和需要等待的真实反馈。",
         actionType: "application_record",
       },
       recordGuide: {

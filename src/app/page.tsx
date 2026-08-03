@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { ROUTE_KEYS, getRouteStrategy } from "@/domain/routes";
+import { getRouteContract } from "@/domain/route-contracts";
+import type { OutputProvenance } from "@/domain/provenance";
 import type { RouteKey, RouteOutput } from "@/domain/types";
 import {
   loadHomeProgress,
   saveCurrentAction,
+  shrinkUnfinishedAction,
   type HomeProgress,
   type LocalReview,
 } from "@/lib/local-store";
@@ -13,6 +16,7 @@ import {
 export default function Home() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [isChoosingQuestion, setIsChoosingQuestion] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [progress, setProgress] = useState<HomeProgress>({
     progressLabel: "第 1 次推进",
     currentAction: null,
@@ -37,7 +41,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="home-hero">
-        <p className="day-badge">21 天陪跑 · {isLoaded ? progress.progressLabel : "正在读取本地进度"}</p>
+        <p className="day-badge">21 天陪跑 · {isLoaded ? progress.progressLabel : "正在找回上次进度"}</p>
         <h1>不用一次想清楚，今天先推进一件事。</h1>
         {!isLoaded ? (
           <p className="muted">正在把你上次保存的行动和记录找出来。</p>
@@ -46,6 +50,9 @@ export default function Home() {
             progress={progress}
             isChoosingQuestion={isChoosingQuestion}
             onChooseQuestion={() => setIsChoosingQuestion(true)}
+            onSaveFailure={() =>
+              setSaveError("下一次行动没有保存成功，请留在本页稍后重试。")
+            }
           />
         ) : (
           <>
@@ -55,6 +62,7 @@ export default function Home() {
         )}
       </section>
 
+      {saveError && <p className="notice" role="alert">{saveError}</p>}
       {shouldShowRoutes && <RouteQuestionList isReturnState={hasReturnState} />}
 
       <section className="home-footer">
@@ -69,31 +77,40 @@ function ReturnHomeState({
   progress,
   isChoosingQuestion,
   onChooseQuestion,
+  onSaveFailure,
 }: {
   progress: HomeProgress;
   isChoosingQuestion: boolean;
   onChooseQuestion: () => void;
+  onSaveFailure: () => void;
 }) {
   if (progress.hasUnfinishedAction && progress.currentAction) {
-    const action = progress.currentAction.todayAction;
-    const smallerAction = makeSmallerAction(progress.currentAction);
+    const smallerAction = shrinkUnfinishedAction(progress.currentAction);
 
     return (
       <div className="notice">
         <p className="lead">上次这一步还没做完，今天可以把它缩小一点。</p>
-        <h2>{action.actionTitle}</h2>
+        <h2>{smallerAction.todayAction.actionTitle}</h2>
         <p>{smallerAction.todayAction.actionReason}</p>
         <ul className="compact-list">
           {smallerAction.todayAction.actionSteps.map((step) => <li key={step}>{step}</li>)}
         </ul>
         <div className="action-meta">
-          <span>{action.estimatedTime}</span>
-          <span>{action.recordAfterDone}</span>
+          <span>{smallerAction.todayAction.estimatedTime}</span>
+          <span>{smallerAction.todayAction.recordAfterDone}</span>
+          <span>完成标准：{smallerAction.todayAction.completionStandard}</span>
         </div>
         <a
           className="primary-button"
           href={`/routes/${progress.currentAction.routeKey}/action`}
-          onClick={() => saveCurrentAction(smallerAction)}
+          onClick={(event) => {
+            try {
+              saveCurrentAction(smallerAction);
+            } catch {
+              event.preventDefault();
+              onSaveFailure();
+            }
+          }}
         >
           继续一个更小版本
         </a>
@@ -139,8 +156,14 @@ function ReturnHomeState({
       <a
         className="primary-button"
         href={primaryHref}
-        onClick={() => {
-          if (reviewAction) saveCurrentAction(reviewAction);
+        onClick={(event) => {
+          if (!reviewAction) return;
+          try {
+            saveCurrentAction(reviewAction);
+          } catch {
+            event.preventDefault();
+            onSaveFailure();
+          }
         }}
       >
         {primaryLabel}
@@ -175,31 +198,26 @@ function RouteQuestionList({ isReturnState }: { isReturnState: boolean }) {
   );
 }
 
-function makeSmallerAction(output: RouteOutput): RouteOutput {
-  const firstStep = output.todayAction.actionSteps[0] ?? output.todayAction.actionTitle;
-  return {
-    ...output,
-    todayAction: {
-      ...output.todayAction,
-      actionReason: "今天先完成一个更小版本。",
-      actionSteps: [`只做第一步：${firstStep}`],
-      recordAfterDone: output.todayAction.recordAfterDone,
-    },
-  };
-}
-
-function makeReviewNextAction(routeKey: RouteKey, review: LocalReview): RouteOutput {
+function makeReviewNextAction(routeKey: RouteKey, review: LocalReview): RouteOutput | null {
   const nextAction = review.nextAction;
-  return {
+  const contract = getRouteContract(routeKey);
+  const actionType =
+    review.nextActionType === contract.actionType
+      ? review.nextActionType
+      : contract.actionType;
+  const recordType =
+    review.nextRecordType === contract.recordType
+      ? review.nextRecordType
+      : contract.recordType;
+  const output: RouteOutput = {
     routeKey,
-    outputType: "route_result",
+    outputType: "light_review",
     shortAssessment: "根据上次记录，今天继续这一件事。",
     routeResult: {
-      reviewBasis: ["上次记录后整理出的下一步行动"],
-      recordSufficiency: "next_action",
-      possibleClues: ["已经有一条可继续推进的行动"],
-      informationGaps: ["做完后再补真实记录"],
-      nextValidationAction: nextAction,
+      reviewBasis: review.reviewBasis,
+      clues: review.clues,
+      missingInfo: review.missingInfo,
+      nextAction: review.nextAction,
     },
     missingInfo: null,
     todayAction: {
@@ -208,12 +226,64 @@ function makeReviewNextAction(routeKey: RouteKey, review: LocalReview): RouteOut
       actionSteps: ["打开上次记录", "完成这一小步", "做完后保存结果"],
       estimatedTime: "15-30 分钟",
       recordAfterDone: "记录这次实际完成了什么。",
-      actionType: review.nextActionType ?? "fill_info",
+      actionType,
     },
     recordGuide: {
-      recordType: review.nextRecordType ?? "fill_info",
-      fieldsToRecord: review.nextFieldsToRecord ?? ["note"],
+      recordType,
+      fieldsToRecord:
+        review.nextRecordType === contract.recordType && review.nextFieldsToRecord?.length
+          ? review.nextFieldsToRecord
+          : [...contract.fieldsToRecord],
       requiresUserConfirmation: true,
     },
   };
+  output.provenance = makeReviewContinuationProvenance(review, output);
+  return Object.keys(output.provenance).length > 0 ? output : null;
+}
+
+function makeReviewContinuationProvenance(
+  review: LocalReview,
+  output: RouteOutput,
+): OutputProvenance {
+  const provenance: OutputProvenance = {};
+  const original = review.provenance ?? {};
+  const anchors: string[] = [];
+  review.reviewBasis.forEach((_, index) => {
+    const sourceClaim = original[`routeResult.reviewBasis.${index}`];
+    if (sourceClaim?.kind === "fact" && sourceClaim.sources.length > 0) {
+      const path = `routeResult.reviewBasis.${index}`;
+      provenance[path] = sourceClaim;
+      anchors.push(path);
+    }
+  });
+  if (anchors.length === 0) return {};
+
+  const inference = (claimPath: string) => {
+    provenance[claimPath] = {
+      kind: "inference",
+      sources: [],
+      derivedFromClaims: anchors,
+    };
+  };
+  inference("shortAssessment");
+  review.reviewBasis.forEach((_, index) => {
+    const path = `routeResult.reviewBasis.${index}`;
+    if (!provenance[path]) inference(path);
+  });
+  review.clues.forEach((_, index) => inference(`routeResult.clues.${index}`));
+  review.missingInfo.forEach((_, index) => inference(`routeResult.missingInfo.${index}`));
+  inference("routeResult.nextAction");
+  inference("todayAction.actionTitle");
+  inference("todayAction.actionReason");
+  output.todayAction.actionSteps.forEach((_, index) =>
+    inference(`todayAction.actionSteps.${index}`),
+  );
+  inference("todayAction.estimatedTime");
+  inference("todayAction.recordAfterDone");
+  inference("todayAction.actionType");
+  inference("recordGuide.recordType");
+  output.recordGuide.fieldsToRecord.forEach((_, index) =>
+    inference(`recordGuide.fieldsToRecord.${index}`),
+  );
+  return provenance;
 }

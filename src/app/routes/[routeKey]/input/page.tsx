@@ -3,9 +3,12 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { ExternalAiNotice } from "@/components/external-ai-notice";
+import { APPLICATION_RECORD_FIELDS, getRouteContract } from "@/domain/route-contracts";
 import { getRouteStrategy } from "@/domain/routes";
 import type { RouteKey, RouteOutput } from "@/domain/types";
 import { loadDraft, saveCurrentAction, saveDraft } from "@/lib/local-store";
+import { routeOutputWithProvenanceSchema } from "@/schemas/route-output";
 
 const fieldLabels: Record<string, string> = {
   targetDirection: "你大概想投什么方向？",
@@ -36,10 +39,13 @@ const fieldLabels: Record<string, string> = {
 };
 
 const routeFields: Record<RouteKey, string[]> = {
-  experience_to_resume: ["targetDirection", "rawExperience", "actualActions", "deliverableOrResult"],
-  jd_to_revision: ["targetJobTitle", "jdTextOrRequirements", "userMaterial"],
-  direction_to_jobs: ["educationBackground", "realExperiences", "interestsOrAcceptables", "constraints"],
-  applications_to_review: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion", "userSuspicion"],
+  experience_to_resume: [...getRouteContract("experience_to_resume").inputFields],
+  jd_to_revision: [...getRouteContract("jd_to_revision").inputFields],
+  direction_to_jobs: [
+    ...getRouteContract("direction_to_jobs").inputFields,
+    ...(getRouteContract("direction_to_jobs").optionalInputFields ?? []),
+  ],
+  applications_to_review: [...APPLICATION_RECORD_FIELDS, "userSuspicion"],
 };
 
 const secondApplicationFields = [
@@ -63,6 +69,7 @@ export default function RouteInputPage() {
   const [aiStatus, setAiStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isDraftPersisted = useRef(false);
+  const activeRequest = useRef<AbortController | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -82,6 +89,12 @@ export default function RouteInputPage() {
       }
     });
   }, [routeKey]);
+
+  useEffect(() => {
+    return () => {
+      activeRequest.current?.abort();
+    };
+  }, []);
 
   function updateValue(field: string, value: string) {
     const next = { ...values, [field]: value };
@@ -104,6 +117,7 @@ export default function RouteInputPage() {
     setIsSubmitting(true);
     setAiStatus("正在阅读你提供的信息。");
     const controller = new AbortController();
+    activeRequest.current = controller;
     const longWaitTimer = window.setTimeout(() => {
       setAiStatus(
         isDraftPersisted.current
@@ -123,13 +137,30 @@ export default function RouteInputPage() {
         signal: controller.signal,
       });
 
+      if (response.status === 422) {
+        setAiStatus(
+          "请先删除手机号、证件号、邮箱或婚育健康等敏感信息，再重新生成。",
+        );
+        setIsSubmitting(false);
+        return;
+      }
       if (!response.ok) {
         throw new Error("Request failed");
       }
 
       setAiStatus("正在生成今天先做的一步。");
-      const output = (await response.json()) as RouteOutput;
-      saveCurrentAction(output);
+      const parsedOutput = routeOutputWithProvenanceSchema.safeParse(await response.json());
+      if (!parsedOutput.success || parsedOutput.data.routeKey !== routeKey) {
+        throw new Error("Invalid response");
+      }
+      const output = parsedOutput.data as RouteOutput;
+      try {
+        saveCurrentAction(output);
+      } catch {
+        setAiStatus("行动已经整理好，但这次没有保存成功。请保留本页并重试。");
+        setIsSubmitting(false);
+        return;
+      }
       router.push(`/routes/${routeKey}/action`);
     } catch {
       setAiStatus(
@@ -141,6 +172,9 @@ export default function RouteInputPage() {
     } finally {
       window.clearTimeout(longWaitTimer);
       window.clearTimeout(timeoutTimer);
+      if (activeRequest.current === controller) {
+        activeRequest.current = null;
+      }
     }
   }
 
@@ -167,13 +201,38 @@ export default function RouteInputPage() {
           {routeKey === "applications_to_review" && <p className="eyebrow">第 1 条（1/2）</p>}
           {routeFields[routeKey].map((field) => (
             <label key={field} className="field">
-              <span>{fieldLabels[field]}</span>
-              <textarea
-                name={field}
-                value={values[field] ?? ""}
-                onChange={(event) => updateValue(field, event.target.value)}
-                placeholder={inputPlaceholder(routeKey, field)}
-              />
+              <span>
+                {fieldLabels[field]}
+                {getRouteContract(routeKey).optionalInputFields?.includes(field) && "（可选）"}
+              </span>
+              {isApplicationFeedbackField(routeKey, field) ? (
+                <select
+                  name={field}
+                  value={values[field] ?? ""}
+                  onChange={(event) => updateValue(field, event.target.value)}
+                >
+                  {applicationFeedbackOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : isCompactApplicationField(routeKey, field) ? (
+                <input
+                  type={isApplicationDateField(routeKey, field) ? "date" : "text"}
+                  name={field}
+                  value={values[field] ?? ""}
+                  onChange={(event) => updateValue(field, event.target.value)}
+                  placeholder={inputPlaceholder(routeKey, field)}
+                />
+              ) : (
+                <textarea
+                  name={field}
+                  value={values[field] ?? ""}
+                  onChange={(event) => updateValue(field, event.target.value)}
+                  placeholder={inputPlaceholder(routeKey, field)}
+                />
+              )}
             </label>
           ))}
 
@@ -185,12 +244,34 @@ export default function RouteInputPage() {
                   {secondApplicationFields.map((field) => (
                     <label key={field} className="field">
                       <span>{fieldLabels[field]}</span>
-                      <textarea
-                        name={field}
-                        value={values[field] ?? ""}
-                        onChange={(event) => updateValue(field, event.target.value)}
-                        placeholder={inputPlaceholder(routeKey, field)}
-                      />
+                      {isApplicationFeedbackField(routeKey, field) ? (
+                        <select
+                          name={field}
+                          value={values[field] ?? ""}
+                          onChange={(event) => updateValue(field, event.target.value)}
+                        >
+                          {applicationFeedbackOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : isCompactApplicationField(routeKey, field) ? (
+                        <input
+                          type={isApplicationDateField(routeKey, field) ? "date" : "text"}
+                          name={field}
+                          value={values[field] ?? ""}
+                          onChange={(event) => updateValue(field, event.target.value)}
+                          placeholder={inputPlaceholder(routeKey, field)}
+                        />
+                      ) : (
+                        <textarea
+                          name={field}
+                          value={values[field] ?? ""}
+                          onChange={(event) => updateValue(field, event.target.value)}
+                          placeholder={inputPlaceholder(routeKey, field)}
+                        />
+                      )}
                     </label>
                   ))}
                 </>
@@ -206,6 +287,7 @@ export default function RouteInputPage() {
             </>
           )}
 
+          <ExternalAiNotice />
           <button className="primary-button" type="submit" disabled={isSubmitting}>
             {isSubmitting ? "正在生成..." : "生成今天先做的一步"}
           </button>
@@ -229,7 +311,12 @@ function inputPlaceholder(routeKey: RouteKey, field: string) {
 
 function buildRouteInput(routeKey: RouteKey, values: Record<string, string>): Record<string, unknown> {
   if (routeKey !== "applications_to_review") {
-    return values;
+    const contract = getRouteContract(routeKey);
+    return Object.fromEntries(
+      [...contract.inputFields, ...(contract.optionalInputFields ?? [])].map(
+        (field) => [field, values[field] ?? ""],
+      ),
+    );
   }
 
   return {
@@ -255,3 +342,30 @@ function buildRouteInput(routeKey: RouteKey, values: Record<string, string>): Re
     ],
   };
 }
+
+function isCompactApplicationField(routeKey: RouteKey, field: string): boolean {
+  if (routeKey !== "applications_to_review") return false;
+  return ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus"].includes(
+    field.replace(/2$/, ""),
+  );
+}
+
+function isApplicationDateField(routeKey: RouteKey, field: string): boolean {
+  return routeKey === "applications_to_review" && field.replace(/2$/, "") === "submittedAt";
+}
+
+function isApplicationFeedbackField(routeKey: RouteKey, field: string): boolean {
+  return routeKey === "applications_to_review" && field.replace(/2$/, "") === "feedbackStatus";
+}
+
+const applicationFeedbackOptions = [
+  { value: "", label: "请选择当前反馈" },
+  { value: "暂无反馈", label: "暂无反馈" },
+  { value: "已投递", label: "已投递" },
+  { value: "已查看", label: "已查看" },
+  { value: "笔试", label: "进入笔试" },
+  { value: "面试", label: "进入面试" },
+  { value: "已拒绝", label: "已拒绝" },
+  { value: "已录用", label: "已录用" },
+  { value: "其他", label: "其他" },
+] as const;

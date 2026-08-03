@@ -6,6 +6,16 @@ import {
 } from "@/domain/routes";
 
 describe("route strategies", () => {
+  it("treats direction constraints as optional when the other evidence is complete", () => {
+    expect(
+      isRouteInputSufficient("direction_to_jobs", {
+        educationBackground: "市场营销专业",
+        realExperiences: "做过课程调研并整理问卷",
+        interestsOrAcceptables: "不排斥内容整理",
+      }),
+    ).toBe(true);
+  });
+
   it("keeps four independent route strategies", () => {
     expect(ROUTE_KEYS).toEqual([
       "direction_to_jobs",
@@ -177,6 +187,7 @@ describe("route strategies", () => {
         educationBackground: "市场营销专业",
         realExperiences: "整理过社团报名表",
         interestsOrAcceptables: "还不确定是否做销售，但可以接受用户沟通",
+        constraints: "不接受长期出差",
       }),
     ).toBe(true);
   });
