@@ -827,13 +827,65 @@ describe("generateRouteOutput", () => {
       },
     };
     const primary = { generate: vi.fn().mockResolvedValue(zeroSupportOutput) };
+    const events: unknown[] = [];
+
+    const result = await generateRouteOutput({
+      routeKey: "jd_to_revision",
+      input,
+      primary,
+      reporter: { report: (event) => { events.push(event); } },
+    });
+
+    expect(result.outputType, JSON.stringify(events)).toBe("route_result");
+    expect(result.routeResult?.supportedByMaterial).toEqual([]);
+    expect(result.routeResult?.unclearFromMaterial).toEqual(["尚未提供 SQL 数据分析经历"]);
+    expect(result.routeResult?.minimalRevisionActions).toHaveLength(1);
+    expect(primary.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("turns a JD action based only on a capability claim into a concrete evidence check", async () => {
+    const input = {
+      targetJobTitle: "AI 产品运营",
+      jdTextOrRequirements: "可独立完成产品数据整理、分析与复盘",
+      userMaterial: "可独立完成产品数据整理、分析与复盘，通过数据挖掘产品问题",
+    };
+    const generated = await new MockAiProvider("success").generate({ routeKey: "jd_to_revision", input });
+    const screenshotLikeCandidate = {
+      ...generated,
+      shortAssessment: "先完成一个有真实材料支撑的小行动。",
+      routeResult: {
+        ...generated.routeResult,
+        jdKeyRequirements: ["可独立完成产品数据整理、分析与复盘"],
+        supportedByMaterial: ["可独立完成产品数据整理、分析与复盘，通过数据挖掘产品问题"],
+        unclearFromMaterial: ["材料中未明确提及使用数据分析工具的具体经历。"],
+        minimalRevisionActions: ["在求职地图 MVP 描述中补充实际进行的数据整理或分析动作。"],
+      },
+      todayAction: {
+        ...generated.todayAction,
+        actionTitle: "对照数据分析要求补一句真实动作",
+        actionReason: "当前材料未直接体现该动作，需基于真实情况补充。",
+        actionSteps: [
+          "查看 JD 中的数据分析要求",
+          "回顾求职地图 MVP 中是否做过数据整理或分析",
+          "若确实做过，在描述中补一句真实发生的动作",
+          "保存修改前后的文本版本",
+        ],
+        recordAfterDone: "记录修改前片段、修改后片段和对应要求。",
+      },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(screenshotLikeCandidate) };
 
     const result = await generateRouteOutput({ routeKey: "jd_to_revision", input, primary });
 
     expect(result.outputType).toBe("route_result");
-    expect(result.routeResult?.supportedByMaterial).toEqual([]);
-    expect(result.routeResult?.unclearFromMaterial).toEqual(["尚未提供 SQL 数据分析经历"]);
-    expect(result.routeResult?.minimalRevisionActions).toHaveLength(1);
+    expect(result.routeResult?.candidateRevision).toBeNull();
+    expect(result.todayAction.actionTitle).toContain("核对");
+    expect(result.todayAction.actionSteps.join("\n")).toMatch(/文档|截图|版本记录|交付物/);
+    expect(result.todayAction.completionStandard).toMatch(/找不到|证据不足|不改/);
+    expect(JSON.stringify(result)).not.toContain("补一句真实动作");
+    expect(
+      JSON.stringify(result).split("可独立完成产品数据整理、分析与复盘").length - 1,
+    ).toBeLessThanOrEqual(2);
     expect(primary.generate).toHaveBeenCalledTimes(1);
   });
 

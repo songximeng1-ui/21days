@@ -130,7 +130,7 @@ test("external-AI wait, limit and failure states retain the user's draft", async
   await page.goto("/routes/jd_to_revision/input");
   await page.getByLabel("目标岗位名称是什么？").fill("内容运营实习");
   await page.getByLabel(/把岗位要求粘贴进来/).fill("负责内容整理和数据记录");
-  const material = page.getByLabel(/贴上你准备使用的相关经历/);
+  const material = page.getByLabel(/粘贴你准备核对或修改的原句/);
   await material.fill("整理报名表并核对名单");
 
   await page.route("**/api/ai", async (route) => {
@@ -175,7 +175,7 @@ test("browser timeout aborts the pending AI request and keeps the draft", async 
   await page.goto("/routes/jd_to_revision/input");
   await page.getByLabel("目标岗位名称是什么？").fill("内容运营实习");
   await page.getByLabel(/把岗位要求粘贴进来/).fill("负责内容整理和数据记录");
-  const material = page.getByLabel(/贴上你准备使用的相关经历/);
+  const material = page.getByLabel(/粘贴你准备核对或修改的原句/);
   await material.fill("整理报名表并核对名单");
 
   await page.getByRole("button", { name: "生成今天先做的一步" }).click();
@@ -313,7 +313,7 @@ test("direction route carries constraints through action, record, light review a
   await expect(page.getByRole("heading", { name: "活动执行", exact: true })).toBeVisible();
   await expect(page.getByText("内容运营 实习", { exact: true })).toBeVisible();
   await expect(page.getByText("不接受长期出差", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("15-30 分钟", { exact: true })).toBeVisible();
+  await expect(page.getByText("预计用时：15-30 分钟", { exact: true })).toBeVisible();
   await expectPageQualityAndScreenshot(page, testInfo, "direction_to_jobs", "deep-action");
 
   await page.getByRole("link", { name: "我做完了，记录结果" }).click();
@@ -366,18 +366,18 @@ test("JD route preserves truthful prefill through revision, light review and sev
   await clickAndExpectAiSuccess(page, "生成今天先做的一步");
   await expect(page).toHaveURL(/\/routes\/jd_to_revision\/action$/);
   await expect(page.getByLabel("岗位要求对照结果")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "这个岗位最看重什么" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "这次对照的岗位要求" })).toBeVisible();
   await expect(page.getByText(jdRequirement, { exact: true })).toBeVisible();
-  await expect(page.getByText(beforeSnippet, { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "投递前最小修改", exact: true })).toBeVisible();
-  await expect(page.getByText("15-30 分钟", { exact: true })).toBeVisible();
+  await expect(page.getByText(beforeSnippet, { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: "有证据后可使用的候选文本", exact: true })).toBeVisible();
+  await expect(page.getByText("预计用时：15-30 分钟", { exact: true })).toBeVisible();
   await expectPageQualityAndScreenshot(page, testInfo, "jd_to_revision", "deep-action");
 
   await page.getByRole("link", { name: "我做完了，记录结果" }).click();
   await expect(page.getByLabel("目标岗位名称")).toHaveValue(targetJobTitle);
   await expect(page.getByLabel("修改前片段")).toHaveValue(beforeSnippet);
   await expect(page.getByLabel("对应的岗位要求")).toHaveValue(jdRequirement);
-  await expect(page.getByLabel("修改后片段")).toHaveValue("");
+  await expect(page.getByLabel("修改后片段")).toHaveValue(`${beforeSnippet}。`);
   await expect(page.getByLabel("是否已经投递")).toHaveValue("");
   await page.getByLabel("实际完成了什么？").fill("按真实经历完成 1 条投递前最小修改并提交。");
   await page.getByLabel("修改后片段").fill(afterSnippet);
@@ -412,6 +412,33 @@ test("JD route preserves truthful prefill through revision, light review and sev
   await expect(page.getByText(/再核对 1 条岗位要求与材料表述/)).toBeVisible();
   await expectNoInternalValues(page, ["jd_compare", "route_result"]);
   await expectPageQualityAndScreenshot(page, testInfo, "jd_to_revision", "track");
+});
+
+test("JD capability claim becomes a concrete evidence check without inventing a resume sentence", async ({
+  page,
+}, testInfo) => {
+  const capabilityClaim = "可独立完成产品数据整理、分析与复盘";
+
+  await page.goto("/routes/jd_to_revision/input");
+  await page.getByLabel("目标岗位名称是什么？").fill("AI 产品运营实习");
+  await page.getByLabel(/把岗位要求粘贴进来/).fill(capabilityClaim);
+  await page.getByLabel(/粘贴你准备核对或修改的原句/).fill(capabilityClaim);
+  await page.getByLabel(/你最想确认什么/).fill(capabilityClaim);
+
+  await clickAndExpectAiSuccess(page, "生成今天先做的一步");
+  await expect(page).toHaveURL(/\/routes\/jd_to_revision\/action$/);
+  await expect(page.getByRole("heading", { name: "今天只做这一件事" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "证据与候选文本", exact: true })).toBeVisible();
+  await expect(page.getByText("当前证据不足，暂不修改这句。先按上面的行动核对原始材料。", { exact: true })).toBeVisible();
+  await expect(page.getByText(/完成标准：已保存 1 条核对结果/)).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("对照数据分析要求补一句真实动作");
+  await expectPageQualityAndScreenshot(page, testInfo, "jd_to_revision", "claim-only-action");
+
+  await page.getByRole("link", { name: "我做完了，记录结果" }).click();
+  await expect(page.getByLabel("修改前片段")).toHaveValue(capabilityClaim);
+  await expect(page.getByLabel("修改后片段")).toHaveValue("");
+  await expect(page.getByLabel("对应的岗位要求")).toHaveValue(capabilityClaim);
+  await expectPageQualityAndScreenshot(page, testInfo, "jd_to_revision", "claim-only-record");
 });
 
 test("two application records persist separately and unlock explicit light review", async ({
@@ -496,7 +523,7 @@ async function fillCompleteRoute(page: Page, routeKey: (typeof routes)[number][0
   if (routeKey === "jd_to_revision") {
     await page.getByLabel("目标岗位名称是什么？").fill("内容运营实习生");
     await page.getByLabel(/把岗位要求粘贴进来/).fill("需要内容选题、数据记录、基础沟通协作");
-    await page.getByLabel(/贴上你准备使用的相关经历/).fill("社团宣传组，编辑推文并统计报名表");
+    await page.getByLabel(/粘贴你准备核对或修改的原句/).fill("社团宣传组，编辑推文并统计报名表");
     return;
   }
   await fillApplication(page, 1);

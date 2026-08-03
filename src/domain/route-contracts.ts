@@ -71,6 +71,9 @@ export const ROUTE_CONTRACTS: Record<RouteKey, RouteContract> = {
       "unclearFromMaterial",
       "minimalRevisionActions",
       "afterSubmissionRecording",
+      "revisionTarget",
+      "candidateRevision",
+      "evidenceCheck",
     ],
   },
   applications_to_review: {

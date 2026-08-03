@@ -41,6 +41,17 @@ describe("RouteInputPage draft status", () => {
     expect(document.body).not.toHaveTextContent(/DeepSeek|Qwen|fallback|主模型|副模型/i);
   });
 
+  it("asks the JD user for one exact edit target, existing evidence, and an optional question", async () => {
+    routeKeyParam = "jd_to_revision";
+
+    render(<RouteInputPage />);
+
+    expect(await screen.findByLabelText(/粘贴你准备核对或修改的原句/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/你最想确认什么/)).toBeInTheDocument();
+    expect(screen.getByText(/只贴一条原句或一小段/)).toBeInTheDocument();
+    expect(screen.getByText(/项目文档、截图、版本记录或交付物/)).toBeInTheDocument();
+  });
+
   it("aborts the browser request after 30 seconds so the route can cancel its upstream provider", async () => {
     vi.useFakeTimers();
     let requestSignal: AbortSignal | undefined;

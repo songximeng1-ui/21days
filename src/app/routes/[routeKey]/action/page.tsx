@@ -56,7 +56,8 @@ export default function ActionPage() {
       <Link className="back-link" href={`/routes/${params.routeKey}/input`}>返回输入</Link>
       <section className="panel">
         <p className="eyebrow">今天先推进这一步</p>
-        <h1>{output.shortAssessment}</h1>
+        <h1>今天只做这一件事</h1>
+        <p className="muted">{output.shortAssessment}</p>
 
         {output.outputType === "friendly_failure" && (
           <div className="notice">
@@ -74,8 +75,8 @@ export default function ActionPage() {
               {output.todayAction.actionSteps.map((step) => <li key={step}>{step}</li>)}
             </ul>
             <div className="action-meta">
-              <span>{output.todayAction.estimatedTime}</span>
-              <span>{output.todayAction.recordAfterDone}</span>
+              <span>预计用时：{output.todayAction.estimatedTime}</span>
+              <span>完成后记录：{output.todayAction.recordAfterDone}</span>
               {"completionStandard" in output.todayAction &&
                 typeof output.todayAction.completionStandard === "string" &&
                 output.todayAction.completionStandard.trim() && (
@@ -85,7 +86,7 @@ export default function ActionPage() {
           </article>
         )}
 
-        <EvidenceBlock output={output} />
+        {output.routeKey !== "jd_to_revision" && <EvidenceBlock output={output} />}
         {output.outputType === "route_result" && <RouteResultBlock output={output} />}
 
         {output.outputType === "missing_info" && (
@@ -147,12 +148,33 @@ function RouteResultBlock({ output }: { output: RouteOutput }) {
   }
 
   if (output.routeKey === "jd_to_revision") {
+    const revisionTarget = typeof result.revisionTarget === "string"
+      ? result.revisionTarget.trim()
+      : "";
+    const allSupported = asStringArray(result.supportedByMaterial);
+    const hasCandidate = typeof result.candidateRevision === "string" && result.candidateRevision.trim().length > 0;
+    const canOfferCandidate = allSupported.length > 0 && hasCandidate;
+    const supported = allSupported
+      .filter((value) => value.trim() !== revisionTarget)
+      .map(limitEvidence);
     return (
       <section className="route-result" aria-label="岗位要求对照结果">
-        <ResultList title="这个岗位最看重什么" values={asStringArray(result.jdKeyRequirements)} />
-        <ResultList title="你的材料目前能支撑什么" values={asStringArray(result.supportedByMaterial)} />
-        <ResultList title="当前还看不出来什么" values={asStringArray(result.unclearFromMaterial)} />
-        <ResultList title="投递前最小修改" values={asStringArray(result.minimalRevisionActions)} />
+        <ResultList title="这次对照的岗位要求" values={asStringArray(result.jdKeyRequirements)} />
+        {canOfferCandidate && supported.length > 0 ? (
+          <ResultList title="当前材料证据" values={supported} />
+        ) : null}
+        <ResultText title="要核对的原句" value={result.revisionTarget} />
+        {canOfferCandidate ? (
+          <>
+            <ResultText title="有证据后可使用的候选文本" value={result.candidateRevision} />
+            <ResultList title="当前仍缺的证据" values={asStringArray(result.unclearFromMaterial)} />
+          </>
+        ) : (
+          <ResultText
+            title="证据与候选文本"
+            value="当前证据不足，暂不修改这句。先按上面的行动核对原始材料。"
+          />
+        )}
       </section>
     );
   }

@@ -25,6 +25,7 @@ function makeDirectionOutput(directionCount: number, keywordCount: number) {
       actionSteps: ["搜索一个关键词", "保存岗位要求摘要"],
       estimatedTime: "15-30 分钟",
       recordAfterDone: "记录岗位名称、JD 摘要和担心点。",
+      completionStandard: "已保存至少 1 个岗位名称、来源和 JD 摘要。",
       actionType: "job_sample",
     },
     recordGuide: {
@@ -69,6 +70,7 @@ describe("route output contract", () => {
         actionSteps: ["Open the original material", "List 3 real actions", "Remove claims you did not do"],
         estimatedTime: "15-30 minutes",
         recordAfterDone: "Record the actions, deliverable, and remaining uncertainty.",
+        completionStandard: "One action record contains the real actions, deliverable, and remaining gap.",
         actionType: "experience_fact",
       },
       recordGuide: {
@@ -96,6 +98,45 @@ describe("route output contract", () => {
     };
 
     expect(validateRouteOutput(output).passed).toBe(false);
+  });
+
+  it("rejects a JD action that tells a student to add a real action without naming the edit target or finish line", () => {
+    const output = routeOutputSchema.parse({
+      routeKey: "jd_to_revision",
+      outputType: "route_result",
+      shortAssessment: "先完成一个有真实材料支撑的小行动。",
+      routeResult: {
+        jdKeyRequirements: ["可独立完成产品数据整理、分析与复盘"],
+        supportedByMaterial: ["可独立完成产品数据整理、分析与复盘，通过数据挖掘产品问题"],
+        unclearFromMaterial: ["材料中未明确提及使用数据分析工具的具体经历。"],
+        minimalRevisionActions: ["在求职地图 MVP 描述中补充实际进行的数据整理或分析动作。"],
+        afterSubmissionRecording: ["记录修改前后版本。"],
+      },
+      missingInfo: null,
+      todayAction: {
+        actionTitle: "对照数据分析要求补一句真实动作",
+        actionReason: "当前材料未直接体现该动作，需基于真实情况补充。",
+        actionSteps: [
+          "查看 JD 中的数据分析要求",
+          "回顾求职地图 MVP 中是否做过数据整理或分析",
+          "若确实做过，在描述中补一句真实发生的动作",
+          "保存修改前后的文本版本",
+        ],
+        estimatedTime: "15-30 分钟",
+        recordAfterDone: "记录修改前片段、修改后片段和对应要求。",
+        actionType: "jd_revision",
+      },
+      recordGuide: {
+        recordType: "jd_compare",
+        fieldsToRecord: ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
+        requiresUserConfirmation: true,
+      },
+    });
+
+    const validation = validateRouteOutput(output);
+
+    expect(validation.passed).toBe(false);
+    expect(validation.issues.join("\n")).toMatch(/编辑对象|完成标准/);
   });
 
   it("rejects JD route output that misses route-specific support fields", () => {

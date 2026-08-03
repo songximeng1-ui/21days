@@ -107,7 +107,16 @@ const routePromptCases: Array<{
       jdTextOrRequirements: "负责选题和数据记录",
       userMaterial: "整理社团推文并记录阅读数据",
     },
-    routeResultFields: ["jdKeyRequirements", "supportedByMaterial", "unclearFromMaterial", "minimalRevisionActions", "afterSubmissionRecording"],
+    routeResultFields: [
+      "jdKeyRequirements",
+      "supportedByMaterial",
+      "unclearFromMaterial",
+      "minimalRevisionActions",
+      "afterSubmissionRecording",
+      "revisionTarget",
+      "candidateRevision",
+      "evidenceCheck",
+    ],
     actionType: "jd_revision",
     recordType: "jd_compare",
     fieldsToRecord: ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
@@ -140,6 +149,34 @@ const routePromptCases: Array<{
     fieldsToRecord: ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"],
   },
 ];
+
+it("treats a capability summary as evidence to verify instead of a completed action", async () => {
+  const prompt = await capturePrompt({
+    routeKey: "jd_to_revision",
+    input: {
+      targetJobTitle: "AI 产品运营",
+      jdTextOrRequirements: "可独立完成产品数据整理、分析与复盘",
+      userMaterial: "可独立完成产品数据整理、分析与复盘，通过数据挖掘产品问题",
+    },
+  });
+  const contract = parsePromptSection(
+    prompt,
+    "ACTIVE_ROUTE_CONTRACT_BEGIN",
+    "ACTIVE_ROUTE_CONTRACT_END",
+  );
+  const routeResult = contract.routeResult as Record<string, unknown>;
+  const todayAction = contract.todayAction as Record<string, unknown>;
+
+  expect(Object.keys(routeResult)).toEqual(expect.arrayContaining([
+    "revisionTarget",
+    "candidateRevision",
+    "evidenceCheck",
+  ]));
+  expect(todayAction).toHaveProperty("completionStandard");
+  expect(prompt).toContain("能力宣称");
+  expect(prompt).toContain("不得当作已发生动作");
+  expect(prompt).toContain("同一句原文最多");
+});
 
 describe("ChatCompletionProvider", () => {
   it("rejects provider redirects instead of replaying the prompt outside the allowlisted host", async () => {

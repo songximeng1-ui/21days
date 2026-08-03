@@ -14,6 +14,7 @@ const VAGUE_ACTION_PATTERNS = [
   /optimi[sz]e|improve|enhance.*competitiveness/i,
 ];
 const CONCRETE_STEP_PATTERNS = [/保存|记录|复制|找到|打开|列出|标出|补|删|圈出|选择|填写|确认|搜索/];
+const ABSTRACT_JD_EDIT_PATTERN = /补(?:充)?(?:一句|一条|1\s*(?:句|条))?(?:真实)?(?:动作|经历|表达)|对照.{0,16}要求(?:补|改)|修改一处|最小修改/;
 const UNCERTAINTY_MARKERS = /可能|待验证|需验证|尚不确定|无法确认|不能确认/;
 const NEGATED_POSSIBILITY_MARKERS = /不可能|绝无可能|没有可能|不太可能/;
 
@@ -23,6 +24,9 @@ export function validateRouteOutput(output: RouteOutput): ValidationResult {
 
   if (!action.actionTitle || !action.actionReason || !action.recordAfterDone) {
     issues.push("今日行动字段不完整");
+  }
+  if (output.outputType !== "friendly_failure" && !action.completionStandard?.trim()) {
+    issues.push("今日行动必须写清可观察的完成标准");
   }
 
   const actionText = [action.actionTitle, action.actionReason, ...action.actionSteps].join(" ");
@@ -100,13 +104,27 @@ function validateRouteResultShape(output: RouteOutput): string[] {
   }
 
   if (output.routeKey === "jd_to_revision") {
+    const hasClarityContract = hasText(result.revisionTarget) &&
+      Object.hasOwn(result, "candidateRevision") &&
+      (result.candidateRevision === null || hasText(result.candidateRevision)) &&
+      hasText(result.evidenceCheck);
+    const hasAbstractEditWithoutTarget = ABSTRACT_JD_EDIT_PATTERN.test([
+      output.todayAction.actionTitle,
+      ...output.todayAction.actionSteps,
+    ].join(" ")) && !hasText(result.revisionTarget);
+    const hasUnsupportedCandidate = Array.isArray(result.supportedByMaterial) &&
+      result.supportedByMaterial.length === 0 &&
+      result.candidateRevision !== null;
     return hasStringArray(result.jdKeyRequirements, 1, 5) &&
       hasStringArray(result.supportedByMaterial, 0, 5) &&
       hasStringArray(result.unclearFromMaterial, 1, 5) &&
       hasStringArray(result.minimalRevisionActions, 1, 2) &&
-      hasStringArray(result.afterSubmissionRecording, 1, 3)
+      hasStringArray(result.afterSubmissionRecording, 1, 3) &&
+      hasClarityContract &&
+      !hasAbstractEditWithoutTarget &&
+      !hasUnsupportedCandidate
       ? []
-      : ["JD 路线必须包含 JD 要求、材料支撑、缺口和最小修改"];
+      : ["JD 路线必须包含明确编辑对象、证据核对、候选文本边界和完成标准"];
   }
 
   if (output.routeKey === "applications_to_review") {

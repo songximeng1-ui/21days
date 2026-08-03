@@ -36,9 +36,17 @@ export default function RecordPage() {
         current.outputType === "route_result"
       ) {
         const draft = loadDraft(params.routeKey);
+        const result = current.routeResult ?? {};
+        const revisionTarget = typeof result.revisionTarget === "string"
+          ? result.revisionTarget
+          : draft.userMaterial ?? "";
+        const candidateRevision = typeof result.candidateRevision === "string"
+          ? result.candidateRevision
+          : "";
         setPayload({
           targetJobTitle: draft.targetJobTitle ?? "",
-          beforeSnippet: draft.userMaterial ?? "",
+          beforeSnippet: revisionTarget,
+          afterSnippet: candidateRevision,
           jdRequirement: draft.jdTextOrRequirements ?? "",
         });
       } else if (current?.routeKey === "experience_to_resume" && current.outputType === "route_result") {

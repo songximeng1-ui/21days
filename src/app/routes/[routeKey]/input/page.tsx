@@ -17,7 +17,8 @@ const fieldLabels: Record<string, string> = {
   deliverableOrResult: "有交付物或结果吗？没有可以写“无明确结果”。",
   targetJobTitle: "目标岗位名称是什么？",
   jdTextOrRequirements: "把岗位要求粘贴进来，或者写 3-5 条你看到的要求。",
-  userMaterial: "贴上你准备使用的相关经历或简历片段。",
+  userMaterial: "粘贴你准备核对或修改的原句（只贴一句或一小段）。",
+  currentQuestion: "你最想确认什么？也可以写可能去哪里找证据。",
   educationBackground: "你的专业或学习背景是什么？",
   realExperiences: "你做过哪些课程、项目、社团、兼职或实习？",
   interestsOrAcceptables: "你感兴趣或不排斥哪些事情？",
@@ -40,7 +41,10 @@ const fieldLabels: Record<string, string> = {
 
 const routeFields: Record<RouteKey, string[]> = {
   experience_to_resume: [...getRouteContract("experience_to_resume").inputFields],
-  jd_to_revision: [...getRouteContract("jd_to_revision").inputFields],
+  jd_to_revision: [
+    ...getRouteContract("jd_to_revision").inputFields,
+    ...(getRouteContract("jd_to_revision").optionalInputFields ?? []),
+  ],
   direction_to_jobs: [
     ...getRouteContract("direction_to_jobs").inputFields,
     ...(getRouteContract("direction_to_jobs").optionalInputFields ?? []),
@@ -197,6 +201,14 @@ export default function RouteInputPage() {
           </div>
         )}
 
+        {routeKey === "jd_to_revision" && (
+          <div className="notice">
+            <strong>只贴一条原句或一小段，系统才知道具体要核对哪里。</strong>
+            <p>能力总结也请按原样粘贴；它不会自动被当成做过的事实。</p>
+            <p>如果有项目文档、截图、版本记录或交付物，可在可选问题里写明去哪里找；没有证据也可以直接写“目前没有”。</p>
+          </div>
+        )}
+
         <form onSubmit={submit} className="form-stack" aria-busy={isSubmitting}>
           {routeKey === "applications_to_review" && <p className="eyebrow">第 1 条（1/2）</p>}
           {routeFields[routeKey].map((field) => (
@@ -304,6 +316,13 @@ function inputPlaceholder(routeKey: RouteKey, field: string) {
     if (field.startsWith("materialVersion")) return "例如：社团经历版 V1。";
     if (field.startsWith("userSuspicion")) return "例如：经历写得太泛，没有体现实际动作。";
     return "只写你能确认的真实投递信息。";
+  }
+
+  if (routeKey === "jd_to_revision") {
+    if (field === "targetJobTitle") return "例如：AI 产品运营实习生。";
+    if (field === "jdTextOrRequirements") return "例如：可独立完成产品数据整理、分析与复盘。";
+    if (field === "userMaterial") return "请逐字粘贴原句，例如：可独立完成产品数据整理、分析与复盘。";
+    if (field === "currentQuestion") return "例如：我只有能力总结，没有项目记录，这句能不能改？";
   }
 
   return "可以写“不确定”或“暂时没有”。不要补不存在的经历、数据或结果。";

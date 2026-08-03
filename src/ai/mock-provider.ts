@@ -1,5 +1,6 @@
 import { AiProviderError, type AiProvider, type AiProviderInput, type AiProviderScenario } from "@/ai/provider";
 import { selectJobTaxonomyDirections } from "@/domain/job-taxonomy";
+import { classifyJdMaterialEvidence } from "@/domain/jd-action-clarity";
 import type { RouteOutput } from "@/domain/types";
 
 export class MockAiProvider implements AiProvider {
@@ -252,24 +253,57 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
   if (routeKey === "jd_to_revision") {
     const requirements = splitSourceText(readText(input.input.jdTextOrRequirements));
     const userMaterial = readText(input.input.userMaterial);
+    const evidenceKind = classifyJdMaterialEvidence(userMaterial);
+    const requirement = requirements[0] ?? readText(input.input.jdTextOrRequirements);
+    const revisionTarget = userMaterial || "当前材料中的相关经历段落";
+    const hasDirectEvidence = evidenceKind === "direct";
+    const evidenceCheck = hasDirectEvidence
+      ? `打开与“${revisionTarget}”对应的项目文档、截图、版本记录或交付物，核对是否真的做过“${requirement}”相关动作。`
+      : "打开这句能力总结对应的项目文档、截图、版本记录或交付物，核对是否有实际动作、使用工具和交付物。";
     return {
       routeKey,
       outputType: "route_result",
-      shortAssessment: "这里先看材料和 JD 的支撑关系，不评价你本人适不适合。",
+      shortAssessment: hasDirectEvidence
+        ? "当前材料里已有可核对的实际动作，今天只处理这一处。"
+        : "这段材料目前只有能力总结，先核对证据，不改简历。",
       routeResult: {
         jdKeyRequirements: requirements,
-        supportedByMaterial: [userMaterial],
-        unclearFromMaterial: ["还看不出具体交付物"],
-        minimalRevisionActions: ["补 1 句具体做过的动作和交付物"],
+        supportedByMaterial: hasDirectEvidence ? [userMaterial] : [],
+        unclearFromMaterial: hasDirectEvidence
+          ? ["还看不出具体交付物"]
+          : ["这是一句能力总结，尚不能证明实际做过对应的岗位动作。"],
+        minimalRevisionActions: hasDirectEvidence
+          ? [`只核对并保存“${revisionTarget}”这一处，不扩写未提供的结果。`]
+          : ["暂不修改这句；先完成证据核对。"],
         afterSubmissionRecording: ["记录材料版本和投递时间"],
+        revisionTarget,
+        candidateRevision: hasDirectEvidence
+          ? `${userMaterial.replace(/[。；;.!?]+$/, "")}。`
+          : null,
+        evidenceCheck,
       },
       missingInfo: null,
       todayAction: {
-        actionTitle: "今天先对照 JD 做 1 条投递前最小修改",
-        actionReason: "先改最能支撑 JD 的一处表达，不要同时大改整份简历。",
-        actionSteps: ["圈出 JD 的 1 条关键要求", "找到材料里对应经历", "补 1 个真实动作或交付物"],
+        actionTitle: hasDirectEvidence
+          ? `核对并保存“${revisionTarget}”这一句`
+          : "核对这句能力总结有没有原始证据",
+        actionReason: hasDirectEvidence
+          ? `这句已有实际动作，只需对照“${requirement}”核对一处。`
+          : "这句话现在只是能力总结，不能直接当作已经发生的项目动作。",
+        actionSteps: hasDirectEvidence
+          ? [
+              `打开材料并定位“${revisionTarget}”`,
+              evidenceCheck,
+              "证据一致时保存原句和候选句；不一致就保留原句并标记证据不足",
+            ]
+          : [
+              evidenceCheck,
+              "查找能证明该岗位要求的实际动作、工具和交付物",
+              "找到就记录原句和证据；找不到就标记“证据不足”，不要修改简历",
+            ],
         estimatedTime: "15-30 分钟",
-        recordAfterDone: "记录修改前后片段、修改依据和是否投递。",
+        recordAfterDone: "记录核对的材料、找到的实际动作或“证据不足”；找到事实后再决定是否生成候选句。",
+        completionStandard: "已保存 1 条核对结果：找到可核对事实，或明确记录“证据不足，暂不改材料”。",
         actionType: "jd_revision",
       },
       recordGuide: {

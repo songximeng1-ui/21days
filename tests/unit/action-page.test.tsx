@@ -56,8 +56,13 @@ const routeResultOutput: CurrentAction = {
   shortAssessment: "这份材料可以先做一处投递前最小修改。",
   missingInfo: null,
   routeResult: {
+    jdKeyRequirements: ["负责内容整理"],
     supportedByMaterial: ["材料里能看到内容整理经历"],
     unclearFromMaterial: ["还看不出具体交付物"],
+    minimalRevisionActions: ["只改材料里的内容整理原句"],
+    revisionTarget: "材料里能看到内容整理经历",
+    candidateRevision: "整理活动内容并形成发布清单。",
+    evidenceCheck: "核对活动清单或发布记录。",
   },
   todayAction: {
     actionTitle: "今天先对照 JD 做 1 条投递前最小修改",
@@ -65,6 +70,7 @@ const routeResultOutput: CurrentAction = {
     actionSteps: ["圈出 JD 的 1 条关键要求", "找到材料里对应经历", "补 1 个真实动作"],
     estimatedTime: "15-30 分钟",
     recordAfterDone: "记录修改前后片段。",
+    completionStandard: "已保存同一段材料的修改前后版本，候选句只包含能核对的事实。",
     actionType: "jd_revision",
   },
   recordGuide: {
@@ -149,13 +155,20 @@ describe("ActionPage", () => {
     expect(screen.getAllByRole("link")).toHaveLength(1);
   });
 
-  it("shows concrete evidence behind the current action", async () => {
+  it("shows one JD action with labeled evidence and completion metadata instead of repeated report cards", async () => {
     vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
 
     render(<ActionPage />);
 
-    expect(await screen.findByText("这一步基于：")).toBeInTheDocument();
-    expect(screen.getByText("你提供的材料里有：材料里能看到内容整理经历")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "今天只做这一件事" })).toBeInTheDocument();
+    expect(screen.getByText("预计用时：15-30 分钟")).toBeInTheDocument();
+    expect(screen.getByText(/完成标准：已保存同一段材料的修改前后版本/)).toBeInTheDocument();
+    expect(screen.getByText("完成后记录：记录修改前后片段。" )).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "这次对照的岗位要求" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "当前材料证据" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("材料里能看到内容整理经历")).toHaveLength(1);
+    expect(screen.queryByText("这一步基于：")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "投递前最小修改" })).not.toBeInTheDocument();
   });
 
   it("does not label model-inferred review clues as user-provided material", async () => {
@@ -172,6 +185,7 @@ describe("ActionPage", () => {
     vi.mocked(loadCurrentAction).mockReturnValue({
       ...routeResultOutput,
       routeResult: {
+        ...routeResultOutput.routeResult,
         supportedByMaterial: [
           "这是一段很长很长的用户材料，包含学校项目细节、岗位要求原文、很多不适合直接铺满行动页的信息",
         ],
@@ -180,8 +194,28 @@ describe("ActionPage", () => {
 
     const { container } = render(<ActionPage />);
 
-    expect(await screen.findByText(/^你提供的材料里有：这是一段很长很长的用户材料/)).toBeInTheDocument();
-    expect(container.querySelector(".evidence-block")?.textContent).not.toContain("很多不适合直接铺满行动页的信息");
+    expect(await screen.findByRole("heading", { name: "当前材料证据" })).toBeInTheDocument();
+    expect(screen.getByText(/^这是一段很长很长的用户材料/)).toBeInTheDocument();
+    expect(container.querySelector(".route-result")?.textContent).not.toContain("很多不适合直接铺满行动页的信息");
+  });
+
+  it("collapses a JD evidence gap and unavailable candidate into one result block", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        ...routeResultOutput.routeResult,
+        supportedByMaterial: [],
+        candidateRevision: null,
+        unclearFromMaterial: ["这是一句能力总结，尚不能证明实际做过对应的岗位动作。"],
+      },
+    });
+
+    render(<ActionPage />);
+
+    expect(await screen.findByRole("heading", { name: "证据与候选文本" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "当前材料证据" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "候选文本" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "当前仍缺的证据" })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -217,8 +251,11 @@ describe("ActionPage", () => {
         unclearFromMaterial: ["还看不出汇报方式"],
         minimalRevisionActions: ["补一条访谈记录整理动作"],
         afterSubmissionRecording: ["记录材料版本"],
+        revisionTarget: "做过访谈记录整理",
+        candidateRevision: "整理访谈记录并形成问题清单。",
+        evidenceCheck: "核对访谈记录或问题清单。",
       },
-      ["这个岗位最看重什么", "你的材料目前能支撑什么", "当前还看不出来什么", "投递前最小修改"],
+      ["这次对照的岗位要求", "要核对的原句", "有证据后可使用的候选文本"],
     ],
     [
       "applications_to_review",
@@ -246,7 +283,7 @@ describe("ActionPage", () => {
     }
   });
 
-  it("places the today action before evidence and route details in the DOM", async () => {
+  it("places the JD action before compact route details without a duplicate evidence block", async () => {
     vi.mocked(loadCurrentAction).mockReturnValue({
       ...routeResultOutput,
       routeResult: {
@@ -254,19 +291,21 @@ describe("ActionPage", () => {
         supportedByMaterial: ["做过访谈记录整理"],
         unclearFromMaterial: ["还看不出汇报方式"],
         minimalRevisionActions: ["补一条访谈记录整理动作"],
+        revisionTarget: "做过访谈记录整理",
+        candidateRevision: "整理访谈记录并形成问题清单。",
+        evidenceCheck: "核对访谈记录或问题清单。",
       },
     });
 
     const { container } = render(<ActionPage />);
-    await screen.findByText("投递前最小修改");
+    await screen.findByText("这次对照的岗位要求");
 
     const action = container.querySelector(".action-card");
     const evidence = container.querySelector(".evidence-block");
     const details = container.querySelector(".route-result");
     expect(action).not.toBeNull();
-    expect(evidence).not.toBeNull();
+    expect(evidence).toBeNull();
     expect(details).not.toBeNull();
-    expect(action!.compareDocumentPosition(evidence as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(action!.compareDocumentPosition(details as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -295,6 +334,20 @@ describe("RecordPage", () => {
     vi.mocked(mergeDraft).mockReset();
     vi.mocked(loadDraft).mockReturnValue({});
     vi.mocked(loadCurrentAction).mockReturnValue(missingInfoOutput);
+  });
+
+  it("prefills the exact JD edit target and grounded candidate instead of the whole material", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
+    vi.mocked(loadDraft).mockReturnValue({
+      targetJobTitle: "内容运营实习生",
+      userMaterial: "这里是一整段包含多项经历的原材料",
+      jdTextOrRequirements: "负责内容整理",
+    });
+
+    render(<RecordPage />);
+
+    expect(await screen.findByLabelText("修改前片段")).toHaveValue("材料里能看到内容整理经历");
+    expect(screen.getByLabelText("修改后片段")).toHaveValue("整理活动内容并形成发布清单。");
   });
 
   it("saves a fill-info record and merges the payload into the draft", async () => {
@@ -398,7 +451,7 @@ describe("RecordPage", () => {
     expect(push).toHaveBeenCalledWith("/review");
   });
 
-  it("upgrades a legacy JD action to the canonical required record fields", async () => {
+  it("uses the current JD action clarity contract with the canonical record fields", async () => {
     vi.mocked(loadCurrentAction).mockReturnValue(routeResultOutput);
     vi.mocked(loadDraft).mockReturnValue({
       targetJobTitle: "内容运营实习生",
@@ -409,12 +462,12 @@ describe("RecordPage", () => {
     render(<RecordPage />);
 
     expect(await screen.findByLabelText("目标岗位名称")).toHaveValue("内容运营实习生");
-    expect(screen.getByLabelText("修改前片段")).toHaveValue("整理社团推文并记录阅读数据");
+    expect(screen.getByLabelText("修改前片段")).toHaveValue("材料里能看到内容整理经历");
     expect(screen.getByLabelText("对应的岗位要求")).toHaveValue("负责内容整理和数据复盘");
     expect(screen.getByLabelText("修改后片段")).toBeRequired();
     expect(screen.getByLabelText("是否已经投递")).toBeRequired();
     expect(screen.getByRole("status", { name: "保存前还需完成" })).toHaveTextContent(
-      "实际完成了什么、修改后片段、是否已经投递、真实性确认",
+      "实际完成了什么、是否已经投递、真实性确认",
     );
   });
 
@@ -424,7 +477,7 @@ describe("RecordPage", () => {
     render(<RecordPage />);
 
     expect(await screen.findByRole("status", { name: "保存前还需完成" })).toHaveTextContent(
-      "实际完成了什么、目标岗位名称、修改前片段、修改后片段、对应的岗位要求、是否已经投递、真实性确认",
+      "实际完成了什么、目标岗位名称、对应的岗位要求、是否已经投递、真实性确认",
     );
     expect(screen.getByLabelText("实际完成了什么？")).toBeRequired();
     expect(screen.getByLabelText("修改前片段")).toBeRequired();
@@ -504,9 +557,9 @@ describe("RecordPage", () => {
 
     expect(await screen.findByLabelText("目标岗位名称")).toHaveValue("内容运营实习生");
     expect(screen.getByLabelText("目标岗位名称")).toBeRequired();
-    expect(screen.getByLabelText("修改前片段")).toHaveValue("整理社团推文并记录阅读数据");
+    expect(screen.getByLabelText("修改前片段")).toHaveValue("材料里能看到内容整理经历");
     expect(screen.getByLabelText("对应的岗位要求")).toHaveValue("负责选题和数据记录");
-    expect(screen.getByLabelText("修改后片段")).toHaveValue("");
+    expect(screen.getByLabelText("修改后片段")).toHaveValue("整理活动内容并形成发布清单。");
     expect(screen.getByLabelText("是否已经投递")).toHaveValue("");
 
     fireEvent.change(screen.getByLabelText("实际完成了什么？"), {
@@ -531,7 +584,7 @@ describe("RecordPage", () => {
     expect(saveRecord).toHaveBeenCalledWith(expect.objectContaining({
       payload: {
         targetJobTitle: "内容运营实习生",
-        beforeSnippet: "整理社团推文并记录阅读数据",
+        beforeSnippet: "材料里能看到内容整理经历",
         afterSnippet: "整理社团推文，并记录阅读数据用于复盘",
         jdRequirement: "负责选题和数据记录",
         submitted: "尚未投递",

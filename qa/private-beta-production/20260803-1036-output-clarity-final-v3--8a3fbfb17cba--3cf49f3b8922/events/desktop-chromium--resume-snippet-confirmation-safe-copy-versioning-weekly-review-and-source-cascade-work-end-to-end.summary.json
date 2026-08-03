@@ -1,0 +1,6 @@
+{
+  "project": "desktop-chromium",
+  "test": "resume snippet confirmation, safe copy, versioning, weekly review and source cascade work end to end",
+  "status": "passed",
+  "eventCount": 4
+}

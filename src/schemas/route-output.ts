@@ -87,6 +87,9 @@ const jdResultSchema = z.object({
   unclearFromMaterial: paragraphListSchema,
   minimalRevisionActions: paragraphListSchema,
   afterSubmissionRecording: paragraphListSchema,
+  revisionTarget: paragraphSchema.optional(),
+  candidateRevision: paragraphSchema.nullable().optional(),
+  evidenceCheck: paragraphSchema.optional(),
 }).strict();
 
 const applicationsResultSchema = z.object({

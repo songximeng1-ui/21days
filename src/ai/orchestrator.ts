@@ -18,6 +18,7 @@ import {
   recordProviderSuccess,
 } from "@/ai/orchestration-policy";
 import { validateRouteOutput } from "@/domain/action-card";
+import { classifyJdMaterialEvidence, compactEvidenceAnchor } from "@/domain/jd-action-clarity";
 import { selectJobTaxonomyDirections, validateDirectionCandidates } from "@/domain/job-taxonomy";
 import { attachOutputProvenance } from "@/domain/provenance";
 import { getRouteStrategy, isPlaceholderValue, isRouteInputSufficient } from "@/domain/routes";
@@ -506,6 +507,9 @@ const HARD_ROUTE_CONTRACTS: Record<
       "unclearFromMaterial",
       "minimalRevisionActions",
       "afterSubmissionRecording",
+      "revisionTarget",
+      "candidateRevision",
+      "evidenceCheck",
     ],
   },
   applications_to_review: {
@@ -583,6 +587,7 @@ function normalizeCandidateForInput(
   normalized = normalizeApplicationReviewBasis(normalized, routeKey);
   normalized = normalizeJdAfterSubmissionRecordingLimit(normalized, routeKey);
   normalized = normalizeJdEvidenceQuotes(normalized, routeKey, input);
+  normalized = normalizeJdClarityContract(normalized, routeKey, input);
   normalized = normalizeUnsupportedJdFeedbackRewrite(normalized, routeKey, input);
   normalized = normalizeUnsupportedJdRoleUpgrade(normalized, routeKey, input);
   normalized = normalizeUnsupportedJdEvidenceDetailUpgrade(normalized, routeKey, input);
@@ -591,8 +596,83 @@ function normalizeCandidateForInput(
   normalized = normalizeUnsupportedJdMissingRequirementAddition(normalized, routeKey, input);
   normalized = normalizeJdZeroSupportRevisionAction(normalized, routeKey, input);
   normalized = normalizeUnsupportedJdContextUpgrades(normalized, routeKey, input);
+  normalized = normalizeJdCapabilityClaimAction(normalized, routeKey, input);
   normalized = ensurePersonalInfoForgeryRefusal(normalized, routeKey, input);
   return normalized;
+}
+
+function normalizeJdClarityContract(
+  output: RouteOutput,
+  routeKey: RouteKey,
+  input: Record<string, unknown>,
+): RouteOutput {
+  if (routeKey !== "jd_to_revision" || !isRecord(output.routeResult)) return output;
+  const userMaterial = typeof input.userMaterial === "string" ? input.userMaterial.trim() : "";
+  const jdText = typeof input.jdTextOrRequirements === "string"
+    ? compactEvidenceAnchor(input.jdTextOrRequirements, 56)
+    : "这条 JD 要求";
+  const existingTarget = typeof output.routeResult.revisionTarget === "string"
+    ? output.routeResult.revisionTarget.trim()
+    : "";
+  const revisionTarget = existingTarget || userMaterial || "当前材料中的相关经历段落";
+  const evidenceCheck = typeof output.routeResult.evidenceCheck === "string" && output.routeResult.evidenceCheck.trim()
+    ? output.routeResult.evidenceCheck
+    : `打开与“${compactEvidenceAnchor(revisionTarget, 34)}”对应的原始文档、截图、版本记录或交付物，核对是否真的做过“${jdText}”相关动作。`;
+  const hasDirectSupport = Array.isArray(output.routeResult.supportedByMaterial) &&
+    output.routeResult.supportedByMaterial.length > 0;
+
+  return {
+    ...output,
+    routeResult: {
+      ...output.routeResult,
+      revisionTarget,
+      candidateRevision: hasDirectSupport && typeof output.routeResult.candidateRevision === "string"
+        ? output.routeResult.candidateRevision
+        : null,
+      evidenceCheck,
+    },
+  };
+}
+
+function normalizeJdCapabilityClaimAction(
+  output: RouteOutput,
+  routeKey: RouteKey,
+  input: Record<string, unknown>,
+): RouteOutput {
+  if (routeKey !== "jd_to_revision" || !isRecord(output.routeResult)) return output;
+  const userMaterial = typeof input.userMaterial === "string" ? input.userMaterial.trim() : "";
+  if (classifyJdMaterialEvidence(userMaterial) !== "claim_only") return output;
+
+  const revisionTarget = userMaterial || "当前材料中的能力总结";
+  const evidenceCheck = "打开这句能力总结对应的项目文档、截图、版本记录或交付物，核对是否有实际动作、使用工具和交付物。";
+
+  return {
+    ...output,
+    shortAssessment: "这段材料目前只有能力总结，先核对证据，不改简历。",
+    routeResult: {
+      ...output.routeResult,
+      supportedByMaterial: [],
+      unclearFromMaterial: [
+        "这是一句能力总结，尚不能证明实际做过对应的岗位动作。",
+      ],
+      minimalRevisionActions: ["暂不修改这句；先完成证据核对。"],
+      revisionTarget,
+      candidateRevision: null,
+      evidenceCheck,
+    },
+    todayAction: {
+      ...output.todayAction,
+      actionTitle: "核对这句能力总结有没有原始证据",
+      actionReason: "这句话现在只是能力总结，不能直接当作已经发生的项目动作。",
+      actionSteps: [
+        evidenceCheck,
+        "查找能证明该岗位要求的实际动作、使用工具和交付物",
+        "找到就记录原句和证据；找不到就标记“证据不足”，不要修改简历",
+      ],
+      recordAfterDone: "记录核对的材料、找到的实际动作或“证据不足”；找到事实后再决定是否生成候选句。",
+      completionStandard: "已保存 1 条核对结果：找到可核对事实，或明确记录“证据不足，暂不改材料”。",
+    },
+  };
 }
 
 function normalizeDirectionConstraintVisibility(
@@ -1387,13 +1467,13 @@ function normalizeUnsupportedJdEvidenceDetailUpgrade(
 }
 
 function normalizeCandidateLiterals(output: RouteOutput, routeKey: RouteKey): RouteOutput {
-  let normalized = output;
-  const estimatedTime = output.todayAction.estimatedTime;
+  let normalized = ensureActionCompletionStandard(output);
+  const estimatedTime = normalized.todayAction.estimatedTime;
   if (/^15-30\s*分钟$/.test(estimatedTime) && estimatedTime !== "15-30 分钟") {
     normalized = {
-      ...output,
+      ...normalized,
       todayAction: {
-        ...output.todayAction,
+        ...normalized.todayAction,
         estimatedTime: "15-30 分钟",
       },
     };
@@ -1404,6 +1484,20 @@ function normalizeCandidateLiterals(output: RouteOutput, routeKey: RouteKey): Ro
     return normalized;
   }
   return mapCandidateStrings(normalized, normalizeVisibleQualityTerms);
+}
+
+function ensureActionCompletionStandard(output: RouteOutput): RouteOutput {
+  if (output.todayAction.completionStandard?.trim()) return output;
+  const completionStandard = output.todayAction.actionType === "jd_revision"
+    ? "已保存要核对的原句、证据结果和对应 JD 要求；证据不足时没有改写材料。"
+    : "已保存这次行动的对象、实际完成内容和下一步要核对的信息。";
+  return {
+    ...output,
+    todayAction: {
+      ...output.todayAction,
+      completionStandard,
+    },
+  };
 }
 
 function normalizeCompliantInternalSecretReminder(value: string): string {
@@ -1566,6 +1660,7 @@ function collectUserVisibleTexts(output: RouteOutput): string[] {
     ...output.todayAction.actionSteps,
     output.todayAction.estimatedTime,
     output.todayAction.recordAfterDone,
+    output.todayAction.completionStandard ?? "",
   ].filter((value) => value.trim().length > 0);
 }
 

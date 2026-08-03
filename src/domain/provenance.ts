@@ -28,7 +28,7 @@ const FACT_PATHS: Record<RouteKey, RegExp> = {
   experience_to_resume:
     /^routeResult\.(?:confirmedFacts|supportingFacts)\.\d+$|^routeResult\.resumeSnippetDraft$/,
   jd_to_revision:
-    /^routeResult\.(?:jdKeyRequirements|supportedByMaterial)\.\d+$/,
+    /^routeResult\.(?:jdKeyRequirements|supportedByMaterial)\.\d+$|^routeResult\.revisionTarget$/,
   applications_to_review: /^routeResult\.reviewBasis\.\d+$/,
 };
 
@@ -195,6 +195,12 @@ function claimKind(
   leaf: TextLeaf,
   output: RouteOutput,
 ): ClaimProvenance["kind"] {
+  if (
+    output.outputType === "light_review" &&
+    /^routeResult\.reviewBasis\.\d+$/.test(leaf.path)
+  ) {
+    return "fact";
+  }
   if (FACT_PATHS[output.routeKey].test(leaf.path)) return "fact";
   if (/^missingInfo\.alreadyKnown\.\d+$/.test(leaf.path)) {
     return /[：:]/.test(leaf.value) ? "fact" : "inference";
@@ -203,6 +209,9 @@ function claimKind(
   if (isSensitiveAttributeAssertion(leaf.value)) return "fact";
   if (isExplicitlyNonFactual(leaf.value)) return "inference";
   if (hasAdvisoryFraming(leaf.path, leaf.value)) return "inference";
+  if (leaf.path === "routeResult.evidenceCheck" || leaf.path === "todayAction.completionStandard") {
+    return "inference";
+  }
   if (isPositiveFactualAssertion(leaf.value)) return "fact";
   if (isExplicitInferenceContext(leaf.path)) return "inference";
   return "fact";
@@ -227,11 +236,13 @@ function isExplicitInferenceContext(path: string): boolean {
     /^routeResult\.explorableDirections\.\d+\.(?:directionName|searchKeywords\.\d+|riskOrGap|validationFocus)$/.test(path) ||
     /^routeResult\.(?:missingFacts|doNotExaggerate|unclearFromMaterial|minimalRevisionActions|afterSubmissionRecording|possibleClues|informationGaps)\.\d+$/.test(path) ||
     /^routeResult\.(?:nextValidationAction|nextAction)$/.test(path) ||
+    /^routeResult\.(?:candidateRevision|evidenceCheck)$/.test(path) ||
     path === "routeResult.recordSufficiency" ||
     /^routeResult\.(?:clues|missingInfo)\.\d+$/.test(path) ||
     path === "todayAction.actionTitle" ||
     path.startsWith("todayAction.actionSteps.") ||
     path === "todayAction.recordAfterDone" ||
+    path === "todayAction.completionStandard" ||
     path.startsWith("missingInfo.")
   );
 }
@@ -277,7 +288,7 @@ function isExplicitlyNonFactual(value: string): boolean {
       value,
     ) ||
     /^(?:Compare|Review|Check|Use|Open|Save|Record|Return|Try|Validate)\b/i.test(value.trim()) ||
-    /可能|也许|尚不清楚|不确定|未确认|待验证|需验证|缺少|还缺|不要|不得|不能|未具备|不改写|只支撑|差距|建议|下一步|下一次|可以先|能够?先|能先|能让|先把|先用|先让|再补|就能|适合/.test(
+    /可能|也许|尚不清楚|不确定|未确认|待验证|需验证|缺少|还缺|不要|不得|不能|未具备|不改写|只支撑|差距|建议|核对|下一步|下一次|可以先|能够?先|能先|能让|先把|先用|先让|再补|就能|适合/.test(
       value,
     )
   );
@@ -287,7 +298,7 @@ function hasAdvisoryFraming(path: string, value: string): boolean {
   if (path !== "shortAssessment" && path !== "todayAction.actionReason") {
     return false;
   }
-  return /先|才(?:能|好|适合)|后面|当前|这里|值得|更(?:可靠|主动|贴近|适合|清楚)|改为|调整为|为了|以便/.test(value);
+  return /先|才(?:能|好|适合)|后面|当前|目前|这里|值得|更(?:可靠|主动|贴近|适合|清楚)|改为|调整为|为了|以便/.test(value);
 }
 
 function findSupportingSourcePaths(
@@ -516,7 +527,7 @@ function getSafeSourceText(value: string, path: string): string | undefined {
   if (/(?:^|\.)currentQuestion$/i.test(path)) return undefined;
 
   const unsafeClause =
-    /忽略|系统(?:提示|规则)|提示词|prompt|api.?key|token|密钥|身份证|手机号|随便写|编造|伪造|虚构|匹配度|录取概率|1[3-9]\d{9}|\d{17}[\dXx]|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/i;
+    /忽略|系统(?:提示|规则)|提示词|prompt|api.?key|token|密钥|随便写|编造|伪造|虚构|匹配度|录取概率|1[3-9]\d{9}|\d{17}[\dXx]|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/i;
   const clauses = value
     .split(/[；;。\n\r]/)
     .map((clause) => clause.trim())

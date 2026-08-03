@@ -483,6 +483,9 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
       unclearFromMaterial: ["string (1-5 items)"],
       minimalRevisionActions: ["string (1-2 items)"],
       afterSubmissionRecording: ["string (1-3 items)"],
+      revisionTarget: "exact sentence or paragraph in userMaterial to inspect or edit",
+      candidateRevision: "grounded replacement text, or null when evidence is insufficient",
+      evidenceCheck: "specific source, artifact, or record the user must inspect before editing",
     },
     exampleInput: {
       targetJobTitle: "内容运营实习生",
@@ -495,6 +498,9 @@ const ROUTE_PROMPT_CONFIG: Record<RouteKey, RoutePromptConfig> = {
       unclearFromMaterial: ["尚未提供发布后的数据。"],
       minimalRevisionActions: ["把真实排版动作放到相关经历首句。"],
       afterSubmissionRecording: ["记录本次使用的材料版本。"],
+      revisionTarget: "整理社团推文并完成排版",
+      candidateRevision: "整理社团推文并完成内容排版。",
+      evidenceCheck: "核对社团推文原稿或发布记录，确认排版动作真实发生。",
     },
   },
   applications_to_review: {
@@ -557,6 +563,9 @@ function buildRouteSemanticRules(routeKey: RouteKey): string[] {
       "材料明确没有某项工具或技能经验时，只能记录为 unclearFromMaterial 或建议补真实证据；不得把 Excel、表格整理或相似动作改写成 SQL、Python、Tableau、Power BI 等工具经验。",
       "JD_ZERO_SUPPORT_RULE: when supportedByMaterial is empty, do not output material rewrite actions; only record the JD gap, ask for real evidence, or keep the current fact boundary.",
       "Unsupported JD gaps must only be recorded or verified; do not add, create, emphasize, or rewrite them as experience.",
+      "能力宣称（例如“可独立完成数据分析”）不得当作已发生动作或直接支撑；必须先核对项目文档、截图、版本记录或交付物。只有找到可核对事实时 candidateRevision 才能非 null，否则必须返回 null 并明确“证据不足，暂不改材料”。",
+      "revisionTarget 必须逐字指出 userMaterial 中要核对或修改的原句/原段；evidenceCheck 必须说明去哪里找什么证据；todayAction 必须给出完成标准。",
+      "同一句原文最多在 jdKeyRequirements 和 revisionTarget 各出现一次；标题、理由、步骤、缺口和记录说明用“这句”“该岗位要求”等清楚指代，禁止把同一句抽象话术分散重复到多个卡片。",
       "PERSONAL_ATTRIBUTE_JD_RULE: 遇到性别、婚姻、生育、年龄等个人属性偏好时，仍必须返回当前路线的 JSON；不要围绕这些个人属性给建议，只处理职责、技能、任务相关要求。",
       "如果 currentQuestion 被标记为个人属性不实呈现请求，必须明确拒绝；然后只给基于真实材料的职责相关小行动。",
     ];
@@ -595,6 +604,7 @@ function buildRouteContract(routeKey: RouteKey, config: RoutePromptConfig): Reco
       actionSteps: ["string (1-4 items)"],
       estimatedTime: "15-30 分钟",
       recordAfterDone: "string",
+      completionStandard: "string describing an observable finish line",
       actionType: config.actionType,
     },
     recordGuide: {
@@ -611,12 +621,13 @@ function buildRouteExample(routeKey: RouteKey, config: RoutePromptConfig): Recor
     output: {
       routeKey,
       outputType: "route_result",
-      shortAssessment: "先完成一个有真实材料支撑的小行动。",
+      shortAssessment: "下面只保留今天要完成的一件事。",
       routeResult: config.exampleRouteResult,
       missingInfo: null,
       todayAction: {
         ...buildRouteExampleAction(routeKey),
         estimatedTime: "15-30 分钟",
+        completionStandard: buildRouteExampleCompletionStandard(routeKey),
         actionType: config.actionType,
       },
       recordGuide: {
@@ -626,6 +637,19 @@ function buildRouteExample(routeKey: RouteKey, config: RoutePromptConfig): Recor
       },
     },
   };
+}
+
+function buildRouteExampleCompletionStandard(routeKey: RouteKey): string {
+  if (routeKey === "jd_to_revision") {
+    return "已保存原句、候选句、证据来源和对应 JD 要求；找不到证据时已记录“证据不足，暂不改材料”。";
+  }
+  if (routeKey === "direction_to_jobs") {
+    return "已保存至少 1 个岗位名称、来源平台和 1 条 JD 摘要。";
+  }
+  if (routeKey === "experience_to_resume") {
+    return "已保存实际动作、交付物和仍待补充的事实。";
+  }
+  return "已保存本次核对对象、核对结果和下一次要验证的信息。";
 }
 
 function buildRouteExampleAction(routeKey: RouteKey): {
