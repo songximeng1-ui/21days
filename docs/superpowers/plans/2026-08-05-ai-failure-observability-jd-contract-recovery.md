@@ -359,7 +359,7 @@ Expected: all assertions pass; screenshots/network/console evidence are written 
 - Update: this plan checkboxes and final evidence paths only after commands finish
 - Create: release tag and Vercel deployment metadata through Git/Vercel tooling
 
-- [ ] **Step 1: Run fresh verification**
+- [x] **Step 1: Run fresh verification**
 
 Run in this order and preserve logs:
 
@@ -373,19 +373,19 @@ npm.cmd audit --json
 git diff --check
 ```
 
-- [ ] **Step 2: Review the diff and matrix**
+- [x] **Step 2: Review the diff and matrix**
 
 Confirm no user assets, secrets, raw inputs, prompt/raw output logs or unrelated refactors entered the diff. Re-read this plan and map each requirement to a passing test or an explicit external blocker.
 
-- [ ] **Step 3: Commit, push, tag and deploy**
+- [x] **Step 3: Commit, push, tag and deploy**
 
 Create a traceable commit, push `codex/ai-failure-observability-jd-contract-recovery`, create an annotated evidence tag, deploy the verified snapshot, and record deployment ID/domain. No paid provider call is performed.
 
-- [ ] **Step 4: Read-only production E2E**
+- [x] **Step 4: Read-only production E2E**
 
 Re-check current `beta.jobmapai.cn` deployment, run a new non-destructive browser evidence session, and save network/status/screenshots under a fresh run-id. The known old deployment `dpl_CQ98Cjv3CxsU6VP745y52HJkJZZz` is treated as background until current status is verified.
 
-- [ ] **Step 5: Final mvp21-student-value-gate judgment**
+- [x] **Step 5: Final mvp21-student-value-gate judgment**
 
 Use the fixed Chinese output contract route-by-route, then aggregate. Report technical readiness separately from overall value/release gates; 8–12 real students, 7 days, day 2–3 return and two real advances remain unverified unless new evidence exists.
 
@@ -407,6 +407,8 @@ Use the fixed Chinese output contract route-by-route, then aggregate. Report tec
 | Task 5 routing/budget | completed | primary timeout is retried once before fallback; production mode is capped at two primary attempts plus one fallback inside the 28-second orchestration deadline |
 | Task 6 route/mobile/a11y regression | completed | `C:\Users\宋熙萌\.codex\worktrees\a68a\21天\qa\private-beta-production\20260805-1600-ai-failure-jd-contract-final--fca016a320f3--dbe92b840a30`; implementation hash `dbe92b840a30c2edb76a7c53ed2094ab5ab7a976dbcfb98e803a94cea2952ca2`; 26/26 production-build E2E passed on desktop Edge and Pixel 7 |
 | Task 7 local verification/review | completed | 853 passed / 1 skipped; lint, `tsc --noEmit --incremental false`, build, high-level audit and `git diff --check` passed |
+| Task 7 publish | completed | code commit `4924dcc9314b3bcce041d342a8049859d1bc6608`; tag `ai-failure-jd-contract-recovery-20260805`; deployment `dpl_4ob99w5tyfnsArndYGgXgs6jdufU`; `https://beta.jobmapai.cn` |
+| Task 7 post-deploy smoke | completed | `qa/manual-live-run/20260805-1610-postdeploy-4924dcc-dpl_4ob99w5tyfnsArndYGgXgs6jdufU`; desktop and Pixel 7 home/JD input HTTP 200; empty JD request returned legal `missing_info` with requestId and no provider invocation |
 | Paid real-provider regression | not run by policy | no fresh user authorization for a paid provider call; deterministic provider and production E2E used |
 | Real-student value evidence | external blocker for overall GO | still requires 8–12 ordinary fresh graduates, seven days, day 2–3 return, and at least two real advances |
 
