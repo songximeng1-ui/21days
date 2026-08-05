@@ -17,6 +17,8 @@ import {
   formatUserFacingList,
   getVisibleRecordFields,
 } from "@/domain/record-presentation";
+import { REQUEST_METADATA_HEADERS } from "@/domain/route-contracts";
+import type { RequestMetadata } from "@/schemas/route-request";
 
 export default function ReviewPage() {
   const [latest, setLatest] = useState<LocalRecord | null>(null);
@@ -94,6 +96,14 @@ export default function ReviewPage() {
     if (!latest || requestController.current || reviewRecords.length === 0) return;
     const controller = new AbortController();
     requestController.current = controller;
+    const sourceVersions = Object.fromEntries(
+      reviewRecords.map((record) => [record.id, record.version]),
+    );
+    const requestMetadata: RequestMetadata = {
+      clientRequestId: crypto.randomUUID(),
+      draftRevision: Math.max(...reviewRecords.map((record) => record.version)),
+      idempotencyKey: crypto.randomUUID(),
+    };
     setIsGenerating(true);
     setStatus("正在根据已保存的记录整理这次回看。");
     const longWaitTimer = window.setTimeout(() => {
@@ -114,6 +124,7 @@ export default function ReviewPage() {
         body: JSON.stringify({
           mode: "light_review",
           routeKey: latest.routeKey,
+          requestMetadata,
           input:
             latest.routeKey === "applications_to_review"
               ? { records: reviewRecords }
@@ -122,12 +133,22 @@ export default function ReviewPage() {
         signal: controller.signal,
       });
       if (response.ok === false) throw new Error("Request failed");
+      if (!responseMetadataMatches(response, requestMetadata)) {
+        setStatus("记录版本已经变化，本次回看没有保存。请按最新记录重新生成。");
+        return;
+      }
       const parsedOutput = routeOutputWithProvenanceSchema.safeParse(await response.json());
       if (!parsedOutput.success || parsedOutput.data.routeKey !== latest.routeKey) {
         setStatus("这次暂时没整理出来。你的记录已经保存，可以稍后再看。");
         return;
       }
       const output = parsedOutput.data;
+
+      const currentVersions = new Map(loadRecords().map((record) => [record.id, record.version]));
+      if (Object.entries(sourceVersions).some(([id, version]) => currentVersions.get(id) !== version)) {
+        setStatus("记录版本已经变化，本次回看没有保存。请按最新记录重新生成。");
+        return;
+      }
 
       if (output.outputType !== "light_review" || !output.routeResult) {
         setStatus("这次暂时没整理出来。你的记录已经保存，可以稍后再看。");
@@ -289,6 +310,17 @@ export default function ReviewPage() {
       </section>
     </main>
   );
+}
+
+function responseMetadataMatches(response: Response, request: RequestMetadata) {
+  if (!response.headers || typeof response.headers.get !== "function") return true;
+  const clientRequestId = response.headers.get(REQUEST_METADATA_HEADERS.clientRequestId);
+  const draftRevision = response.headers.get(REQUEST_METADATA_HEADERS.draftRevision);
+  const idempotencyKey = response.headers.get(REQUEST_METADATA_HEADERS.idempotencyKey);
+  if (clientRequestId === null && draftRevision === null && idempotencyKey === null) return true;
+  return clientRequestId === request.clientRequestId
+    && draftRevision === String(request.draftRevision)
+    && idempotencyKey === request.idempotencyKey;
 }
 
 function asStringArray(value: unknown, fallback: string[]): string[] {

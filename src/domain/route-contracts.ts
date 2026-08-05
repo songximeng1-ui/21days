@@ -1,5 +1,11 @@
 import type { ActionType, RecordType, RouteKey } from "@/domain/types";
 
+export const REQUEST_METADATA_HEADERS = {
+  clientRequestId: "X-Client-Request-Id",
+  draftRevision: "X-Draft-Revision",
+  idempotencyKey: "X-Idempotency-Key",
+} as const;
+
 export type RouteContract = {
   inputFields: readonly string[];
   optionalInputFields?: readonly string[];

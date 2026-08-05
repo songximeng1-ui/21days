@@ -43,6 +43,11 @@ describe("POST /api/ai", () => {
         body: JSON.stringify({
           routeKey: "jd_to_revision",
           scenario: "success",
+          requestMetadata: {
+            clientRequestId: "11111111-1111-4111-8111-111111111111",
+            draftRevision: 4,
+            idempotencyKey: "22222222-2222-4222-8222-222222222222",
+          },
           input: {
             targetJobTitle: "产品运营实习",
             jdTextOrRequirements: "负责用户调研、数据整理、活动复盘",
@@ -112,6 +117,11 @@ describe("POST /api/ai", () => {
         body: JSON.stringify({
           routeKey: "jd_to_revision",
           scenario: "success",
+          requestMetadata: {
+            clientRequestId: "11111111-1111-4111-8111-111111111111",
+            draftRevision: 4,
+            idempotencyKey: "22222222-2222-4222-8222-222222222222",
+          },
           input: {
             targetJobTitle: "内容运营实习",
             jdTextOrRequirements: "负责内容整理、数据记录与活动复盘",
@@ -124,6 +134,13 @@ describe("POST /api/ai", () => {
 
     expect(response.status).toBe(200);
     expect(output).toMatchObject({ outputType: "route_result" });
+    expect(response.headers.get("X-Client-Request-Id")).toBe(
+      "11111111-1111-4111-8111-111111111111",
+    );
+    expect(response.headers.get("X-Draft-Revision")).toBe("4");
+    expect(response.headers.get("X-Idempotency-Key")).toBe(
+      "22222222-2222-4222-8222-222222222222",
+    );
   });
 
   it("relaxes in-memory quotas only for a fully reserved production E2E run", () => {
@@ -308,6 +325,64 @@ describe("POST /api/ai", () => {
         jdSummary: "负责社媒内容",
         interestPoint: "内容策划",
         concernPoint: "缺少行业经验",
+      },
+      userConfirmed: true,
+    });
+  });
+
+  it("keeps the target job title when projecting a JD all-keep record for light review", async () => {
+    let providerRecord: unknown;
+    const mock = new MockAiProvider("success");
+    const provider: AiProvider = {
+      generate: vi.fn(async (input) => {
+        providerRecord = input.input.record;
+        return mock.generate(input);
+      }),
+    };
+    const handler = createAiRouteHandler({
+      providerFactory: () => provider,
+      guard: new AiRequestGuard(),
+    });
+
+    const response = await handler(new Request("http://localhost/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "light_review",
+        routeKey: "jd_to_revision",
+        input: {
+          record: {
+            id: "jd-all-keep-record",
+            routeKey: "jd_to_revision",
+            recordType: "jd_compare",
+            actionTitle: "确认并保存当前版本",
+            actualDone: "确认并保存了当前版本和后续观察点。",
+            payload: {
+              targetJobTitle: "AI 产品运营实习",
+              materialVersion: "AI 产品运营版 V1",
+              submitted: "已投递",
+              observationPoint: "记录是否进入面试",
+              privateNotes: "must-not-enter-provider",
+            },
+            userConfirmed: true,
+            status: "confirmed",
+            version: 1,
+            createdAt: "2026-08-05T00:00:00.000Z",
+          },
+        },
+      }),
+    }));
+    const body = await response.json();
+
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(providerRecord).toEqual({
+      routeKey: "jd_to_revision",
+      actualDone: "确认并保存了当前版本和后续观察点。",
+      payload: {
+        targetJobTitle: "AI 产品运营实习",
+        materialVersion: "AI 产品运营版 V1",
+        submitted: "已投递",
+        observationPoint: "记录是否进入面试",
       },
       userConfirmed: true,
     });

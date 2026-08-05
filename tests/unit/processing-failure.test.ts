@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AiProviderError } from "@/ai/provider";
+import { MockAiProvider } from "@/ai/mock-provider";
 import {
   createSafeAiFailureReporter,
   type AiFailureEvent,
@@ -56,6 +57,95 @@ describe("AI processing failures", () => {
     expect(fallbackCalls).toBe(1);
   });
 
+  it("repairs semantic output once on primary and never lets fallback bypass the gates", async () => {
+    const valid = await new MockAiProvider("success").generate({
+      routeKey: "experience_to_resume",
+      input: completeExperienceInput,
+    });
+    const semanticallyInvalid = {
+      ...valid,
+      todayAction: { ...valid.todayAction, actionType: "jd_revision" },
+    };
+    const primary = { generate: vi.fn().mockResolvedValue(semanticallyInvalid as never) };
+    const fallback = {
+      generate: vi.fn().mockResolvedValue(
+        await new MockAiProvider("success").generate({
+          routeKey: "experience_to_resume",
+          input: completeExperienceInput,
+        }),
+      ),
+    };
+
+    await expect(generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: completeExperienceInput,
+      primary,
+      fallback,
+      failureMode: "throw",
+    })).rejects.toMatchObject({ category: "invalid_output" });
+
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the deadline effective when the diagnostic reporter never resolves", async () => {
+    const settled = generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: completeExperienceInput,
+      primary: {
+        generate: vi.fn().mockRejectedValue(new AiProviderError("timeout")),
+      },
+      reporter: { report: () => new Promise<void>(() => undefined) },
+      deadlineMs: 20,
+      failureMode: "throw",
+    }).then(
+      () => "resolved",
+      (error: unknown) =>
+        error && typeof error === "object" && "category" in error
+          ? String(error.category)
+          : "unknown_error",
+    );
+
+    await expect(Promise.race([
+      settled,
+      new Promise<string>((resolve) => setTimeout(() => resolve("reporter_hung"), 250)),
+    ])).resolves.toBe("timeout");
+  });
+
+  it("does not open the provider circuit for semantic contract failures", async () => {
+    const valid = await new MockAiProvider("success").generate({
+      routeKey: "experience_to_resume",
+      input: completeExperienceInput,
+    });
+    const primary = {
+      generate: vi.fn()
+        .mockResolvedValueOnce({
+          ...valid,
+          todayAction: { ...valid.todayAction, actionType: "jd_revision" },
+        } as never)
+        .mockResolvedValueOnce({
+          ...valid,
+          todayAction: { ...valid.todayAction, actionType: "jd_revision" },
+        } as never)
+        .mockResolvedValueOnce(valid),
+    };
+
+    await expect(generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: completeExperienceInput,
+      primary,
+      failureMode: "throw",
+    })).rejects.toMatchObject({ category: "invalid_output" });
+
+    await expect(generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: completeExperienceInput,
+      primary,
+      failureMode: "throw",
+    })).resolves.toMatchObject({ outputType: "route_result" });
+    expect(primary.generate).toHaveBeenCalledTimes(3);
+  });
+
   it("reports only the diagnostic allowlist even when an unsafe extra is supplied", async () => {
     const logged: unknown[] = [];
     const reporter = createSafeAiFailureReporter((event) => {
@@ -69,6 +159,8 @@ describe("AI processing failures", () => {
       attempt: 1,
       stage: "provider_transport",
       code: "transport",
+      failureClass: "machine_unavailable",
+      recoveryDecision: "retry_primary",
       durationBucket: "100_499ms",
     };
 

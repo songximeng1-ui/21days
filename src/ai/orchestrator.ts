@@ -243,6 +243,7 @@ type AttemptFailure = {
   code: string;
   retryPrimary: boolean;
   allowFallback: boolean;
+  failureClass: AiFailureEvent["failureClass"];
   durationMs: number;
   schemaPaths?: string[];
   httpStatusClass?: AiProviderError["httpStatusClass"];
@@ -274,6 +275,7 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
           code: "circuit_open",
           retryPrimary: false,
           allowFallback: true,
+          failureClass: "machine_unavailable",
           durationMs: 0,
         };
         unavailableRetryAfterMs = earliestRetryAfter(
@@ -298,7 +300,17 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
         unavailableRetryAfterMs,
         result.failure.retryAfterMs,
       );
-      await reportAttemptFailure(options, "primary", attempt, result.failure);
+      reportAttemptFailure(
+        options,
+        "primary",
+        attempt,
+        result.failure,
+        result.failure.retryPrimary && attempt < maxPrimaryAttempts
+          ? "retry_primary"
+          : result.failure.allowFallback && options.fallback
+            ? "try_fallback"
+            : "stop",
+      );
       if (execution.signal.aborted) {
         throw new AiProcessingError(execution.abortCategory(), options.requestId);
       }
@@ -356,13 +368,14 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
           unavailableRetryAfterMs,
           result.failure.retryAfterMs,
         );
-        await reportAttemptFailure(options, "fallback", 1, result.failure);
+        reportAttemptFailure(options, "fallback", 1, result.failure, "stop");
       } else {
         lastFailure = {
           stage: "provider_transport",
           code: "circuit_open",
           retryPrimary: false,
           allowFallback: false,
+          failureClass: "machine_unavailable",
           durationMs: 0,
         };
         unavailableRetryAfterMs = earliestRetryAfter(
@@ -381,6 +394,7 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
         code: "transport",
         retryPrimary: false,
         allowFallback: false,
+        failureClass: "machine_unavailable",
         durationMs: 0,
       },
       options.requestId,
@@ -426,7 +440,7 @@ function processingFailureCategory(
 
 async function generateAndValidate(
   provider: AiProvider,
-  options: Pick<OrchestrateOutputInput, "routeKey" | "input" | "provenanceInput" | "mode">,
+  options: Pick<OrchestrateOutputInput, "routeKey" | "input" | "provenanceInput" | "mode" | "allowLegacyThirdAttempt">,
   retryFeedback?: AiRetryFeedback,
   signal?: AbortSignal,
   deadlineAtMs?: number,
@@ -449,12 +463,19 @@ async function generateAndValidate(
 
   const durationMs = nowMs() - startedAt;
   const rejectContent = (failure: AttemptFailure): AttemptResult => {
-    recordProviderFailure(provider, new AiProviderError("model_json"));
     return { failure };
   };
   const isNarrowJdCandidate = options.routeKey === "jd_to_revision"
     && options.mode === "route"
     && jdMappingCandidateSchema.safeParse(rawOutput).success;
+  if (
+    options.routeKey === "jd_to_revision"
+    && options.mode === "route"
+    && !isNarrowJdCandidate
+    && !options.allowLegacyThirdAttempt
+  ) {
+    return rejectContent(contentFailure("candidate_schema", "signed_jd_contract_required", durationMs));
+  }
   const repairedOutput = repairCandidateBeforeSchema(
     rawOutput,
     options.routeKey,
@@ -468,6 +489,7 @@ async function generateAndValidate(
       code: "candidate_zod",
       retryPrimary: true,
       allowFallback: true,
+      failureClass: "machine_unavailable",
       durationMs,
       schemaPaths: collectSchemaPaths(parsed.error.issues),
     });
@@ -555,16 +577,41 @@ function hasGroundedNarrowJdOutput(
   if (!isRecord(output.routeResult)) return false;
   const jd = typeof input.jdTextOrRequirements === "string" ? input.jdTextOrRequirements : "";
   const material = typeof input.userMaterial === "string" ? input.userMaterial : "";
-  const requirements = output.routeResult.jdKeyRequirements;
-  const support = output.routeResult.supportedByMaterial;
-  const revisionTarget = output.routeResult.revisionTarget;
-  return Array.isArray(requirements)
-    && requirements.length > 0
-    && requirements.every((item) => typeof item === "string" && jd.includes(item))
-    && Array.isArray(support)
-    && support.every((item) => typeof item === "string" && material.includes(item))
-    && typeof revisionTarget === "string"
-    && material.includes(revisionTarget);
+  const decision = output.routeResult.decision;
+  const requirements = output.routeResult.requirementsChecked;
+  const modifications = output.routeResult.modifications;
+  if (
+    !Array.isArray(requirements)
+    || requirements.length < 1
+    || requirements.length > 5
+    || !requirements.every((item) => typeof item === "string" && jd.includes(item))
+    || !Array.isArray(modifications)
+    || modifications.length > 2
+  ) return false;
+  if (decision === "all_keep") {
+    return requirements.length >= 3
+      && modifications.length === 0
+      && output.routeResult.candidateRevision === null;
+  }
+  if (decision === "collect_evidence") {
+    return modifications.length === 0
+      && output.routeResult.candidateRevision === null;
+  }
+  if (decision !== "modify" || modifications.length < 1) return false;
+  return modifications.every((item) => {
+    if (!isRecord(item)) return false;
+    return typeof item.requirementQuote === "string"
+      && jd.includes(item.requirementQuote)
+      && Array.isArray(item.materialQuotes)
+      && item.materialQuotes.length > 0
+      && item.materialQuotes.every(
+        (quote) => typeof quote === "string" && material.includes(quote),
+      )
+      && typeof item.revisionTarget === "string"
+      && material.includes(item.revisionTarget)
+      && typeof item.candidateRevision === "string"
+      && item.candidateRevision.trim().length > 0;
+  });
 }
 
 function repairCandidateBeforeSchema(
@@ -608,6 +655,7 @@ function providerFailure(error: unknown, durationMs: number): AttemptFailure {
       code: "unexpected_provider_error",
       retryPrimary: false,
       allowFallback: false,
+      failureClass: "machine_unavailable",
       durationMs,
     };
   }
@@ -618,6 +666,7 @@ function providerFailure(error: unknown, durationMs: number): AttemptFailure {
     code: error.kind,
     retryPrimary: eligible,
     allowFallback: eligible,
+    failureClass: "machine_unavailable",
     durationMs,
     httpStatusClass: error.httpStatusClass,
     providerErrorCode: error.providerErrorCode,
@@ -634,7 +683,14 @@ function earliestRetryAfter(
 }
 
 function contentFailure(stage: AiFailureStage, code: string, durationMs: number): AttemptFailure {
-  return { stage, code, retryPrimary: true, allowFallback: false, durationMs };
+  return {
+    stage,
+    code,
+    retryPrimary: true,
+    allowFallback: false,
+    failureClass: "semantic_invalid",
+    durationMs,
+  };
 }
 
 const HARD_ROUTE_CONTRACTS: Record<
@@ -658,6 +714,10 @@ const HARD_ROUTE_CONTRACTS: Record<
     recordType: "jd_compare",
     fieldsToRecord: ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"],
     routeResultKeys: [
+      "decision",
+      "requirementsChecked",
+      "modifications",
+      "evidenceRequest",
       "jdKeyRequirements",
       "supportedByMaterial",
       "unclearFromMaterial",
@@ -697,10 +757,30 @@ function validateHardRouteContract(
   input: Record<string, unknown>,
 ): "route_shape" | "action" | undefined {
   const contract = HARD_ROUTE_CONTRACTS[routeKey];
+  const expectedFieldsToRecord = routeKey === "jd_to_revision" && output.routeResult
+    ? output.routeResult.decision === "collect_evidence"
+      ? ["targetJobTitle", "jdRequirement", "evidenceLocation", "evidenceResult"]
+      : output.routeResult.decision === "all_keep"
+        ? ["targetJobTitle", "materialVersion", "submitted", "observationPoint"]
+        : contract.fieldsToRecord
+    : contract.fieldsToRecord;
+  const hasExpectedRouteResultKeys = output.routeResult && routeKey === "jd_to_revision"
+    ? hasExactKeys(output.routeResult, contract.routeResultKeys)
+      || hasExactKeys(output.routeResult, [
+        "jdKeyRequirements",
+        "supportedByMaterial",
+        "unclearFromMaterial",
+        "minimalRevisionActions",
+        "afterSubmissionRecording",
+        "revisionTarget",
+        "candidateRevision",
+        "evidenceCheck",
+      ])
+    : Boolean(output.routeResult && hasExactKeys(output.routeResult, contract.routeResultKeys));
   if (mode === "route" && (
     output.missingInfo !== null ||
     !output.routeResult ||
-    !hasExactKeys(output.routeResult, contract.routeResultKeys) ||
+    !hasExpectedRouteResultKeys ||
     (routeKey === "direction_to_jobs" && !hasExactDirectionItems(output.routeResult.explorableDirections))
   )) {
     return "route_shape";
@@ -716,7 +796,7 @@ function validateHardRouteContract(
     output.todayAction.actionType !== contract.actionType ||
     output.recordGuide.recordType !== contract.recordType ||
     output.todayAction.estimatedTime !== "15-30 分钟" ||
-    !hasExactOrderedValues(output.recordGuide.fieldsToRecord, contract.fieldsToRecord) ||
+    !hasExactOrderedValues(output.recordGuide.fieldsToRecord, expectedFieldsToRecord) ||
     output.recordGuide.requiresUserConfirmation !== true
   ) {
     return "action";
@@ -2184,12 +2264,13 @@ function collectSchemaPaths(issues: Array<{ path: PropertyKey[] }>): string[] {
   ).slice(0, 10);
 }
 
-async function reportAttemptFailure(
+function reportAttemptFailure(
   options: OrchestrateOutputInput,
   providerRole: AiFailureEvent["providerRole"],
   attempt: number,
   failure: AttemptFailure,
-): Promise<void> {
+  recoveryDecision: AiFailureEvent["recoveryDecision"],
+): void {
   const event: AiFailureEvent = {
     requestId: options.requestId,
     routeKey: options.routeKey,
@@ -2198,6 +2279,8 @@ async function reportAttemptFailure(
     attempt,
     stage: failure.stage,
     code: failure.code,
+    failureClass: failure.failureClass,
+    recoveryDecision,
     durationBucket: durationBucket(failure.durationMs),
     ...(failure.schemaPaths ? { schemaPaths: failure.schemaPaths } : {}),
     ...(failure.httpStatusClass ? { httpStatusClass: failure.httpStatusClass } : {}),
@@ -2205,7 +2288,7 @@ async function reportAttemptFailure(
   };
 
   try {
-    await options.reporter.report(event);
+    void Promise.resolve(options.reporter.report(event)).catch(() => undefined);
   } catch {
     // Diagnostics must never change the user-visible orchestration result.
   }

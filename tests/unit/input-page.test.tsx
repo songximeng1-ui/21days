@@ -86,9 +86,12 @@ describe("RouteInputPage draft status", () => {
 
   it("aborts a pending browser request when navigating away", async () => {
     let requestSignal: AbortSignal | undefined;
+    let resolveRequest: ((response: Response) => void) | undefined;
     vi.stubGlobal("fetch", vi.fn((_url: string | URL | Request, init?: RequestInit) => {
       requestSignal = init?.signal ?? undefined;
-      return new Promise(() => undefined);
+      return new Promise<Response>((resolve) => {
+        resolveRequest = resolve;
+      });
     }));
     const view = render(<RouteInputPage />);
 
@@ -98,6 +101,13 @@ describe("RouteInputPage draft status", () => {
     view.unmount();
 
     expect(requestSignal?.aborted).toBe(true);
+    resolveRequest?.(new Response(JSON.stringify(validExperienceOutput()), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    await act(async () => Promise.resolve());
+    expect(loadCurrentAction()).toBeNull();
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("submits only the active route contract fields when an old draft contains extra private keys", async () => {
@@ -481,4 +491,105 @@ describe("RouteInputPage draft status", () => {
     expect(loadCurrentAction()).toBeNull();
     expect(push).not.toHaveBeenCalled();
   });
+
+  it("sends one versioned idempotent request when the submit button is activated twice", async () => {
+    let resolveRequest: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
+      resolveRequest = resolve;
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<RouteInputPage />);
+    const submit = await screen.findByRole("button", { name: "生成今天先做的一步" });
+
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.requestMetadata).toEqual({
+      clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      draftRevision: 0,
+      idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
+    resolveRequest?.(new Response(null, { status: 503 }));
+  });
+
+  it("aborts and ignores a pending response after the user edits the submitted draft", async () => {
+    let resolveRequest: ((response: Response) => void) | undefined;
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Promise<Response>((resolve) => {
+        resolveRequest = resolve;
+      });
+    }));
+    render(<RouteInputPage />);
+    const field = await screen.findByLabelText(/先写一段相关真实经历/);
+    fireEvent.change(field, { target: { value: "第一版经历" } });
+    fireEvent.click(screen.getByRole("button", { name: "生成今天先做的一步" }));
+    fireEvent.change(field, { target: { value: "第二版逐字保留" } });
+
+    expect(requestSignal?.aborted).toBe(true);
+    resolveRequest?.(new Response(JSON.stringify(validExperienceOutput()), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    await act(async () => Promise.resolve());
+
+    expect(loadDraft("experience_to_resume").rawExperience).toBe("第二版逐字保留");
+    expect(loadCurrentAction()).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("ignores a successful response whose echoed request metadata does not match", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      const request = JSON.parse(init.body as string);
+      return Promise.resolve(new Response(JSON.stringify(validExperienceOutput()), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Client-Request-Id": request.requestMetadata.clientRequestId,
+          "X-Draft-Revision": String(request.requestMetadata.draftRevision + 1),
+          "X-Idempotency-Key": request.requestMetadata.idempotencyKey,
+        },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<RouteInputPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "生成今天先做的一步" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    expect(loadCurrentAction()).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+  });
 });
+
+function validExperienceOutput() {
+  return withTestProvenance({
+    routeKey: "experience_to_resume" as const,
+    outputType: "route_result" as const,
+    shortAssessment: "可以先整理真实动作。",
+    routeResult: {
+      confirmedFacts: ["整理报名表"],
+      missingFacts: [],
+      doNotExaggerate: ["不夸大职责"],
+      resumeSnippetDraft: "整理社团报名表。",
+      supportingFacts: ["整理报名表"],
+    },
+    missingInfo: null,
+    todayAction: {
+      actionTitle: "核对一段真实经历",
+      actionReason: "先确认事实。",
+      actionSteps: ["核对实际动作"],
+      estimatedTime: "15 分钟",
+      recordAfterDone: "记录核对结果。",
+      actionType: "experience_fact" as const,
+    },
+    recordGuide: {
+      recordType: "experience_fact" as const,
+      fieldsToRecord: ["actualActions"],
+      requiresUserConfirmation: true,
+    },
+  });
+}

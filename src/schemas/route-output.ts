@@ -81,7 +81,46 @@ const experienceResultSchema = z.object({
   supportingFacts: paragraphListSchema,
 }).strict();
 
-const jdResultSchema = z.object({
+const authoritativeJdResultSchema = z.object({
+  decision: z.enum(["modify", "collect_evidence", "all_keep"]),
+  requirementsChecked: paragraphListSchema.min(1).max(5),
+  modifications: z.array(z.object({
+    requirementQuote: paragraphSchema,
+    materialQuotes: paragraphListSchema.min(1).max(3),
+    revisionTarget: paragraphSchema,
+    candidateRevision: paragraphSchema,
+    reason: paragraphSchema,
+  }).strict()).max(2),
+  evidenceRequest: paragraphSchema.nullable(),
+  jdKeyRequirements: paragraphListSchema,
+  supportedByMaterial: paragraphListSchema,
+  unclearFromMaterial: paragraphListSchema,
+  minimalRevisionActions: paragraphListSchema,
+  afterSubmissionRecording: paragraphListSchema,
+  revisionTarget: paragraphSchema.optional(),
+  candidateRevision: paragraphSchema.nullable().optional(),
+  evidenceCheck: paragraphSchema.optional(),
+}).strict().superRefine((result, context) => {
+  if (result.decision === "modify" && result.modifications.length === 0) {
+    context.addIssue({ code: "custom", path: ["modifications"], message: "Modify requires one or two grounded changes." });
+  }
+  if (result.decision !== "modify" && result.modifications.length !== 0) {
+    context.addIssue({ code: "custom", path: ["modifications"], message: "Collect-evidence and all-keep cannot carry changes." });
+  }
+  if (result.decision === "collect_evidence" && !result.evidenceRequest) {
+    context.addIssue({ code: "custom", path: ["evidenceRequest"], message: "Collect-evidence requires a concrete evidence request." });
+  }
+  if (result.decision === "all_keep" && result.requirementsChecked.length < 3) {
+    context.addIssue({ code: "custom", path: ["requirementsChecked"], message: "All-keep requires three to five checked requirements." });
+  }
+  if (result.decision === "all_keep" && result.evidenceRequest !== null) {
+    context.addIssue({ code: "custom", path: ["evidenceRequest"], message: "All-keep cannot request missing evidence." });
+  }
+});
+
+// Read compatibility for pre-P0 local actions and friendly-mode test fixtures only.
+// The production orchestrator separately requires the signed narrow JD envelope.
+const legacyJdResultSchema = z.object({
   jdKeyRequirements: paragraphListSchema,
   supportedByMaterial: paragraphListSchema,
   unclearFromMaterial: paragraphListSchema,
@@ -91,6 +130,8 @@ const jdResultSchema = z.object({
   candidateRevision: paragraphSchema.nullable().optional(),
   evidenceCheck: paragraphSchema.optional(),
 }).strict();
+
+const jdResultSchema = z.union([authoritativeJdResultSchema, legacyJdResultSchema]);
 
 const applicationsResultSchema = z.object({
   reviewBasis: paragraphListSchema,

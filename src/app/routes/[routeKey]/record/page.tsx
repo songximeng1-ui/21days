@@ -37,6 +37,30 @@ export default function RecordPage() {
       ) {
         const draft = loadDraft(params.routeKey);
         const result = current.routeResult ?? {};
+        const decision = jdDecisionForOutput(current);
+        const requirementsChecked = stringArray(result.requirementsChecked);
+        if (decision === "collect_evidence") {
+          setActualDone("核对并记录了一项证据结果。");
+          setPayload({
+            targetJobTitle: draft.targetJobTitle ?? "",
+            jdRequirement: requirementsChecked[0] ?? draft.jdTextOrRequirements ?? "",
+            evidenceLocation: "",
+            evidenceResult: "",
+          });
+          setIsLoaded(true);
+          return;
+        }
+        if (decision === "all_keep") {
+          setActualDone("确认并保存了当前版本和后续观察点。");
+          setPayload({
+            targetJobTitle: draft.targetJobTitle ?? "",
+            materialVersion: "",
+            submitted: "",
+            observationPoint: "",
+          });
+          setIsLoaded(true);
+          return;
+        }
         const revisionTarget = typeof result.revisionTarget === "string"
           ? result.revisionTarget
           : draft.userMaterial ?? "";
@@ -118,6 +142,34 @@ export default function RecordPage() {
         });
       });
       router.push("/review");
+      return;
+    }
+
+    if (
+      output.routeKey === "jd_to_revision"
+      && output.outputType === "route_result"
+      && jdDecisionForOutput(output) === "collect_evidence"
+    ) {
+      const draft = loadDraft(output.routeKey);
+      const materialWithConfirmedEvidence = appendConfirmedEvidence(
+        draft.userMaterial ?? "",
+        payload.evidenceResult ?? "",
+      );
+      runLocalStoreTransaction(() => {
+        saveRecord({
+          actionId: output.actionId,
+          routeKey: output.routeKey,
+          recordType: output.recordGuide.recordType,
+          actionTitle: output.todayAction.actionTitle,
+          actualDone,
+          payload,
+          userConfirmed: confirmed,
+        });
+        if (materialWithConfirmedEvidence) {
+          mergeDraft(output.routeKey, { userMaterial: materialWithConfirmedEvidence });
+        }
+      });
+      router.push("/routes/jd_to_revision/input");
       return;
     }
 
@@ -271,7 +323,7 @@ export default function RecordPage() {
               <div className="field-group" key={field}>
                 <label className="field" htmlFor={fieldId}>
                   <span>
-                    {recordFieldLabels[field] ?? "补充信息"}
+                    {recordFieldLabel(output, field)}
                     {!requiredRecordFields(output).includes(field) && "（想补充时再填）"}
                   </span>
                    <textarea
@@ -343,11 +395,19 @@ export default function RecordPage() {
             type="submit"
             disabled={missingRequirements.length === 0 && !canSaveRecord()}
           >
-            {output?.outputType === "missing_info"
-              ? "保存补充信息，继续判断"
-              : output?.routeKey === "applications_to_review" && output.reducedContinuation
-                ? "保存第 1 条，继续补第 2 条"
-                : "保存并看看下一步"}
+            {output?.routeKey === "jd_to_revision"
+              && output.outputType === "route_result"
+              && jdDecisionForOutput(output) === "collect_evidence"
+              ? "保存证据结果，重新判断"
+              : output?.routeKey === "jd_to_revision"
+                && output.outputType === "route_result"
+                && jdDecisionForOutput(output) === "all_keep"
+                ? "保存当前版本和观察点"
+                : output?.outputType === "missing_info"
+                  ? "保存补充信息，继续判断"
+                  : output?.routeKey === "applications_to_review" && output.reducedContinuation
+                    ? "保存第 1 条，继续补第 2 条"
+                    : "保存并看看下一步"}
           </button>
           <p className="muted">
             {output?.outputType === "missing_info"
@@ -381,6 +441,9 @@ function requiredRecordFields(output: RouteOutput): string[] {
     return applicationReviewRequiredFields;
   }
   if (output.routeKey === "jd_to_revision" && output.outputType === "route_result") {
+    const decision = jdDecisionForOutput(output);
+    if (decision === "collect_evidence") return jdEvidenceRecordFields;
+    if (decision === "all_keep") return jdAllKeepRecordFields;
     return jdComparisonRecordFields;
   }
 
@@ -416,6 +479,9 @@ const recordFieldLabels: Record<string, string> = {
   afterSnippet: "修改后片段",
   jdRequirement: "对应的岗位要求",
   submitted: "是否已经投递",
+  evidenceLocation: "证据查找位置",
+  evidenceResult: "证据核对结果",
+  observationPoint: "后续观察点",
   submittedAt: "投递时间",
   materialVersion: "这次投递用的简历/材料",
   feedbackStatus: "反馈状态",
@@ -468,6 +534,20 @@ const jdComparisonRecordFields = [
   "submitted",
 ];
 
+const jdEvidenceRecordFields = [
+  "targetJobTitle",
+  "jdRequirement",
+  "evidenceLocation",
+  "evidenceResult",
+];
+
+const jdAllKeepRecordFields = [
+  "targetJobTitle",
+  "materialVersion",
+  "submitted",
+  "observationPoint",
+];
+
 function recordFieldsForOutput(output: RouteOutput): string[] {
   if (output.routeKey === "experience_to_resume" && output.outputType === "route_result") {
     return ["confirmedFacts", "supportingFacts", "missingFacts", "resumeSnippet"];
@@ -478,6 +558,9 @@ function recordFieldsForOutput(output: RouteOutput): string[] {
       : applicationRecordFields;
   }
   if (output.routeKey === "jd_to_revision" && output.outputType === "route_result") {
+    const decision = jdDecisionForOutput(output);
+    if (decision === "collect_evidence") return jdEvidenceRecordFields;
+    if (decision === "all_keep") return jdAllKeepRecordFields;
     return jdComparisonRecordFields;
   }
   return output.recordGuide.fieldsToRecord;
@@ -491,10 +574,41 @@ function recordFieldHelp(field: string): string {
 }
 
 function recordFieldPlaceholder(field: string): string {
+  if (field === "evidenceLocation") return "例如：项目文件夹、版本记录或聊天记录；没有就写目前没有。";
+  if (field === "evidenceResult") return "逐字记录找到的事实；没有找到就写目前没有可确认记录。";
+  if (field === "observationPoint") return "例如：是否进入笔试、面试，或收到哪类反馈。";
   if (field.startsWith("jdSummary")) return "例如：负责内容整理、活动执行和数据记录。";
   if (field.startsWith("materialVersion")) return "例如：社团经历版 V1。";
   if (field.startsWith("userSuspicion")) return "例如：经历写得太泛，没有体现实际动作。";
   return "只写你已经确认真实存在的信息。";
+}
+
+function jdDecisionForOutput(
+  output: RouteOutput,
+): "modify" | "collect_evidence" | "all_keep" {
+  const decision = output.routeResult?.decision;
+  return decision === "collect_evidence" || decision === "all_keep" ? decision : "modify";
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function appendConfirmedEvidence(currentMaterial: string, evidenceResult: string): string | null {
+  const evidence = evidenceResult.trim();
+  if (!evidence || isEvidenceGap(evidence) || currentMaterial.includes(evidence)) return null;
+  const current = currentMaterial.trim();
+  return current ? `${current}\n${evidence}` : evidence;
+}
+
+function isEvidenceGap(value: string): boolean {
+  const normalized = value.replace(/\s+/g, "");
+  if (/(?:不是|并非)(?:没有|无|未找到|未发现|找不到|无法确认|不能确认|不确定)/.test(normalized)) {
+    return false;
+  }
+  return /(?:^|[，,。；;：:后中])(?:(?:目前|当前|暂时|还|尚未))?(?:没有(?:发现|找到)?|无|未找到|未发现|找不到|无法确认|不能确认|不确定)/.test(normalized);
 }
 
 function pickFields(values: Record<string, string>, fields: string[]): Record<string, string> {
@@ -509,12 +623,22 @@ function getMissingRequirements(
 ): string[] {
   const missing = requiredRecordFields(output)
     .filter((field) => !payload[field]?.trim())
-    .map((field) => recordFieldLabels[field] ?? "补充信息");
+    .map((field) => recordFieldLabel(output, field));
   if (output.outputType !== "missing_info" && !actualDone.trim()) {
     missing.unshift("实际完成了什么");
   }
   if (!confirmed) missing.push("真实性确认");
   return missing;
+}
+
+function recordFieldLabel(output: RouteOutput, field: string): string {
+  if (
+    field === "materialVersion"
+    && output.routeKey === "jd_to_revision"
+    && output.outputType === "route_result"
+    && jdDecisionForOutput(output) === "all_keep"
+  ) return "当前版本名称";
+  return recordFieldLabels[field] ?? "补充信息";
 }
 
 function experiencePayloadFromOutput(output: RouteOutput): Record<string, string> {

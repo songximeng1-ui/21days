@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearAllLocalData,
   clearRecords,
@@ -26,6 +26,16 @@ const routeOutput: RouteOutput = withTestProvenance({
   outputType: "route_result",
   shortAssessment: "先看 JD 和材料的支撑关系。",
   routeResult: {
+    decision: "modify",
+    requirementsChecked: ["内容整理"],
+    modifications: [{
+      requirementQuote: "内容整理",
+      materialQuotes: ["整理过报名表"],
+      revisionTarget: "社团经历原句",
+      candidateRevision: "整理活动报名表。",
+      reason: "把已有动作写清楚。",
+    }],
+    evidenceRequest: null,
     jdKeyRequirements: ["内容整理"],
     supportedByMaterial: ["整理过报名表"],
     unclearFromMaterial: ["没有量化结果"],
@@ -473,5 +483,59 @@ describe("seven-day review", () => {
     expect(window.localStorage.getItem("mvp-draft:jd_to_revision")).toBe(
       JSON.stringify({ before: "yes" }),
     );
+  });
+
+  it("saves an action and journey atomically and reuses the same action for one idempotency key", () => {
+    const first = saveCurrentAction(routeOutput, {
+      clientRequestId: "11111111-1111-4111-8111-111111111111",
+      draftRevision: 4,
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+    });
+    const second = saveCurrentAction(
+      {
+        ...routeOutput,
+        shortAssessment: "迟到的重复回包不应覆盖第一次保存。",
+      },
+      {
+        clientRequestId: "11111111-1111-4111-8111-111111111111",
+        draftRevision: 4,
+        idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      },
+    );
+
+    expect(second.actionId).toBe(first.actionId);
+    expect(second.shortAssessment).toBe(routeOutput.shortAssessment);
+    expect(loadCurrentAction()).toMatchObject({
+      actionId: first.actionId,
+      clientRequestId: "11111111-1111-4111-8111-111111111111",
+      draftRevision: 4,
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+    });
+  });
+
+  it("rolls back the newly started journey when saving its first action fails", () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let failed = false;
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      key: string,
+      value: string,
+    ) {
+      if (key === "mvp-current-action" && !failed) {
+        failed = true;
+        throw new Error("quota");
+      }
+      return originalSetItem.call(this, key, value);
+    });
+
+    expect(() => saveCurrentAction(routeOutput, {
+      clientRequestId: "11111111-1111-4111-8111-111111111111",
+      draftRevision: 0,
+      idempotencyKey: "33333333-3333-4333-8333-333333333333",
+    })).toThrow("quota");
+    spy.mockRestore();
+
+    expect(window.localStorage.getItem("mvp-current-action")).toBeNull();
+    expect(window.localStorage.getItem("mvp-journey")).toBeNull();
   });
 });

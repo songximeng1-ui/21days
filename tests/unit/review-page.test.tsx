@@ -138,6 +138,29 @@ describe("ReviewPage", () => {
     expect(generate).not.toBeDisabled();
   });
 
+  it("binds a light-review request to the exact saved record version", async () => {
+    const record = saveRecord({
+      routeKey: "jd_to_revision",
+      recordType: "jd_compare",
+      actionTitle: "完成投递前最小修改",
+      actualDone: "核对并修改了一条真实表达。",
+      payload: { beforeSnippet: "协助活动", afterSnippet: "整理活动报名表" },
+      userConfirmed: true,
+    });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ReviewPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "同意并生成这次回看" }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.requestMetadata).toEqual({
+      clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      draftRevision: record.version,
+      idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
+  });
+
   it("distinguishes a local review-save failure from an AI failure", async () => {
     saveRecord({
       routeKey: "jd_to_revision",

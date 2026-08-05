@@ -218,6 +218,85 @@ describe("ActionPage", () => {
     expect(screen.queryByRole("heading", { name: "当前仍缺的证据" })).not.toBeInTheDocument();
   });
 
+  it("shows at most two JD modifications and expands the exact why evidence accessibly", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        decision: "modify",
+        requirementsChecked: ["产品数据整理分析复盘", "AI 产品全生命周期"],
+        modifications: [
+          {
+            requirementQuote: "产品数据整理分析复盘",
+            materialQuotes: ["最高跟进 17、成交 9、转化 52.94%"],
+            revisionTarget: "特斯拉销售专员",
+            candidateRevision: "跟进 17 位客户，成交 9 位，转化率 52.94%。",
+            reason: "把已有量化结果放到对应经历中。",
+          },
+          {
+            requirementQuote: "AI 场景与产品全生命周期",
+            materialQuotes: ["独自使用 Codex 做应届生求职地图 MVP"],
+            revisionTarget: "应届生求职地图 MVP",
+            candidateRevision: "使用 Codex 完成求职地图 MVP 从产品到上线的全流程。",
+            reason: "已有材料能支持产品全流程经历。",
+          },
+        ],
+        evidenceRequest: null,
+        afterSubmissionRecording: "记录本次使用版本和投递反馈。",
+      },
+    } as unknown as CurrentAction);
+
+    render(<ActionPage />);
+
+    expect(await screen.findByRole("heading", { name: "建议修改的 2 处" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "为什么改这一处" })).toHaveLength(2);
+    const firstWhy = screen.getAllByRole("button", { name: "为什么改这一处" })[0];
+    expect(firstWhy).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("岗位原文：产品数据整理分析复盘")).not.toBeInTheDocument();
+
+    fireEvent.click(firstWhy);
+
+    expect(firstWhy).toHaveAttribute("aria-expanded", "true");
+    expect(firstWhy).toHaveAttribute("aria-controls");
+    expect(screen.getByText("岗位原文：产品数据整理分析复盘")).toBeInTheDocument();
+    expect(screen.getByText("材料原文：最高跟进 17、成交 9、转化 52.94%")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/modify|decision|direct|grounding/i);
+  });
+
+  it("renders collect-evidence and all-keep as executable states without a fake revision", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        decision: "collect_evidence",
+        requirementsChecked: ["使用主流数据分析工具"],
+        modifications: [],
+        evidenceRequest: "请补充你实际使用过的工具名称和对应产出；没有就记录目前没有。",
+        afterSubmissionRecording: "记录已补充的证据来源。",
+      },
+    } as unknown as CurrentAction);
+    const view = render(<ActionPage />);
+
+    expect(await screen.findByRole("heading", { name: "先补一项真实证据" })).toBeInTheDocument();
+    expect(screen.getByText(/实际使用过的工具名称/)).toBeInTheDocument();
+    expect(screen.queryByText(/候选文本|建议修改/)).not.toBeInTheDocument();
+
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        decision: "all_keep",
+        requirementsChecked: ["内容整理", "流程梳理", "项目推进"],
+        modifications: [],
+        evidenceRequest: null,
+        afterSubmissionRecording: "记录已确认版本、投递状态和观察点。",
+      },
+    } as unknown as CurrentAction);
+    view.unmount();
+    render(<ActionPage />);
+
+    expect(await screen.findByRole("heading", { name: "本轮无需改写" })).toBeInTheDocument();
+    expect(screen.getByText(/确认并保存当前版本/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "为什么改这一处" })).not.toBeInTheDocument();
+  });
+
   it.each([
     [
       "direction_to_jobs",
@@ -348,6 +427,186 @@ describe("RecordPage", () => {
 
     expect(await screen.findByLabelText("修改前片段")).toHaveValue("材料里能看到内容整理经历");
     expect(screen.getByLabelText("修改后片段")).toHaveValue("整理活动内容并形成发布清单。");
+  });
+
+  it("records a collect-evidence result without requiring a fabricated after snippet and returns to JD input", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        decision: "collect_evidence",
+        requirementsChecked: ["使用主流数据分析工具"],
+        modifications: [],
+        evidenceRequest: "核对实际使用过的工具和产出。",
+        afterSubmissionRecording: "记录查找位置和证据结果。",
+      },
+    } as unknown as CurrentAction);
+    vi.mocked(loadDraft).mockReturnValue({
+      targetJobTitle: "AI 产品运营实习",
+      jdTextOrRequirements: "使用主流数据分析工具",
+      userMaterial: "特斯拉销售经历原文",
+    });
+
+    render(<RecordPage />);
+
+    expect(await screen.findByLabelText("证据查找位置")).toBeInTheDocument();
+    expect(screen.getByLabelText("证据核对结果")).toBeInTheDocument();
+    expect(screen.queryByLabelText("修改后片段")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("证据查找位置"), {
+      target: { value: "项目文件夹与版本记录" },
+    });
+    fireEvent.change(screen.getByLabelText("证据核对结果"), {
+      target: { value: "目前没有可确认的数据工具记录" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    fireEvent.click(screen.getByRole("button", { name: "保存证据结果，重新判断" }));
+
+    expect(saveRecord).toHaveBeenCalledWith(expect.objectContaining({
+      routeKey: "jd_to_revision",
+      payload: expect.objectContaining({
+        evidenceLocation: "项目文件夹与版本记录",
+        evidenceResult: "目前没有可确认的数据工具记录",
+      }),
+    }));
+    expect(mergeDraft).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith("/routes/jd_to_revision/input");
+  });
+
+  it.each([
+    "核对项目文件夹后，未找到相关记录",
+    "在版本记录中没有发现可确认信息",
+  ])("does not merge a natural-language evidence gap into the JD material: %s", async (evidenceGap) => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        decision: "collect_evidence",
+        requirementsChecked: ["梳理并优化流程"],
+        modifications: [],
+        evidenceRequest: "核对原始记录。",
+        afterSubmissionRecording: "记录查找位置和结果。",
+      },
+    } as unknown as CurrentAction);
+    vi.mocked(loadDraft).mockReturnValue({
+      targetJobTitle: "产品运营实习",
+      userMaterial: "熟悉流程优化",
+    });
+
+    render(<RecordPage />);
+    fireEvent.change(await screen.findByLabelText("证据查找位置"), {
+      target: { value: "项目文件夹" },
+    });
+    fireEvent.change(screen.getByLabelText("证据核对结果"), {
+      target: { value: evidenceGap },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    fireEvent.click(screen.getByRole("button", { name: "保存证据结果，重新判断" }));
+
+    expect(mergeDraft).not.toHaveBeenCalled();
+  });
+
+  it("does merge a concrete result expressed with a double negation", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        decision: "collect_evidence",
+        requirementsChecked: ["梳理并优化流程"],
+        modifications: [],
+        evidenceRequest: "核对原始记录。",
+        afterSubmissionRecording: "记录查找位置和结果。",
+      },
+    } as unknown as CurrentAction);
+    vi.mocked(loadDraft).mockReturnValue({
+      targetJobTitle: "产品运营实习",
+      userMaterial: "熟悉流程优化",
+    });
+
+    render(<RecordPage />);
+    fireEvent.change(await screen.findByLabelText("证据查找位置"), {
+      target: { value: "项目文件夹" },
+    });
+    fireEvent.change(screen.getByLabelText("证据核对结果"), {
+      target: { value: "不是没有找到，已确认梳理报名流程并删减 2 个重复步骤" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    fireEvent.click(screen.getByRole("button", { name: "保存证据结果，重新判断" }));
+
+    expect(mergeDraft).toHaveBeenCalledWith("jd_to_revision", {
+      userMaterial: "熟悉流程优化\n不是没有找到，已确认梳理报名流程并删减 2 个重复步骤",
+    });
+  });
+
+  it("merges a confirmed found evidence result into the JD draft for the next judgment", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        decision: "collect_evidence",
+        requirementsChecked: ["梳理并优化流程"],
+        modifications: [],
+        evidenceRequest: "核对实际梳理过的流程和结果。",
+        afterSubmissionRecording: "记录查找位置和证据结果。",
+      },
+    } as unknown as CurrentAction);
+    vi.mocked(loadDraft).mockReturnValue({
+      targetJobTitle: "产品运营实习",
+      jdTextOrRequirements: "梳理并优化流程",
+      userMaterial: "熟悉流程优化",
+    });
+
+    render(<RecordPage />);
+
+    fireEvent.change(await screen.findByLabelText("证据查找位置"), {
+      target: { value: "课程项目复盘文档" },
+    });
+    fireEvent.change(screen.getByLabelText("证据核对结果"), {
+      target: { value: "在课程项目中梳理报名流程并删减 2 个重复步骤" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    fireEvent.click(screen.getByRole("button", { name: "保存证据结果，重新判断" }));
+
+    expect(mergeDraft).toHaveBeenCalledWith("jd_to_revision", {
+      userMaterial: "熟悉流程优化\n在课程项目中梳理报名流程并删减 2 个重复步骤",
+    });
+    expect(push).toHaveBeenCalledWith("/routes/jd_to_revision/input");
+  });
+
+  it("records an all-keep confirmation with version, submission state, and observation point", async () => {
+    vi.mocked(loadCurrentAction).mockReturnValue({
+      ...routeResultOutput,
+      routeResult: {
+        decision: "all_keep",
+        requirementsChecked: ["内容整理", "流程梳理", "项目推进"],
+        modifications: [],
+        evidenceRequest: null,
+        afterSubmissionRecording: "记录当前版本、投递状态和观察点。",
+      },
+    } as unknown as CurrentAction);
+    vi.mocked(loadDraft).mockReturnValue({ targetJobTitle: "AI 产品运营实习" });
+
+    render(<RecordPage />);
+
+    expect(await screen.findByLabelText("当前版本名称")).toBeInTheDocument();
+    expect(screen.getByLabelText("是否已经投递")).toBeInTheDocument();
+    expect(screen.getByLabelText("后续观察点")).toBeInTheDocument();
+    expect(screen.queryByLabelText("修改后片段")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("当前版本名称"), {
+      target: { value: "AI 产品运营版 V1" },
+    });
+    fireEvent.change(screen.getByLabelText("是否已经投递"), {
+      target: { value: "已投递" },
+    });
+    fireEvent.change(screen.getByLabelText("后续观察点"), {
+      target: { value: "记录是否进入笔试或面试" },
+    });
+    fireEvent.click(screen.getByLabelText(/我确认这条记录反映了我实际做过的事/));
+    fireEvent.click(screen.getByRole("button", { name: "保存当前版本和观察点" }));
+
+    expect(saveRecord).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        materialVersion: "AI 产品运营版 V1",
+        submitted: "已投递",
+        observationPoint: "记录是否进入笔试或面试",
+      }),
+    }));
+    expect(push).toHaveBeenCalledWith("/review");
   });
 
   it("saves a fill-info record and merges the payload into the draft", async () => {

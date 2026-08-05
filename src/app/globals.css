@@ -416,3 +416,26 @@ select:focus {
     padding-top: 48px;
   }
 }
+.jd-modifications {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.jd-modification-card,
+.jd-why-detail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.jd-why-toggle {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.jd-why-detail {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: var(--surface-soft, #f6f7f9);
+}

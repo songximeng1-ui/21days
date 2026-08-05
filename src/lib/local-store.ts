@@ -8,6 +8,7 @@ import {
 } from "@/domain/record-rules";
 import type { OutputProvenance } from "@/domain/provenance";
 import { routeOutputWithProvenanceSchema } from "@/schemas/route-output";
+import type { RequestMetadata } from "@/schemas/route-request";
 
 export type LocalRecord = {
   id: string;
@@ -77,6 +78,9 @@ export type HomeProgress = {
 export type CurrentAction = RouteOutput & {
   actionId: string;
   actionCreatedAt: string;
+  clientRequestId?: string;
+  draftRevision?: number;
+  idempotencyKey?: string;
   reducedContinuation?: true;
 };
 
@@ -137,26 +141,36 @@ export function loadDraft(routeKey: string): Record<string, string> {
   }
 }
 
-export function saveCurrentAction(output: RouteOutput): CurrentAction {
-  ensureJourneyStarted();
-  const validated = parseRouteOutput(output);
-  if (!validated) {
-    throw new Error("Invalid route output");
-  }
-  const previous = output as Partial<CurrentAction>;
-  const saved: CurrentAction = {
-    ...validated,
-    actionId:
-      typeof previous.actionId === "string" && previous.actionId.trim()
-        ? previous.actionId
-        : crypto.randomUUID(),
-    actionCreatedAt:
-      typeof previous.actionCreatedAt === "string" && previous.actionCreatedAt.trim()
-        ? previous.actionCreatedAt
-        : new Date().toISOString(),
-  };
-  window.localStorage.setItem(ACTION_KEY, JSON.stringify(saved));
-  return saved;
+export function saveCurrentAction(
+  output: RouteOutput,
+  requestMetadata?: RequestMetadata,
+): CurrentAction {
+  return runLocalStoreTransaction(() => {
+    if (requestMetadata) {
+      const existing = loadCurrentAction();
+      if (existing?.idempotencyKey === requestMetadata.idempotencyKey) return existing;
+    }
+    ensureJourneyStarted();
+    const validated = parseRouteOutput(output);
+    if (!validated) {
+      throw new Error("Invalid route output");
+    }
+    const previous = output as Partial<CurrentAction>;
+    const saved: CurrentAction = {
+      ...validated,
+      actionId:
+        typeof previous.actionId === "string" && previous.actionId.trim()
+          ? previous.actionId
+          : crypto.randomUUID(),
+      actionCreatedAt:
+        typeof previous.actionCreatedAt === "string" && previous.actionCreatedAt.trim()
+          ? previous.actionCreatedAt
+          : new Date().toISOString(),
+      ...(requestMetadata ?? {}),
+    };
+    window.localStorage.setItem(ACTION_KEY, JSON.stringify(saved));
+    return saved;
+  });
 }
 
 export function loadCurrentAction(): CurrentAction | null {
@@ -217,6 +231,15 @@ function migrateCurrentAction(value: unknown): CurrentAction | null {
       typeof candidate.actionCreatedAt === "string" && candidate.actionCreatedAt.trim()
         ? candidate.actionCreatedAt
         : new Date().toISOString(),
+    ...(typeof candidate.clientRequestId === "string"
+      ? { clientRequestId: candidate.clientRequestId }
+      : {}),
+    ...(typeof candidate.draftRevision === "number"
+      ? { draftRevision: candidate.draftRevision }
+      : {}),
+    ...(typeof candidate.idempotencyKey === "string"
+      ? { idempotencyKey: candidate.idempotencyKey }
+      : {}),
   };
 }
 
@@ -228,11 +251,17 @@ function parseRouteOutput(value: unknown): RouteOutput | null {
   const {
     actionId: _actionId,
     actionCreatedAt: _actionCreatedAt,
+    clientRequestId: _clientRequestId,
+    draftRevision: _draftRevision,
+    idempotencyKey: _idempotencyKey,
     reducedContinuation,
     ...output
   } = candidate;
   void _actionId;
   void _actionCreatedAt;
+  void _clientRequestId;
+  void _draftRevision;
+  void _idempotencyKey;
   const parsed = routeOutputWithProvenanceSchema.safeParse({
     ...output,
   });

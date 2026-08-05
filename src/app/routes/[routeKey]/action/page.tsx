@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { RouteKey, RouteOutput } from "@/domain/types";
@@ -148,6 +148,8 @@ function RouteResultBlock({ output }: { output: RouteOutput }) {
   }
 
   if (output.routeKey === "jd_to_revision") {
+    const decision = parseJdDecision(result);
+    if (decision) return <JdDecisionBlock decision={decision} />;
     const revisionTarget = typeof result.revisionTarget === "string"
       ? result.revisionTarget.trim()
       : "";
@@ -186,6 +188,123 @@ function RouteResultBlock({ output }: { output: RouteOutput }) {
       <ResultList title="信息缺口" values={asStringArray(result.informationGaps)} />
       <ResultText title="下一步行动" value={result.nextValidationAction} />
     </section>
+  );
+}
+
+type JdModification = {
+  requirementQuote: string;
+  materialQuotes: string[];
+  revisionTarget: string;
+  candidateRevision: string;
+  reason: string;
+};
+
+type JdDecisionView = {
+  decision: "modify" | "collect_evidence" | "all_keep";
+  requirementsChecked: string[];
+  modifications: JdModification[];
+  evidenceRequest: string | null;
+  afterSubmissionRecording: string;
+};
+
+function parseJdDecision(result: Record<string, unknown>): JdDecisionView | null {
+  if (
+    result.decision !== "modify"
+    && result.decision !== "collect_evidence"
+    && result.decision !== "all_keep"
+  ) return null;
+  const modifications = Array.isArray(result.modifications)
+    ? result.modifications.filter(isJdModification).slice(0, 2)
+    : [];
+  return {
+    decision: result.decision,
+    requirementsChecked: asStringArray(result.requirementsChecked).map(limitEvidence),
+    modifications,
+    evidenceRequest: typeof result.evidenceRequest === "string" ? result.evidenceRequest : null,
+    afterSubmissionRecording:
+      typeof result.afterSubmissionRecording === "string"
+        ? result.afterSubmissionRecording
+        : "记录当前版本、投递状态和后续观察。",
+  };
+}
+
+function isJdModification(value: unknown): value is JdModification {
+  if (!isRecord(value)) return false;
+  return typeof value.requirementQuote === "string"
+    && Array.isArray(value.materialQuotes)
+    && value.materialQuotes.every((quote) => typeof quote === "string")
+    && typeof value.revisionTarget === "string"
+    && typeof value.candidateRevision === "string"
+    && typeof value.reason === "string";
+}
+
+function JdDecisionBlock({ decision }: { decision: JdDecisionView }) {
+  return (
+    <section className="route-result jd-decision" aria-label="岗位要求对照结果">
+      <ResultList title="本次核对的岗位要求" values={decision.requirementsChecked} />
+      {decision.decision === "modify" && (
+        <section className="jd-modifications">
+          <h2>建议修改的 {decision.modifications.length} 处</h2>
+          {decision.modifications.map((modification, index) => (
+            <JdModificationCard
+              key={`${modification.revisionTarget}-${index}`}
+              modification={modification}
+              index={index}
+            />
+          ))}
+        </section>
+      )}
+      {decision.decision === "collect_evidence" && (
+        <section className="result-block notice">
+          <h2>先补一项真实证据</h2>
+          <p>{decision.evidenceRequest || "请回到原始材料，补充一项能逐字核对的事实。"}</p>
+        </section>
+      )}
+      {decision.decision === "all_keep" && (
+        <section className="result-block notice">
+          <h2>本轮无需改写</h2>
+          <p>前几条关键要求已有材料支撑。确认并保存当前版本，再记录投递状态和观察点。</p>
+        </section>
+      )}
+      <ResultText title="完成后怎么记录" value={decision.afterSubmissionRecording} />
+    </section>
+  );
+}
+
+function JdModificationCard({
+  modification,
+  index,
+}: {
+  modification: JdModification;
+  index: number;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const whyId = useId();
+  return (
+    <article className="result-card jd-modification-card">
+      <p className="eyebrow">修改 {index + 1}</p>
+      <h3>把这处表达改得更具体</h3>
+      <p className="revision-target">原句：{modification.revisionTarget}</p>
+      <p className="candidate-revision">建议：{modification.candidateRevision}</p>
+      <button
+        className="text-button jd-why-toggle"
+        type="button"
+        aria-expanded={isExpanded}
+        aria-controls={whyId}
+        onClick={() => setIsExpanded((current) => !current)}
+      >
+        为什么改这一处
+      </button>
+      {isExpanded && (
+        <div id={whyId} className="jd-why-detail">
+          <p>岗位原文：{limitEvidence(modification.requirementQuote)}</p>
+          {modification.materialQuotes.slice(0, 2).map((quote, quoteIndex) => (
+            <p key={`${quote}-${quoteIndex}`}>材料原文：{limitEvidence(quote)}</p>
+          ))}
+          <p>{modification.reason}</p>
+        </div>
+      )}
+    </article>
   );
 }
 

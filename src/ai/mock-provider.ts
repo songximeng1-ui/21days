@@ -1,6 +1,8 @@
 import { AiProviderError, type AiProvider, type AiProviderInput, type AiProviderScenario } from "@/ai/provider";
 import { selectJobTaxonomyDirections } from "@/domain/job-taxonomy";
 import { classifyJdMaterialEvidence } from "@/domain/jd-action-clarity";
+import { buildJdEvidenceCatalog } from "@/domain/jd-evidence-contract";
+import { isJdRequirementEvidenceRelationSupported } from "@/domain/jd-route-assembler";
 import type { RouteOutput } from "@/domain/types";
 
 export class MockAiProvider implements AiProvider {
@@ -25,6 +27,11 @@ export class MockAiProvider implements AiProvider {
 
     if (input.input.mode === "light_review") {
       return makeLightReviewOutput(input);
+    }
+
+    if (input.routeKey === "jd_to_revision" && input.deadlineAtMs !== undefined) {
+      const narrow = makeJdDecisionCandidate(input);
+      if (narrow) return narrow as RouteOutput;
     }
 
     return makeSuccessfulOutput(input);
@@ -381,6 +388,60 @@ function makeSuccessfulOutput(input: AiProviderInput): RouteOutput {
       requiresUserConfirmation: true,
     },
   };
+}
+
+function makeJdDecisionCandidate(input: AiProviderInput): unknown | null {
+  const catalog = buildJdEvidenceCatalog({
+    targetJobTitle: readText(input.input.targetJobTitle),
+    jdTextOrRequirements: readText(input.input.jdTextOrRequirements),
+    userMaterial: readText(input.input.userMaterial),
+    currentQuestion: readText(input.input.currentQuestion),
+  });
+  if (catalog.requirements.length === 0 || catalog.materials.length === 0) return null;
+  const selectedRequirementIds = catalog.requirements.map((source) => source.sourceId);
+  const usedMaterialIds = new Set<string>();
+  return {
+    routeKey: "jd_to_revision",
+    selectedRequirementIds,
+    decisions: catalog.requirements.map((requirement) => {
+      const material = catalog.materials.find((source) =>
+        !usedMaterialIds.has(source.sourceId)
+        && classifyJdMaterialEvidence(source.exactQuote) === "direct"
+        && isJdRequirementEvidenceRelationSupported(
+          requirement.exactQuote,
+          source.exactQuote,
+          "partial",
+        )
+      ) ?? null;
+      if (material) usedMaterialIds.add(material.sourceId);
+      return material ? {
+        requirementId: requirement.sourceId,
+        evidenceIds: [material.sourceId],
+        relation: "partial",
+        disposition: "replace",
+        revisionTargetId: material.sourceId,
+        candidate: makeGroundedMockRevision(material.exactQuote),
+        reason: "仅使用这条材料中的可核对事实。",
+        conflictSourceIds: null,
+      } : {
+        requirementId: requirement.sourceId,
+        evidenceIds: [],
+        relation: "unsupported",
+        disposition: "collect_evidence",
+        revisionTargetId: null,
+        candidate: null,
+        reason: "材料中没有该岗位要求的直接证据。",
+        conflictSourceIds: null,
+      };
+    }),
+  };
+}
+
+function makeGroundedMockRevision(material: string): string {
+  const separator = material.search(/[：，]/);
+  if (separator < 0) return material;
+  const revision = material.slice(separator + 1).trim();
+  return revision.length >= 6 ? revision : material;
 }
 
 function makeMissingInfoOutput(routeKey: AiProviderInput["routeKey"]): RouteOutput {

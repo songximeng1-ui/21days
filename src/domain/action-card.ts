@@ -104,10 +104,55 @@ function validateRouteResultShape(output: RouteOutput): string[] {
   }
 
   if (output.routeKey === "jd_to_revision") {
-    const hasClarityContract = hasText(result.revisionTarget) &&
-      Object.hasOwn(result, "candidateRevision") &&
-      (result.candidateRevision === null || hasText(result.candidateRevision)) &&
-      hasText(result.evidenceCheck);
+    if (!("decision" in result)) {
+      const hasLegacyClarityContract = hasText(result.revisionTarget) &&
+        Object.hasOwn(result, "candidateRevision") &&
+        (result.candidateRevision === null || hasText(result.candidateRevision)) &&
+        hasText(result.evidenceCheck);
+      const hasLegacyAbstractEditWithoutTarget = ABSTRACT_JD_EDIT_PATTERN.test([
+        output.todayAction.actionTitle,
+        ...output.todayAction.actionSteps,
+      ].join(" ")) && !hasText(result.revisionTarget);
+      const hasLegacyUnsupportedCandidate = Array.isArray(result.supportedByMaterial) &&
+        result.supportedByMaterial.length === 0 &&
+        result.candidateRevision !== null;
+      return hasStringArray(result.jdKeyRequirements, 1, 5) &&
+        hasStringArray(result.supportedByMaterial, 0, 5) &&
+        hasStringArray(result.unclearFromMaterial, 1, 5) &&
+        hasStringArray(result.minimalRevisionActions, 1, 2) &&
+        hasStringArray(result.afterSubmissionRecording, 1, 3) &&
+        hasLegacyClarityContract &&
+        !hasLegacyAbstractEditWithoutTarget &&
+        !hasLegacyUnsupportedCandidate
+        ? []
+        : ["JD 路线必须包含明确编辑对象、证据核对、候选文本边界和完成标准"];
+    }
+    const decision = result.decision;
+    const modifications = Array.isArray(result.modifications) ? result.modifications : [];
+    const groundedModifications = modifications.every((item) =>
+      isRecord(item)
+      && hasText(item.requirementQuote)
+      && hasStringArray(item.materialQuotes, 1, 3)
+      && hasText(item.revisionTarget)
+      && hasText(item.candidateRevision)
+      && hasText(item.reason)
+    );
+    const hasClarityContract = decision === "modify"
+      ? modifications.length >= 1
+        && modifications.length <= 2
+        && groundedModifications
+        && hasText(result.revisionTarget)
+        && hasText(result.candidateRevision)
+        && hasText(result.evidenceCheck)
+      : decision === "collect_evidence"
+        ? modifications.length === 0
+          && result.candidateRevision === null
+          && hasText(result.evidenceRequest)
+        : decision === "all_keep"
+          && modifications.length === 0
+          && result.candidateRevision === null
+          && result.evidenceRequest === null
+          && hasStringArray(result.requirementsChecked, 3, 5);
     const hasAbstractEditWithoutTarget = ABSTRACT_JD_EDIT_PATTERN.test([
       output.todayAction.actionTitle,
       ...output.todayAction.actionSteps,
@@ -115,10 +160,11 @@ function validateRouteResultShape(output: RouteOutput): string[] {
     const hasUnsupportedCandidate = Array.isArray(result.supportedByMaterial) &&
       result.supportedByMaterial.length === 0 &&
       result.candidateRevision !== null;
-    return hasStringArray(result.jdKeyRequirements, 1, 5) &&
+    return hasStringArray(result.requirementsChecked, 1, 5) &&
+      hasStringArray(result.jdKeyRequirements, 1, 5) &&
       hasStringArray(result.supportedByMaterial, 0, 5) &&
-      hasStringArray(result.unclearFromMaterial, 1, 5) &&
-      hasStringArray(result.minimalRevisionActions, 1, 2) &&
+      hasStringArray(result.unclearFromMaterial, 0, 5) &&
+      hasStringArray(result.minimalRevisionActions, 0, 2) &&
       hasStringArray(result.afterSubmissionRecording, 1, 3) &&
       hasClarityContract &&
       !hasAbstractEditWithoutTarget &&

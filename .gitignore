@@ -21,6 +21,12 @@
 qa/real-ai-*/
 qa/real-ai-*.log
 
+# Local deterministic browser run artifacts for the JD evidence-contract release.
+# Failed and successful run directories are preserved locally; the signed summary
+# and manifest path are recorded in the tracked governance evidence instead.
+qa/private-beta-readiness-e2e/
+qa/private-beta-production/20260805-jd-general-evidence-contract-p0-*/
+
 # next.js
 /.next/
 /out/

@@ -2617,7 +2617,7 @@ describe("generateRouteOutput", () => {
     const cases = [
       ["direction_to_jobs", "job_sample", ["jobTitle", "companyOrPlatform", "jdSummary", "interestPoint", "concernPoint"]],
       ["experience_to_resume", "experience_fact", ["actualActions", "deliverable", "missingFacts"]],
-      ["jd_to_revision", "jd_revision", ["targetJobTitle", "beforeSnippet", "afterSnippet", "jdRequirement", "submitted"]],
+      ["jd_to_revision", "jd_revision", ["targetJobTitle", "jdRequirement", "evidenceLocation", "evidenceResult"]],
       ["applications_to_review", "application_record", ["jobTitle", "companyOrPlatform", "submittedAt", "feedbackStatus", "jdSummary", "materialVersion"]],
     ] as const;
 
@@ -3245,7 +3245,7 @@ describe("generateRouteOutput", () => {
     expect(primary.generate).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the circuit open across requests when a provider repeatedly returns invalid content", async () => {
+  it("does not open the provider circuit for semantic contract failures", async () => {
     const invalid = {
       routeKey: "experience_to_resume",
       outputType: "route_result",
@@ -3263,7 +3263,7 @@ describe("generateRouteOutput", () => {
     expect(provider.generate).toHaveBeenCalledTimes(2);
 
     await generateRouteOutput({ routeKey: "experience_to_resume", input, provider });
-    expect(provider.generate).toHaveBeenCalledTimes(2);
+    expect(provider.generate).toHaveBeenCalledTimes(4);
   });
 
   it("allows a third primary attempt when a provider-content failure is followed by a grounding failure", async () => {
@@ -3722,6 +3722,8 @@ describe("generateRouteOutput", () => {
       "attempt",
       "stage",
       "code",
+      "failureClass",
+      "recoveryDecision",
       "durationBucket",
       "schemaPaths",
       "httpStatusClass",

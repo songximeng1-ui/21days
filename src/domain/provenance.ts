@@ -28,7 +28,7 @@ const FACT_PATHS: Record<RouteKey, RegExp> = {
   experience_to_resume:
     /^routeResult\.(?:confirmedFacts|supportingFacts)\.\d+$|^routeResult\.resumeSnippetDraft$/,
   jd_to_revision:
-    /^routeResult\.(?:jdKeyRequirements|supportedByMaterial)\.\d+$|^routeResult\.revisionTarget$/,
+    /^routeResult\.(?:requirementsChecked|jdKeyRequirements|supportedByMaterial)\.\d+$|^routeResult\.revisionTarget$|^routeResult\.modifications\.\d+\.(?:requirementQuote|revisionTarget|candidateRevision)$|^routeResult\.modifications\.\d+\.materialQuotes\.\d+$/,
   applications_to_review: /^routeResult\.reviewBasis\.\d+$/,
 };
 
@@ -225,6 +225,7 @@ function isSensitiveAttributeAssertion(value: string): boolean {
 
 function isStructuralMetadata(path: string): boolean {
   return (
+    path === "routeResult.decision" ||
     path === "todayAction.estimatedTime" ||
     path === "todayAction.actionType" ||
     path.startsWith("recordGuide.")
@@ -235,6 +236,8 @@ function isExplicitInferenceContext(path: string): boolean {
   return (
     /^routeResult\.explorableDirections\.\d+\.(?:directionName|searchKeywords\.\d+|riskOrGap|validationFocus)$/.test(path) ||
     /^routeResult\.(?:missingFacts|doNotExaggerate|unclearFromMaterial|minimalRevisionActions|afterSubmissionRecording|possibleClues|informationGaps)\.\d+$/.test(path) ||
+    /^routeResult\.modifications\.\d+\.reason$/.test(path) ||
+    path === "routeResult.evidenceRequest" ||
     /^routeResult\.(?:nextValidationAction|nextAction)$/.test(path) ||
     /^routeResult\.(?:candidateRevision|evidenceCheck)$/.test(path) ||
     path === "routeResult.recordSufficiency" ||

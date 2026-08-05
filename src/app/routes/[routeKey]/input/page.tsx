@@ -4,11 +4,16 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ExternalAiNotice } from "@/components/external-ai-notice";
-import { APPLICATION_RECORD_FIELDS, getRouteContract } from "@/domain/route-contracts";
+import {
+  APPLICATION_RECORD_FIELDS,
+  REQUEST_METADATA_HEADERS,
+  getRouteContract,
+} from "@/domain/route-contracts";
 import { getRouteStrategy } from "@/domain/routes";
 import type { RouteKey, RouteOutput } from "@/domain/types";
 import { loadDraft, saveCurrentAction, saveDraft } from "@/lib/local-store";
 import { routeOutputWithProvenanceSchema } from "@/schemas/route-output";
+import type { RequestMetadata } from "@/schemas/route-request";
 
 const fieldLabels: Record<string, string> = {
   targetDirection: "你大概想投什么方向？",
@@ -75,6 +80,9 @@ export default function RouteInputPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isDraftPersisted = useRef(false);
   const activeRequest = useRef<AbortController | null>(null);
+  const activeSubmission = useRef<RequestMetadata | null>(null);
+  const draftRevision = useRef(0);
+  const submitLock = useRef(false);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -98,10 +106,22 @@ export default function RouteInputPage() {
   useEffect(() => {
     return () => {
       activeRequest.current?.abort();
+      activeRequest.current = null;
+      activeSubmission.current = null;
+      submitLock.current = false;
     };
   }, []);
 
   function updateValue(field: string, value: string) {
+    draftRevision.current += 1;
+    if (activeRequest.current) {
+      activeRequest.current.abort();
+      activeRequest.current = null;
+      activeSubmission.current = null;
+      submitLock.current = false;
+      setIsSubmitting(false);
+      setAiStatus("");
+    }
     const next = { ...values, [field]: value };
     setValues(next);
     setDraftStatus("正在保存。");
@@ -117,13 +137,20 @@ export default function RouteInputPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isSubmitting) return;
+    if (submitLock.current) return;
 
+    submitLock.current = true;
     setIsSubmitting(true);
     setHasProcessingFailure(false);
     setAiStatus("正在阅读你提供的信息。");
     const controller = new AbortController();
     activeRequest.current = controller;
+    const requestMetadata: RequestMetadata = {
+      clientRequestId: crypto.randomUUID(),
+      draftRevision: draftRevision.current,
+      idempotencyKey: crypto.randomUUID(),
+    };
+    activeSubmission.current = requestMetadata;
     const longWaitTimer = window.setTimeout(() => {
       setAiStatus(
         isDraftPersisted.current
@@ -139,9 +166,21 @@ export default function RouteInputPage() {
       const response = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ routeKey, input: buildRouteInput(routeKey, values) }),
+        body: JSON.stringify({
+          routeKey,
+          input: buildRouteInput(routeKey, values),
+          requestMetadata,
+        }),
         signal: controller.signal,
       });
+
+      if (!isCurrentSubmission(requestMetadata, draftRevision.current, activeSubmission.current)) {
+        return;
+      }
+      if (!responseMetadataMatches(response, requestMetadata)) {
+        setAiStatus("输入版本已经变化，本次结果没有保存。请按当前内容重新生成。");
+        return;
+      }
 
       if (response.status === 422) {
         setAiStatus(
@@ -166,7 +205,7 @@ export default function RouteInputPage() {
       }
       const output = parsedOutput.data as RouteOutput;
       try {
-        saveCurrentAction(output);
+        saveCurrentAction(output, requestMetadata);
       } catch {
         setAiStatus("行动已经整理好，但这次没有保存成功。请保留本页并重试。");
         setIsSubmitting(false);
@@ -174,6 +213,9 @@ export default function RouteInputPage() {
       }
       router.push(`/routes/${routeKey}/action`);
     } catch {
+      if (!isCurrentSubmission(requestMetadata, draftRevision.current, activeSubmission.current)) {
+        return;
+      }
       setHasProcessingFailure(true);
       setAiStatus(
         isDraftPersisted.current
@@ -186,6 +228,9 @@ export default function RouteInputPage() {
       window.clearTimeout(timeoutTimer);
       if (activeRequest.current === controller) {
         activeRequest.current = null;
+        activeSubmission.current = null;
+        submitLock.current = false;
+        setIsSubmitting(false);
       }
     }
   }
@@ -320,6 +365,27 @@ export default function RouteInputPage() {
       </section>
     </main>
   );
+}
+
+function isCurrentSubmission(
+  request: RequestMetadata,
+  currentDraftRevision: number,
+  active: RequestMetadata | null,
+) {
+  return active?.clientRequestId === request.clientRequestId
+    && active.idempotencyKey === request.idempotencyKey
+    && currentDraftRevision === request.draftRevision;
+}
+
+function responseMetadataMatches(response: Response, request: RequestMetadata) {
+  if (!response.headers || typeof response.headers.get !== "function") return true;
+  const clientRequestId = response.headers.get(REQUEST_METADATA_HEADERS.clientRequestId);
+  const draftRevision = response.headers.get(REQUEST_METADATA_HEADERS.draftRevision);
+  const idempotencyKey = response.headers.get(REQUEST_METADATA_HEADERS.idempotencyKey);
+  if (clientRequestId === null && draftRevision === null && idempotencyKey === null) return true;
+  return clientRequestId === request.clientRequestId
+    && draftRevision === String(request.draftRevision)
+    && idempotencyKey === request.idempotencyKey;
 }
 
 function isActionableOutputType(outputType: RouteOutput["outputType"]): boolean {

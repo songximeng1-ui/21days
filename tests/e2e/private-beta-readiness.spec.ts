@@ -5,6 +5,9 @@ import {
   installEvidenceCapture,
   type EvidenceCapture,
 } from "./evidence";
+import { withTestProvenance } from "../helpers/test-provenance";
+import type { OutputProvenance } from "@/domain/provenance";
+import type { RouteOutput } from "@/domain/types";
 
 const configuredEvidenceRoot =
   process.env.PLAYWRIGHT_EVIDENCE_DIR ?? process.env.E2E_EVIDENCE_DIR;
@@ -47,10 +50,12 @@ test.afterEach(async ({ page }) => {
 test("home and all four route inputs are usable without serious WCAG or overflow defects", async ({
   page,
 }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 800 });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "不用一次想清楚，今天先推进一件事。" })).toBeVisible();
   await expectNoSeriousA11yViolations(page);
   await expectNoHorizontalOverflow(page);
+  await expectPrimaryTouchTargets(page);
 
   for (const [routeKey, heading] of routes) {
     await page.goto(`/routes/${routeKey}/input`);
@@ -60,6 +65,7 @@ test("home and all four route inputs are usable without serious WCAG or overflow
     await expect(notice).toContainText("应用服务端不持久化原文");
     await expectNoSeriousA11yViolations(page);
     await expectNoHorizontalOverflow(page);
+    await expectPrimaryTouchTargets(page);
     await page.screenshot({
       path: evidenceScreenshotPath(
         evidenceRoot,
@@ -359,9 +365,11 @@ test("JD route preserves truthful prefill through revision, light review and sev
 }, testInfo) => {
   const targetJobTitle = "内容运营实习生";
   const beforeSnippet = "社团宣传组，编辑推文并统计报名表";
+  const suggestedSnippet = "编辑推文并统计报名表";
   const jdRequirement = "需要内容选题、数据记录、基础沟通协作";
   const afterSnippet = "协助编辑 2 篇社团推文，并整理 120 条活动报名信息。";
 
+  await page.setViewportSize({ width: 320, height: 800 });
   await page.goto("/routes/jd_to_revision/input");
   await startDaySevenJourney(page);
   await fillCompleteRoute(page, "jd_to_revision");
@@ -370,10 +378,17 @@ test("JD route preserves truthful prefill through revision, light review and sev
   await clickAndExpectAiSuccess(page, "生成今天先做的一步");
   await expect(page).toHaveURL(/\/routes\/jd_to_revision\/action$/);
   await expect(page.getByLabel("岗位要求对照结果")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "这次对照的岗位要求" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "本次核对的岗位要求" })).toBeVisible();
   await expect(page.getByText(jdRequirement, { exact: true })).toBeVisible();
-  await expect(page.getByText(beforeSnippet, { exact: true })).toHaveCount(1);
-  await expect(page.getByRole("heading", { name: "有证据后可使用的候选文本", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "建议修改的 1 处", exact: true })).toBeVisible();
+  await expect(page.getByText(`原句：${beforeSnippet}`, { exact: true })).toBeVisible();
+  await expect(page.getByText(`建议：${suggestedSnippet}`, { exact: true })).toBeVisible();
+  const whyButton = page.getByRole("button", { name: "为什么改这一处" });
+  await expect(whyButton).toHaveAttribute("aria-expanded", "false");
+  await whyButton.click();
+  await expect(whyButton).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText(`岗位原文：${jdRequirement}`, { exact: true })).toBeVisible();
+  await expect(page.getByText(`材料原文：${beforeSnippet}`, { exact: true })).toBeVisible();
   await expect(page.getByText("预计用时：15-30 分钟", { exact: true })).toBeVisible();
   await expectPageQualityAndScreenshot(page, testInfo, "jd_to_revision", "deep-action");
 
@@ -381,7 +396,7 @@ test("JD route preserves truthful prefill through revision, light review and sev
   await expect(page.getByLabel("目标岗位名称")).toHaveValue(targetJobTitle);
   await expect(page.getByLabel("修改前片段")).toHaveValue(beforeSnippet);
   await expect(page.getByLabel("对应的岗位要求")).toHaveValue(jdRequirement);
-  await expect(page.getByLabel("修改后片段")).toHaveValue(`${beforeSnippet}。`);
+  await expect(page.getByLabel("修改后片段")).toHaveValue(suggestedSnippet);
   await expect(page.getByLabel("是否已经投递")).toHaveValue("");
   await page.getByLabel("实际完成了什么？").fill("按真实经历完成 1 条投递前最小修改并提交。");
   await page.getByLabel("修改后片段").fill(afterSnippet);
@@ -421,28 +436,194 @@ test("JD route preserves truthful prefill through revision, light review and sev
 test("JD capability claim becomes a concrete evidence check without inventing a resume sentence", async ({
   page,
 }, testInfo) => {
-  const capabilityClaim = "可独立完成产品数据整理、分析与复盘";
+  const capabilityClaim = "熟悉流程优化";
+  const requirement = "梳理并优化流程";
+  const confirmedEvidence = "课程项目复盘：梳理报名流程并删减 2 个重复步骤";
 
   await page.goto("/routes/jd_to_revision/input");
   await page.getByLabel("目标岗位名称是什么？").fill("AI 产品运营实习");
-  await page.getByLabel(/把岗位要求粘贴进来/).fill(capabilityClaim);
+  await page.getByLabel(/把岗位要求粘贴进来/).fill(requirement);
   await page.getByLabel(/粘贴你准备核对或修改的原句/).fill(capabilityClaim);
   await page.getByLabel(/你最想确认什么/).fill(capabilityClaim);
 
-  await clickAndExpectAiSuccess(page, "生成今天先做的一步");
+  const collectOutput = withTestProvenance({
+    routeKey: "jd_to_revision",
+    outputType: "route_result",
+    shortAssessment: "当前没有安全的可改写位置，先补一项真实证据。",
+    routeResult: {
+      decision: "collect_evidence",
+      requirementsChecked: [requirement],
+      modifications: [],
+      evidenceRequest: "补充或核对：材料中没有该岗位要求的直接证据。",
+      jdKeyRequirements: [requirement],
+      supportedByMaterial: [],
+      unclearFromMaterial: [requirement],
+      minimalRevisionActions: [],
+      afterSubmissionRecording: ["记录查找位置和证据结果。"],
+      revisionTarget: capabilityClaim,
+      candidateRevision: null,
+      evidenceCheck: "材料中没有该岗位要求的直接证据。",
+    },
+    missingInfo: null,
+    todayAction: {
+      actionTitle: "补 1 项岗位要求的真实证据",
+      actionReason: "当前没有可安全粘贴的修改句，先补来源再重新判断。",
+      actionSteps: ["核对原始材料", "保存证据或明确记录未找到", "补充后重新提交判断"],
+      estimatedTime: "15-30 分钟",
+      recordAfterDone: "记录查找位置和证据结果。",
+      completionStandard: "已保存 1 条原始证据或明确记录未找到。",
+      actionType: "jd_revision",
+    },
+    recordGuide: {
+      recordType: "jd_compare",
+      fieldsToRecord: ["targetJobTitle", "jdRequirement", "evidenceLocation", "evidenceResult"],
+      requiresUserConfirmation: true,
+    },
+  } as RouteOutput) as RouteOutput & { provenance: OutputProvenance };
+  for (const claim of Object.values(collectOutput.provenance)) {
+    claim.sources = claim.sources.map((source) => ({
+      ...source,
+      path: "userMaterial",
+      quote: capabilityClaim.slice(0, 12),
+    }));
+  }
+  await page.evaluate((savedOutput) => {
+    window.localStorage.setItem("mvp-current-action", JSON.stringify({
+      ...savedOutput,
+      actionId: "e2e-collect-action",
+      actionCreatedAt: "2026-08-05T00:00:00.000Z",
+    }));
+  }, collectOutput);
+  await page.goto("/routes/jd_to_revision/action");
   await expect(page).toHaveURL(/\/routes\/jd_to_revision\/action$/);
   await expect(page.getByRole("heading", { name: "今天只做这一件事" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "证据与候选文本", exact: true })).toBeVisible();
-  await expect(page.getByText("当前证据不足，暂不修改这句。先按上面的行动核对原始材料。", { exact: true })).toBeVisible();
-  await expect(page.getByText(/完成标准：已保存 1 条核对结果/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "先补一项真实证据", exact: true })).toBeVisible();
+  await expect(page.getByLabel("岗位要求对照结果").getByText(
+    /补充或核对：材料中没有该岗位要求的直接证据/,
+  )).toBeVisible();
+  await expect(page.getByText(/完成标准：已保存 1 条原始证据/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /建议修改的/ })).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("对照数据分析要求补一句真实动作");
-  await expectPageQualityAndScreenshot(page, testInfo, "jd_to_revision", "claim-only-action");
+  await expectNoSeriousA11yViolations(page);
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({
+    path: evidenceScreenshotPath(evidenceRoot, testInfo.project.name, "jd_to_revision", "claim-only-action"),
+    fullPage: true,
+  });
 
   await page.getByRole("link", { name: "我做完了，记录结果" }).click();
-  await expect(page.getByLabel("修改前片段")).toHaveValue(capabilityClaim);
-  await expect(page.getByLabel("修改后片段")).toHaveValue("");
-  await expect(page.getByLabel("对应的岗位要求")).toHaveValue(capabilityClaim);
-  await expectPageQualityAndScreenshot(page, testInfo, "jd_to_revision", "claim-only-record");
+  await expect(page.getByLabel("对应的岗位要求")).toHaveValue(requirement);
+  await expect(page.getByLabel("证据查找位置")).toBeVisible();
+  await expect(page.getByLabel("证据核对结果")).toBeVisible();
+  await expect(page.getByLabel("修改后片段")).toHaveCount(0);
+  await page.getByLabel("证据查找位置").fill("项目文件夹与版本记录");
+  await page.getByLabel("证据核对结果").fill(confirmedEvidence);
+  await page.getByLabel(/我确认这条记录反映了我实际做过的事/).check();
+  await expectNoSeriousA11yViolations(page);
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({
+    path: evidenceScreenshotPath(evidenceRoot, testInfo.project.name, "jd_to_revision", "claim-only-record"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "保存证据结果，重新判断" }).click();
+
+  await expect(page).toHaveURL(/\/routes\/jd_to_revision\/input$/);
+  await expect(page.getByLabel("目标岗位名称是什么？")).toHaveValue("AI 产品运营实习");
+  await expect(page.getByLabel(/把岗位要求粘贴进来/)).toHaveValue(requirement);
+  await expect(page.getByLabel(/粘贴你准备核对或修改的原句/)).toHaveValue(
+    `${capabilityClaim}\n${confirmedEvidence}`,
+  );
+
+  await page.getByRole("button", { name: "生成今天先做的一步" }).click();
+  await expect(page).toHaveURL(/\/routes\/jd_to_revision\/action$/);
+  await expect(page.getByRole("heading", { name: "先补一项真实证据", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: /建议修改的/ })).toBeVisible();
+});
+
+test("JD all-keep saves the current version, submission state, and observation without forcing a rewrite", async ({
+  page,
+}, testInfo) => {
+  const output = withTestProvenance({
+    routeKey: "jd_to_revision",
+    outputType: "route_result",
+    shortAssessment: "已检查的岗位要求都有真实材料支撑。",
+    routeResult: {
+      decision: "all_keep",
+      requirementsChecked: ["内容整理", "流程梳理", "项目推进"],
+      modifications: [],
+      evidenceRequest: null,
+      jdKeyRequirements: ["内容整理", "流程梳理", "项目推进"],
+      supportedByMaterial: ["整理真实材料", "完成流程记录", "推进上线"],
+      unclearFromMaterial: [],
+      minimalRevisionActions: [],
+      afterSubmissionRecording: ["记录当前版本、投递状态和观察点。"],
+      revisionTarget: "当前版本",
+      candidateRevision: null,
+      evidenceCheck: "三条要求均有直接来源。",
+    },
+    missingInfo: null,
+    todayAction: {
+      actionTitle: "确认并保存当前版本",
+      actionReason: "不需要为了凑修改而改写。",
+      actionSteps: ["确认当前版本", "记录投递状态", "写下观察点"],
+      estimatedTime: "15-30 分钟",
+      recordAfterDone: "记录当前版本、投递状态和观察点。",
+      completionStandard: "已保存当前版本和下一次观察点。",
+      actionType: "jd_revision",
+    },
+    recordGuide: {
+      recordType: "jd_compare",
+      fieldsToRecord: ["targetJobTitle", "materialVersion", "submitted", "observationPoint"],
+      requiresUserConfirmation: true,
+    },
+  } as RouteOutput) as RouteOutput & { provenance: OutputProvenance };
+  for (const claim of Object.values(output.provenance ?? {})) {
+    claim.sources = claim.sources.map((source) => ({
+      ...source,
+      path: "userMaterial",
+      quote: "当前版本",
+    }));
+  }
+  await page.evaluate((savedOutput) => {
+    window.localStorage.setItem("mvp-draft:jd_to_revision", JSON.stringify({
+      targetJobTitle: "AI 产品运营实习",
+      jdTextOrRequirements: "内容整理；流程梳理；项目推进",
+      userMaterial: "当前版本已有三条可核对事实",
+    }));
+    window.localStorage.setItem("mvp-current-action", JSON.stringify({
+      ...savedOutput,
+      actionId: "e2e-all-keep-action",
+      actionCreatedAt: "2026-08-05T00:00:00.000Z",
+    }));
+  }, output);
+
+  await page.goto("/routes/jd_to_revision/record");
+  const materialVersion = page.getByRole("textbox", { name: "当前版本名称", exact: true });
+  await expect(materialVersion).toBeVisible();
+  await expect(page.getByLabel("修改后片段")).toHaveCount(0);
+  await materialVersion.fill("AI 产品运营版 V1");
+  await page.getByLabel("是否已经投递").fill("已投递");
+  await page.getByRole("textbox", { name: "后续观察点", exact: true }).fill("记录是否进入笔试或面试");
+  await page.getByLabel(/我确认这条记录反映了我实际做过的事/).check();
+  await expectNoSeriousA11yViolations(page);
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({
+    path: evidenceScreenshotPath(evidenceRoot, testInfo.project.name, "jd_to_revision", "all-keep-record"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "保存当前版本和观察点" }).click();
+
+  await expect(page).toHaveURL(/\/review$/);
+  await expect(page.getByText("确认并保存了当前版本和后续观察点。")).toBeVisible();
+  const savedPayload = await page.evaluate(() => {
+    const records = JSON.parse(window.localStorage.getItem("mvp-records") ?? "[]");
+    return records[0]?.payload;
+  });
+  expect(savedPayload).toMatchObject({
+    materialVersion: "AI 产品运营版 V1",
+    submitted: "已投递",
+    observationPoint: "记录是否进入笔试或面试",
+  });
 });
 
 test("two application records persist separately and unlock explicit light review", async ({
@@ -543,6 +724,36 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(overflow.document).toBeLessThanOrEqual(overflow.viewport + 1);
 }
 
+async function expectPrimaryTouchTargets(page: Page) {
+  const undersized = await page
+    .locator(
+      'button, a.button-link, a.primary-button, a.secondary-button, a.back-link, a.route-card, label.checkbox, summary, input:not([type="checkbox"]):not([type="radio"]), select, textarea, [role="button"]',
+    )
+    .evaluateAll((elements) =>
+      elements
+        .filter((element) => {
+          const box = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return box.width > 0
+            && box.height > 0
+            && style.visibility !== "hidden"
+            && element.getAttribute("aria-label") !== "Open Next.js Dev Tools";
+        })
+        .map((element) => {
+          const box = element.getBoundingClientRect();
+          return {
+            label:
+              element.getAttribute("aria-label") ??
+              element.textContent?.trim().slice(0, 80) ??
+              element.tagName,
+            height: box.height,
+          };
+        })
+        .filter(({ height }) => height < 43.5),
+    );
+  expect(undersized, JSON.stringify(undersized, null, 2)).toEqual([]);
+}
+
 async function expectNoSeriousA11yViolations(page: Page) {
   const result = await new AxeBuilder({ page }).analyze();
   const blocking = result.violations.filter((violation) =>
@@ -580,6 +791,7 @@ async function expectPageQualityAndScreenshot(
 ) {
   await expectNoSeriousA11yViolations(page);
   await expectNoHorizontalOverflow(page);
+  await expectPrimaryTouchTargets(page);
   await page.screenshot({
     path: evidenceScreenshotPath(
       evidenceRoot,

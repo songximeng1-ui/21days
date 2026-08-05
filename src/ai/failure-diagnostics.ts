@@ -21,6 +21,8 @@ export type AiFailureEvent = {
   attempt: number;
   stage: AiFailureStage;
   code: string;
+  failureClass: "machine_unavailable" | "semantic_invalid";
+  recoveryDecision: "retry_primary" | "try_fallback" | "stop";
   durationBucket: "lt_100ms" | "100_499ms" | "500_1999ms" | "gte_2000ms";
   schemaPaths?: string[];
   httpStatusClass?: AiHttpStatusClass;
@@ -46,6 +48,8 @@ export function createSafeAiFailureReporter(
         attempt: event.attempt,
         stage: event.stage,
         code: event.code,
+        failureClass: event.failureClass,
+        recoveryDecision: event.recoveryDecision,
         durationBucket: event.durationBucket,
         ...(event.schemaPaths ? { schemaPaths: [...event.schemaPaths] } : {}),
         ...(event.httpStatusClass ? { httpStatusClass: event.httpStatusClass } : {}),

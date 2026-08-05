@@ -25,8 +25,13 @@ import type { RouteKey } from "@/domain/types";
 import { ROUTE_KEYS } from "@/domain/types";
 import type { LocalRecord } from "@/lib/local-store";
 import { attachOutputProvenance } from "@/domain/provenance";
+import { REQUEST_METADATA_HEADERS } from "@/domain/route-contracts";
 import { routeOutputWithProvenanceSchema } from "@/schemas/route-output";
-import { routeRequestSchema, type ParsedRouteRequest } from "@/schemas/route-request";
+import {
+  routeRequestSchema,
+  type ParsedRouteRequest,
+  type RequestMetadata,
+} from "@/schemas/route-request";
 import { containsSensitivePersonalInfo } from "@/domain/safety";
 import { NextResponse } from "next/server";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
@@ -78,10 +83,15 @@ const RECORD_PAYLOAD_FIELDS: Record<RouteKey, Record<string, readonly string[]>>
   },
   jd_to_revision: {
     jd_compare: [
+      "targetJobTitle",
       "beforeSnippet",
       "afterSnippet",
       "jdRequirement",
       "submitted",
+      "evidenceLocation",
+      "evidenceResult",
+      "materialVersion",
+      "observationPoint",
     ],
   },
   applications_to_review: {
@@ -115,20 +125,29 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
   const deadlineMs = dependencies.deadlineMs ?? 28_000;
   const reusableProviders = new Map<string, AiProvider>();
   return async function handleAiRequest(request: Request): Promise<Response> {
+    const deadlineAtMs = Date.now() + deadlineMs;
+    const deadlineController = new AbortController();
+    const deadlineTimer = setTimeout(
+      () => deadlineController.abort(new Error("whole_request_deadline")),
+      deadlineMs,
+    );
+    const operationSignal = AbortSignal.any([request.signal, deadlineController.signal]);
     let routeKey: RouteKey = "experience_to_resume";
     const requestId = createRequestId();
+    let requestMetadata: RequestMetadata | undefined;
     let session = guard.readSession(request);
     let release: (() => void) | undefined;
 
     try {
       guard.assertTrustedJsonRequest(request);
-      const body = routeRequestSchema.parse(await guard.readJson(request));
+      const body = routeRequestSchema.parse(await guard.readJson(request, operationSignal));
+      requestMetadata = body.requestMetadata;
       routeKey = body.routeKey;
       if (containsSensitivePersonalInfo(body.input)) {
         return withSessionCookie(
           withRequestId(NextResponse.json(makeSensitiveInfoFailure(requestId), {
             status: 422,
-          }), requestId),
+          }), requestId, requestMetadata),
           session,
         );
       }
@@ -162,8 +181,8 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
               provider,
               reporter,
               requestId,
-              signal: request.signal,
-              deadlineMs,
+              signal: operationSignal,
+              deadlineMs: Math.max(1, deadlineAtMs - Date.now()),
               failureMode: "throw",
               surfaceUpstreamUnavailable: true,
             })
@@ -173,13 +192,13 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
               provider,
               reporter,
               requestId,
-              signal: request.signal,
-              deadlineMs,
+              signal: operationSignal,
+              deadlineMs: Math.max(1, deadlineAtMs - Date.now()),
               failureMode: "throw",
               surfaceUpstreamUnavailable: true,
             });
       if (request.signal.aborted) {
-        return withSessionCookie(withRequestId(new Response(null, { status: 499 }), requestId), session);
+        return withSessionCookie(withRequestId(new Response(null, { status: 499 }), requestId, requestMetadata), session);
       }
       const verifiedProvenance = attachOutputProvenance(
         output,
@@ -202,12 +221,19 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
         throw new AiProcessingError("invalid_output", requestId);
       }
       return withSessionCookie(
-        withRequestId(NextResponse.json(validatedOutput.data), requestId),
+        withRequestId(NextResponse.json(validatedOutput.data), requestId, requestMetadata),
         session,
       );
     } catch (error) {
       if (request.signal.aborted) {
-        return withSessionCookie(withRequestId(new Response(null, { status: 499 }), requestId), session);
+        return withSessionCookie(withRequestId(new Response(null, { status: 499 }), requestId, requestMetadata), session);
+      }
+      if (deadlineController.signal.aborted) {
+        const deadlineError = new AiProcessingError("deadline", requestId);
+        return withSessionCookie(
+          withRequestId(NextResponse.json(toAiProcessingFailure(deadlineError), { status: 504 }), requestId, requestMetadata),
+          session,
+        );
       }
       if (error instanceof AiProcessingError) {
         return withSessionCookie(
@@ -219,6 +245,7 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
                 : undefined,
             }),
             requestId,
+            requestMetadata,
           ),
           session,
         );
@@ -238,7 +265,7 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
           } satisfies AiProcessingFailure, {
             status: 503,
             headers: { "Retry-After": String(retryAfterSeconds) },
-          }), requestId),
+          }), requestId, requestMetadata),
           session,
         );
       }
@@ -251,13 +278,13 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
               headers: error.retryAfterSeconds
                 ? { "Retry-After": String(Math.min(error.retryAfterSeconds, 86_400)) }
                 : undefined,
-            }), requestId),
+            }), requestId, requestMetadata),
           session,
         );
       }
       if (error instanceof z.ZodError || error instanceof SyntaxError) {
         return withSessionCookie(
-          withRequestId(NextResponse.json(makeRequestFailure(requestId), { status: 400 }), requestId),
+          withRequestId(NextResponse.json(makeRequestFailure(requestId), { status: 400 }), requestId, requestMetadata),
           session,
         );
       }
@@ -268,10 +295,11 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
           message: "这次暂时没整理出来。你填写的内容还保留在本页，可以再整理一次。",
           requestId,
           retryable: true,
-        } satisfies AiProcessingFailure, { status: 500 }), requestId),
+        } satisfies AiProcessingFailure, { status: 500 }), requestId, requestMetadata),
         session,
       );
     } finally {
+      clearTimeout(deadlineTimer);
       release?.();
     }
   };
@@ -313,8 +341,26 @@ function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? "untracked-request";
 }
 
-function withRequestId(response: Response, requestId: string): Response {
+function withRequestId(
+  response: Response,
+  requestId: string,
+  requestMetadata?: RequestMetadata,
+): Response {
   response.headers.set("X-Request-Id", requestId);
+  if (requestMetadata) {
+    response.headers.set(
+      REQUEST_METADATA_HEADERS.clientRequestId,
+      requestMetadata.clientRequestId,
+    );
+    response.headers.set(
+      REQUEST_METADATA_HEADERS.draftRevision,
+      String(requestMetadata.draftRevision),
+    );
+    response.headers.set(
+      REQUEST_METADATA_HEADERS.idempotencyKey,
+      requestMetadata.idempotencyKey,
+    );
+  }
   return response;
 }
 

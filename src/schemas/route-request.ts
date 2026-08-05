@@ -4,6 +4,18 @@ const scenarioSchema = z
   .enum(["success", "missing_info", "invalid_structure", "unsafe_output", "provider_failure"])
   .default("success");
 
+export const requestMetadataSchema = z.object({
+  clientRequestId: z.string().uuid(),
+  draftRevision: z.number().int().nonnegative(),
+  idempotencyKey: z.string().uuid(),
+}).strict();
+
+export type RequestMetadata = z.infer<typeof requestMetadataSchema>;
+
+const requestMetadataField = {
+  requestMetadata: requestMetadataSchema.optional(),
+};
+
 const directionInputSchema = z.object({
   educationBackground: z.string().optional(),
   realExperiences: z.string().optional(),
@@ -41,24 +53,28 @@ const applicationInputSchema = z.object({
 
 const routeModeSchema = z.discriminatedUnion("routeKey", [
   z.object({
+    ...requestMetadataField,
     mode: z.literal("route").default("route"),
     routeKey: z.literal("direction_to_jobs"),
     input: directionInputSchema.default({}),
     scenario: scenarioSchema,
   }).strict(),
   z.object({
+    ...requestMetadataField,
     mode: z.literal("route").default("route"),
     routeKey: z.literal("experience_to_resume"),
     input: experienceInputSchema.default({}),
     scenario: scenarioSchema,
   }).strict(),
   z.object({
+    ...requestMetadataField,
     mode: z.literal("route").default("route"),
     routeKey: z.literal("jd_to_revision"),
     input: jdInputSchema.default({}),
     scenario: scenarioSchema,
   }).strict(),
   z.object({
+    ...requestMetadataField,
     mode: z.literal("route").default("route"),
     routeKey: z.literal("applications_to_review"),
     input: applicationInputSchema.default({}),
@@ -73,24 +89,28 @@ const applicationRecordsReviewInputSchema = z.object({
 
 const lightReviewModeSchema = z.discriminatedUnion("routeKey", [
   z.object({
+    ...requestMetadataField,
     mode: z.literal("light_review"),
     routeKey: z.literal("direction_to_jobs"),
     input: singleRecordReviewInputSchema,
     scenario: scenarioSchema,
   }).strict(),
   z.object({
+    ...requestMetadataField,
     mode: z.literal("light_review"),
     routeKey: z.literal("experience_to_resume"),
     input: singleRecordReviewInputSchema,
     scenario: scenarioSchema,
   }).strict(),
   z.object({
+    ...requestMetadataField,
     mode: z.literal("light_review"),
     routeKey: z.literal("jd_to_revision"),
     input: singleRecordReviewInputSchema,
     scenario: scenarioSchema,
   }).strict(),
   z.object({
+    ...requestMetadataField,
     mode: z.literal("light_review"),
     routeKey: z.literal("applications_to_review"),
     input: applicationRecordsReviewInputSchema,

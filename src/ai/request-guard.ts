@@ -144,7 +144,7 @@ export class AiRequestGuard {
     };
   }
 
-  async readJson(request: Request): Promise<unknown> {
+  async readJson(request: Request, signal: AbortSignal = request.signal): Promise<unknown> {
     const declaredLength = Number(request.headers.get("Content-Length"));
     if (Number.isFinite(declaredLength) && declaredLength > this.maxRequestBytes) {
       throw new AiRequestGuardError(413);
@@ -154,15 +154,31 @@ export class AiRequestGuard {
     const decoder = new TextDecoder();
     let totalBytes = 0;
     let text = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      totalBytes += value.byteLength;
-      if (totalBytes > this.maxRequestBytes) {
-        await reader.cancel();
-        throw new AiRequestGuardError(413);
+    let rejectAbort!: (reason: unknown) => void;
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAbort = reject;
+    });
+    const onAbort = () => rejectAbort(
+      signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError"),
+    );
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      while (true) {
+        const { done, value } = await Promise.race([reader.read(), aborted]);
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > this.maxRequestBytes) {
+          await reader.cancel();
+          throw new AiRequestGuardError(413);
+        }
+        text += decoder.decode(value, { stream: true });
       }
-      text += decoder.decode(value, { stream: true });
+    } catch (error) {
+      await reader.cancel().catch(() => undefined);
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", onAbort);
     }
     text += decoder.decode();
     let parsed: unknown;
