@@ -53,7 +53,12 @@ describe("POST /api/ai", () => {
     );
     const output = await response.json();
 
-    expect(output.outputType).toBe("friendly_failure");
+    expect(response.status).toBe(503);
+    expect(output).toMatchObject({
+      error: "ai_processing_failure",
+      category: "transport",
+    });
+    expect(output).not.toHaveProperty("todayAction");
     expect(JSON.stringify(output)).not.toMatch(/DeepSeek|Qwen|fallback|prompt|token|API/i);
   });
 
@@ -568,7 +573,11 @@ describe("POST /api/ai", () => {
     const body = await response.json();
 
     expect(response.status).toBe(502);
-    expect(body.outputType).toBe("friendly_failure");
+    expect(body).toMatchObject({
+      error: "ai_processing_failure",
+      category: "invalid_output",
+    });
+    expect(body).not.toHaveProperty("todayAction");
     expect(JSON.stringify(body)).not.toContain("rawProviderExtra");
   });
 
@@ -1083,11 +1092,12 @@ describe("POST /api/ai", () => {
 
     expect(response.status).toBe(500);
     expect(parsedBody).toMatchObject({
-      outputType: "friendly_failure",
-      routeKey: "experience_to_resume",
+      error: "ai_processing_failure",
+      category: "invalid_output",
     });
+    expect(parsedBody).not.toHaveProperty("todayAction");
     expect(body).not.toContain("sensitive internal detail");
-    expect(body).not.toMatch(/stack|error|exception|providerFactory/i);
+    expect(body).not.toMatch(/stack|exception|providerFactory/i);
   });
 });
 

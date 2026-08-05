@@ -9,6 +9,7 @@ import {
 import { normalizeProviderBaseUrl } from "@/ai/provider-url-policy";
 import { MockAiProvider } from "@/ai/mock-provider";
 import { APPLICATION_RECORD_FIELDS, getRouteContract } from "@/domain/route-contracts";
+import { buildJdEvidenceCatalog } from "@/domain/jd-route-assembler";
 import type { ActionType, RecordType, RouteKey, RouteOutput } from "@/domain/types";
 
 type FetchLike = typeof fetch;
@@ -39,7 +40,7 @@ export class ChatCompletionProvider implements AiProvider {
     this.maxResponseBytes = Math.max(64, Math.min(options.maxResponseBytes ?? 512 * 1024, 1024 * 1024));
   }
 
-  async generate(input: AiProviderInput): Promise<RouteOutput> {
+  async generate(input: AiProviderInput): Promise<unknown> {
     if (input.signal?.aborted) throw new AiProviderError("cancelled");
     if (input.deadlineAtMs !== undefined && input.deadlineAtMs <= Date.now()) {
       throw new AiProviderError("timeout");
@@ -123,7 +124,7 @@ export class ChatCompletionProvider implements AiProvider {
 }
 
 function maxTokensForRoute(routeKey: RouteKey): number {
-  return routeKey === "jd_to_revision" ? 2400 : 1600;
+  return routeKey === "jd_to_revision" ? 900 : 1600;
 }
 
 function isRetryableProviderStatus(status: number): boolean {
@@ -226,7 +227,7 @@ class ConfiguredAiProviderSet implements AiProviderSet {
     ].filter(Boolean).join("|");
   }
 
-  generate(input: AiProviderInput): Promise<RouteOutput> {
+  generate(input: AiProviderInput): Promise<unknown> {
     return this.primary.generate(input);
   }
 }
@@ -354,6 +355,10 @@ function buildUserPrompt(input: AiProviderInput): string {
     return buildLightReviewPrompt(input);
   }
 
+  if (input.routeKey === "jd_to_revision") {
+    return buildJdMappingPrompt(input);
+  }
+
   const config = ROUTE_PROMPT_CONFIG[input.routeKey];
   const contract = getRouteContract(input.routeKey);
   const inputFields = [
@@ -384,6 +389,59 @@ function buildUserPrompt(input: AiProviderInput): string {
     "证据字段只能逐字引用用户输入中的事实，并且必须严格连续逐字引用同一个白名单来源值。",
     "不得添加前缀或后缀；不得跨字段拼接；不得用同义词改写。",
     "非证据摘要与行动字段可以谨慎改写，但不得引入新事实。",
+    "ALLOWED_EVIDENCE_END",
+    ...buildRetryCorrection(input.retryFeedback, input.routeKey, false),
+  ].join("\n");
+}
+
+function buildJdMappingPrompt(input: AiProviderInput): string {
+  const routeInput = pickRouteInput(
+    "jd_to_revision",
+    input.input,
+    ["targetJobTitle", "jdTextOrRequirements", "userMaterial", "currentQuestion"],
+  ) as {
+    targetJobTitle: string;
+    jdTextOrRequirements: string;
+    userMaterial: string;
+    currentQuestion?: string;
+  };
+  const catalog = buildJdEvidenceCatalog(routeInput);
+  const narrowContract = {
+    routeKey: "jd_to_revision",
+    mappings: [{
+      requirementId: "req-1",
+      materialId: "mat-1 or null",
+      candidate: "grounded string or null",
+      reason: "short mapping reason",
+      risk: "evidence gap or null",
+    }],
+  };
+  return [
+    "当前且唯一的路线：jd_to_revision。",
+    "你只负责选择岗位要求与材料证据的映射，并在有直接证据时给一条候选句；服务端负责组装全部用户行动字段。",
+    "只返回下方窄合同的 JSON，不得返回 outputType、routeResult、todayAction、recordGuide 或其他字段。",
+    "requirementId 和 materialId 只能使用证据目录中的 ID；没有直接材料支撑时 materialId 与 candidate 都必须为 null。",
+    "candidate 只能包含所选 materialId 原文能够证明的动作、数字、工具、角色和交付物。",
+    "不得把 JD 中的主导、负责、独立完成、协同研发设计、数据工具或 PRD 搬进 candidate，除非所选材料原文明确包含同一事实。",
+    "同义动作不能视为工具、角色或交付物证据；不确定时返回 null，并在 risk 写清证据缺口。",
+    ...buildRouteSemanticRules("jd_to_revision"),
+    "ACTIVE_ROUTE_CONTRACT_BEGIN",
+    JSON.stringify(narrowContract, null, 2),
+    "ACTIVE_ROUTE_CONTRACT_END",
+    "ACTIVE_ROUTE_EXAMPLE_BEGIN",
+    JSON.stringify({
+      input: { requirementId: "req-1", materialId: "mat-1" },
+      output: narrowContract,
+    }, null, 2),
+    "ACTIVE_ROUTE_EXAMPLE_END",
+    "ACTIVE_ROUTE_INPUT_BEGIN",
+    JSON.stringify(routeInput, null, 2),
+    "ACTIVE_ROUTE_INPUT_END",
+    "ALLOWED_EVIDENCE_BEGIN",
+    "证据字段映射：requirementId <- jdTextOrRequirements; materialId <- userMaterial",
+    JSON.stringify(catalog, null, 2),
+    "证据字段只能逐字引用用户输入中的事实，并且必须严格连续逐字引用同一个白名单来源值。",
+    "不得添加前缀或后缀；不得跨字段拼接；不得用同义词改写。",
     "ALLOWED_EVIDENCE_END",
     ...buildRetryCorrection(input.retryFeedback, input.routeKey, false),
   ].join("\n");

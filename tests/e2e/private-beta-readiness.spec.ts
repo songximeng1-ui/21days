@@ -146,6 +146,8 @@ test("external-AI wait, limit and failure states retain the user's draft", async
   await expect(page.getByRole("button", { name: "正在生成..." })).toBeDisabled();
   await expect(page.getByRole("status")).toContainText("正在阅读你提供的信息");
   await expect(page.getByRole("status")).toContainText("这次暂时没整理出来");
+  await expect(page).toHaveURL(/\/routes\/jd_to_revision\/input$/);
+  await expect(page.getByRole("button", { name: "再整理一次" })).toBeVisible();
   await expect(material).toHaveValue("整理报名表并核对名单");
   const expectedNetworkErrors = browserProblems.get(page) ?? [];
   expect(expectedNetworkErrors).toEqual([
@@ -181,6 +183,8 @@ test("browser timeout aborts the pending AI request and keeps the draft", async 
   await page.getByRole("button", { name: "生成今天先做的一步" }).click();
 
   await expect(page.getByRole("status")).toContainText("这次暂时没整理出来");
+  await expect(page).toHaveURL(/\/routes\/jd_to_revision\/input$/);
+  await expect(page.getByRole("button", { name: "再整理一次" })).toBeVisible();
   await expect.poll(() => requestFailed).toBe(true);
   await expect(material).toHaveValue("整理报名表并核对名单");
 });

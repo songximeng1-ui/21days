@@ -31,6 +31,31 @@ export interface AiFailureReporter {
   report(event: AiFailureEvent): void | Promise<void>;
 }
 
+type SafeAiFailureLogger = (event: AiFailureEvent) => void | Promise<void>;
+
+export function createSafeAiFailureReporter(
+  logger: SafeAiFailureLogger,
+): AiFailureReporter {
+  return Object.freeze({
+    report(event: AiFailureEvent) {
+      const safeEvent: AiFailureEvent = {
+        requestId: event.requestId,
+        routeKey: event.routeKey,
+        mode: event.mode,
+        providerRole: event.providerRole,
+        attempt: event.attempt,
+        stage: event.stage,
+        code: event.code,
+        durationBucket: event.durationBucket,
+        ...(event.schemaPaths ? { schemaPaths: [...event.schemaPaths] } : {}),
+        ...(event.httpStatusClass ? { httpStatusClass: event.httpStatusClass } : {}),
+        ...(event.providerErrorCode ? { providerErrorCode: event.providerErrorCode } : {}),
+      };
+      return logger(safeEvent);
+    },
+  });
+}
+
 export const noopAiFailureReporter: AiFailureReporter = Object.freeze({
   report() {},
 });

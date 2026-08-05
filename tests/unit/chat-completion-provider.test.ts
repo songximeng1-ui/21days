@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ChatCompletionProvider, createAiProviderFromEnv } from "@/ai/chat-completion-provider";
 import { AiProviderError, type AiProviderInput } from "@/ai/provider";
 import { MockAiProvider } from "@/ai/mock-provider";
-import type { RouteKey } from "@/domain/types";
+import type { RouteKey, RouteOutput } from "@/domain/types";
 import { isRouteInputSufficient } from "@/domain/routes";
 import { routeOutputSchema } from "@/schemas/route-output";
 
@@ -164,15 +164,10 @@ it("treats a capability summary as evidence to verify instead of a completed act
     "ACTIVE_ROUTE_CONTRACT_BEGIN",
     "ACTIVE_ROUTE_CONTRACT_END",
   );
-  const routeResult = contract.routeResult as Record<string, unknown>;
-  const todayAction = contract.todayAction as Record<string, unknown>;
-
-  expect(Object.keys(routeResult)).toEqual(expect.arrayContaining([
-    "revisionTarget",
-    "candidateRevision",
-    "evidenceCheck",
-  ]));
-  expect(todayAction).toHaveProperty("completionStandard");
+  expect(Object.keys(contract)).toEqual(["routeKey", "mappings"]);
+  expect(contract).not.toHaveProperty("routeResult");
+  expect(contract).not.toHaveProperty("todayAction");
+  expect(prompt).toContain("服务端负责组装全部用户行动字段");
   expect(prompt).toContain("能力宣称");
   expect(prompt).toContain("不得当作已发生动作");
   expect(prompt).toContain("同一句原文最多");
@@ -222,6 +217,15 @@ describe("ChatCompletionProvider", () => {
 
       expect(prompt).toContain("ACTIVE_ROUTE_CONTRACT_BEGIN");
       expect(prompt).toContain(`\"routeKey\": \"${routeKey}\"`);
+      if (routeKey === "jd_to_revision") {
+        expect(Object.keys(contract)).toEqual(["routeKey", "mappings"]);
+        expect(prompt).toContain('"requirementId": "req-1"');
+        expect(prompt).toContain('"materialId": "mat-1 or null"');
+        expect(prompt).not.toContain('"outputType": "route_result"');
+        expect(prompt).not.toContain('"todayAction"');
+        expect(example.output).toHaveProperty("mappings");
+        return;
+      }
       expect(prompt).toContain('\"outputType\": \"route_result\"');
       expect(prompt).toContain("routeResult 必须是非 null 对象");
       expect(prompt).toContain('\"missingInfo\": null');
@@ -399,7 +403,12 @@ describe("ChatCompletionProvider", () => {
 
       expect(prompt.match(/ACTIVE_ROUTE_CONTRACT_BEGIN/g)).toHaveLength(1);
       expect(prompt.match(/ACTIVE_ROUTE_EXAMPLE_BEGIN/g)).toHaveLength(1);
-      for (const field of routeResultFields) expect(prompt).toContain(`\"${field}\"`);
+      if (routeKey === "jd_to_revision") {
+        expect(prompt).toContain('"mappings"');
+        for (const field of routeResultFields) expect(prompt).not.toContain(`\"${field}\"`);
+      } else {
+        for (const field of routeResultFields) expect(prompt).toContain(`\"${field}\"`);
+      }
       for (const other of otherCases) {
         expect(prompt).not.toContain(`\"routeKey\": \"${other.routeKey}\"`);
         for (const field of other.routeResultFields) expect(prompt).not.toContain(`\"${field}\"`);
@@ -444,7 +453,7 @@ describe("ChatCompletionProvider", () => {
       },
       allowed: ["ALLOW_JD_REQUIREMENT", "ALLOW_JD_MATERIAL"],
       denied: "DENY_JD_PRIVATE",
-      mapping: "jdKeyRequirements <- jdTextOrRequirements; supportedByMaterial <- userMaterial",
+      mapping: "requirementId <- jdTextOrRequirements; materialId <- userMaterial",
     },
     {
       routeKey: "applications_to_review" as const,
@@ -875,6 +884,11 @@ describe("ChatCompletionProvider", () => {
     const example = parsePromptSection(prompt, "ACTIVE_ROUTE_EXAMPLE_BEGIN", "ACTIVE_ROUTE_EXAMPLE_END") as {
       output: { todayAction: { actionTitle: string; actionSteps: string[]; recordAfterDone: string } };
     };
+    if (routeKey === "jd_to_revision") {
+      expect(example.output).toHaveProperty("mappings");
+      expect(example.output).not.toHaveProperty("todayAction");
+      return;
+    }
     const actionCopy = [
       example.output.todayAction.actionTitle,
       ...example.output.todayAction.actionSteps,
@@ -921,7 +935,7 @@ describe("ChatCompletionProvider", () => {
       },
     });
 
-    expect(result.todayAction.actionType).toBe("experience_fact");
+    expect((result as RouteOutput).todayAction.actionType).toBe("experience_fact");
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.deepseek.com/chat/completions",
       expect.objectContaining({
@@ -975,7 +989,7 @@ describe("ChatCompletionProvider", () => {
     expect(result).toEqual(validOutput);
   });
 
-  it("uses a larger completion budget for long JD revision JSON outputs only", async () => {
+  it("uses a smaller completion budget for the narrow JD mapping contract", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(
         JSON.stringify({
@@ -1002,7 +1016,7 @@ describe("ChatCompletionProvider", () => {
 
     const call = fetchMock.mock.calls[0] as unknown as [unknown, RequestInit];
     const body = JSON.parse(call[1].body as string);
-    expect(body.max_tokens).toBe(2400);
+    expect(body.max_tokens).toBe(900);
   });
 
   it("parses JSON from text items when a compatible provider returns array content", async () => {

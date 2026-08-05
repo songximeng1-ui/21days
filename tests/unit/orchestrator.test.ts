@@ -209,7 +209,7 @@ describe("generateRouteOutput", () => {
     expect(fallback.generate).toHaveBeenCalledTimes(2);
   });
 
-  it("moves to fallback after a primary timeout without repeating the slow provider", async () => {
+  it("retries the primary once before moving to fallback after a timeout", async () => {
     const primary = {
       generate: vi.fn().mockRejectedValue(new AiProviderError("timeout")),
     };
@@ -225,7 +225,7 @@ describe("generateRouteOutput", () => {
     });
 
     expect(result.outputType).toBe("route_result");
-    expect(primary.generate).toHaveBeenCalledTimes(1);
+    expect(primary.generate).toHaveBeenCalledTimes(2);
     expect(fallback.generate).toHaveBeenCalledTimes(1);
   });
 

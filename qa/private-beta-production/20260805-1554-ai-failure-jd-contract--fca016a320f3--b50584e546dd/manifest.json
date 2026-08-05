@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260805-1554-ai-failure-jd-contract--fca016a320f3--b50584e546dd",
+  "requestedRunId": "20260805-1554-ai-failure-jd-contract",
+  "head": "fca016a320f3",
+  "dirty": true,
+  "gitStatus": [
+    "M package-lock.json",
+    " M src/ai/chat-completion-provider.ts",
+    " M src/ai/failure-diagnostics.ts",
+    " M src/ai/orchestrator.ts",
+    " M src/ai/provider.ts",
+    " M src/app/api/ai/route.ts",
+    " M src/app/routes/[routeKey]/input/page.tsx",
+    " M tests/e2e/private-beta-readiness.spec.ts",
+    " M tests/unit/api-ai-route.test.ts",
+    " M tests/unit/chat-completion-provider.test.ts",
+    " M tests/unit/input-page.test.tsx",
+    " M tests/unit/orchestrator.test.ts",
+    "?? docs/superpowers/plans/2026-08-05-ai-failure-observability-jd-contract-recovery.md",
+    "?? src/ai/processing-failure.ts",
+    "?? src/domain/jd-route-assembler.ts",
+    "?? src/schemas/jd-mapping-candidate.ts",
+    "?? tests/unit/api-failure-contract.test.ts",
+    "?? tests/unit/jd-mapping-contract.test.ts",
+    "?? tests/unit/processing-failure.test.ts"
+  ],
+  "patchHash": "31eb0743efd50de0fc4013c4af2fe59759f7d9ac49a4619a0f4b0f77f21a39de",
+  "patchHashAlgorithm": "sha256(git status --short + NUL + git diff --binary HEAD)",
+  "implementationHash": "b50584e546dd8b71b834d483c8e7dfb6f74309e77fbc39fa5880cfa4d24d2d7b",
+  "initialImplementationHash": "b50584e546dd8b71b834d483c8e7dfb6f74309e77fbc39fa5880cfa4d24d2d7b",
+  "implementationHashAlgorithm": "sha256(sorted relative implementation path + NUL + file content + NUL)",
+  "implementationFiles": [
+    "package-lock.json",
+    "src/ai/chat-completion-provider.ts",
+    "src/ai/failure-diagnostics.ts",
+    "src/ai/orchestrator.ts",
+    "src/ai/processing-failure.ts",
+    "src/ai/provider.ts",
+    "src/app/api/ai/route.ts",
+    "src/app/routes/[routeKey]/input/page.tsx",
+    "src/domain/jd-route-assembler.ts",
+    "src/schemas/jd-mapping-candidate.ts",
+    "tests/e2e/private-beta-readiness.spec.ts",
+    "tests/unit/api-ai-route.test.ts",
+    "tests/unit/api-failure-contract.test.ts",
+    "tests/unit/chat-completion-provider.test.ts",
+    "tests/unit/input-page.test.tsx",
+    "tests/unit/jd-mapping-contract.test.ts",
+    "tests/unit/orchestrator.test.ts",
+    "tests/unit/processing-failure.test.ts"
+  ],
+  "lockHash": "aab4e3603b2ccd92a24d044b8a19eda2eaf062ba7f4e68802f4433ef4b6fa30a",
+  "lockHashAlgorithm": "sha256(package-lock.json)",
+  "startedAtUtc": "2026-08-05T07:54:22.965Z",
+  "startedAtLocal": "2026-08-05T15:54:22.965+08:00",
+  "environment": {
+    "node": "v24.18.0",
+    "npm": "11.16.0",
+    "playwright": "Version 1.62.1",
+    "platform": "win32-x64",
+    "ci": "",
+    "browserTargets": [
+      "Microsoft Edge desktop (Desktop Chrome viewport)",
+      "Microsoft Edge mobile emulation (Pixel 7)"
+    ]
+  },
+  "commands": [
+    {
+      "command": "npm.cmd run build",
+      "status": "passed",
+      "exitCode": 0,
+      "startedAt": "2026-08-05T07:54:24.738Z",
+      "endedAt": "2026-08-05T07:54:32.597Z"
+    },
+    {
+      "command": "npx.cmd playwright test --config=playwright.production.config.ts",
+      "status": "passed",
+      "exitCode": 0,
+      "startedAt": "2026-08-05T07:54:32.597Z",
+      "endedAt": "2026-08-05T07:55:35.002Z"
+    }
+  ],
+  "providerMode": "deterministic mock enabled only by MVP_PRODUCTION_E2E_ALLOW_MOCK=1; real provider keys disabled",
+  "requestGuardMode": "reserved production E2E identity uses expanded in-memory quotas; ordinary production defaults remain unchanged",
+  "tracePolicy": {
+    "success": "not-retained",
+    "failure": "retained"
+  },
+  "screenshotPolicy": {
+    "success": "named route/state/project screenshots",
+    "failure": "Playwright only-on-failure screenshot"
+  },
+  "endedAtUtc": "2026-08-05T07:55:35.303Z",
+  "endedAtLocal": "2026-08-05T15:55:35.303+08:00",
+  "exitCode": 0,
+  "finalImplementationHash": "b50584e546dd8b71b834d483c8e7dfb6f74309e77fbc39fa5880cfa4d24d2d7b",
+  "finalImplementationFiles": [
+    "package-lock.json",
+    "src/ai/chat-completion-provider.ts",
+    "src/ai/failure-diagnostics.ts",
+    "src/ai/orchestrator.ts",
+    "src/ai/processing-failure.ts",
+    "src/ai/provider.ts",
+    "src/app/api/ai/route.ts",
+    "src/app/routes/[routeKey]/input/page.tsx",
+    "src/domain/jd-route-assembler.ts",
+    "src/schemas/jd-mapping-candidate.ts",
+    "tests/e2e/private-beta-readiness.spec.ts",
+    "tests/unit/api-ai-route.test.ts",
+    "tests/unit/api-failure-contract.test.ts",
+    "tests/unit/chat-completion-provider.test.ts",
+    "tests/unit/input-page.test.tsx",
+    "tests/unit/jd-mapping-contract.test.ts",
+    "tests/unit/orchestrator.test.ts",
+    "tests/unit/processing-failure.test.ts"
+  ],
+  "implementationStable": true
+}

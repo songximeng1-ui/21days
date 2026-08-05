@@ -1,4 +1,4 @@
-import type { RouteKey, RouteOutput } from "@/domain/types";
+import type { RouteKey } from "@/domain/types";
 
 export type AiProviderScenario =
   | "success"
@@ -36,7 +36,7 @@ export type AiRetryFeedback = {
 };
 
 export interface AiProvider {
-  generate(input: AiProviderInput): Promise<RouteOutput>;
+  generate(input: AiProviderInput): Promise<unknown>;
 }
 
 export interface AiProviderSet extends AiProvider {

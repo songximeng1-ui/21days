@@ -1,0 +1,6 @@
+{
+  "project": "pixel-7",
+  "test": "browser timeout aborts the pending AI request and keeps the draft",
+  "status": "passed",
+  "eventCount": 1
+}

@@ -7,10 +7,19 @@ import {
   type AiSession,
 } from "@/ai/request-guard";
 import {
+  createSafeAiFailureReporter,
+  noopAiFailureReporter,
+  type AiFailureReporter,
+} from "@/ai/failure-diagnostics";
+import {
+  AiProcessingError,
+  toAiProcessingFailure,
+  type AiProcessingFailure,
+} from "@/ai/processing-failure";
+import {
   AiUpstreamUnavailableError,
   generateLightReviewOutput,
   generateRouteOutput,
-  makeFriendlyFailureOutput,
 } from "@/ai/orchestrator";
 import type { RouteKey } from "@/domain/types";
 import { ROUTE_KEYS } from "@/domain/types";
@@ -91,6 +100,8 @@ const RECORD_PAYLOAD_FIELDS: Record<RouteKey, Record<string, readonly string[]>>
 type AiRouteHandlerDependencies = {
   guard?: AiRequestGuard;
   providerFactory?: (body: ParsedRouteRequest) => AiProvider;
+  reporter?: AiFailureReporter;
+  deadlineMs?: number;
 };
 
 const defaultGuard = new AiRequestGuard(
@@ -100,9 +111,12 @@ const defaultGuard = new AiRequestGuard(
 export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = {}) {
   const guard = dependencies.guard ?? defaultGuard;
   const providerFactory = dependencies.providerFactory ?? defaultProviderFactory;
+  const reporter = dependencies.reporter ?? defaultFailureReporter();
+  const deadlineMs = dependencies.deadlineMs ?? 28_000;
   const reusableProviders = new Map<string, AiProvider>();
   return async function handleAiRequest(request: Request): Promise<Response> {
     let routeKey: RouteKey = "experience_to_resume";
+    const requestId = createRequestId();
     let session = guard.readSession(request);
     let release: (() => void) | undefined;
 
@@ -112,9 +126,9 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
       routeKey = body.routeKey;
       if (containsSensitivePersonalInfo(body.input)) {
         return withSessionCookie(
-          NextResponse.json(makeSensitiveInfoFailureOutput(routeKey), {
+          withRequestId(NextResponse.json(makeSensitiveInfoFailure(requestId), {
             status: 422,
-          }),
+          }), requestId),
           session,
         );
       }
@@ -129,10 +143,7 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
               : [projectLocalRecord(localRecordSchema.parse(body.input.record), body.routeKey)])
           : [];
       if (lightReviewRecords.some((record) => record.routeKey !== body.routeKey)) {
-        return withSessionCookie(
-          NextResponse.json(makeFriendlyFailureOutput(routeKey), { status: 400 }),
-          session,
-        );
+        throw new AiRequestGuardError(400);
       }
       const provider = reuseProvider(providerFactory(body), reusableProviders);
       const providerReviewRecords = lightReviewRecords.map(projectProviderRecord);
@@ -149,17 +160,27 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
                     provenanceRecord: lightReviewRecords[0],
                   }),
               provider,
+              reporter,
+              requestId,
               signal: request.signal,
+              deadlineMs,
+              failureMode: "throw",
               surfaceUpstreamUnavailable: true,
             })
           : await generateRouteOutput({
               routeKey,
               input: body.input,
               provider,
+              reporter,
+              requestId,
               signal: request.signal,
+              deadlineMs,
+              failureMode: "throw",
               surfaceUpstreamUnavailable: true,
             });
-      if (request.signal.aborted) return withSessionCookie(new Response(null, { status: 499 }), session);
+      if (request.signal.aborted) {
+        return withSessionCookie(withRequestId(new Response(null, { status: 499 }), requestId), session);
+      }
       const verifiedProvenance = attachOutputProvenance(
         output,
         body.mode === "light_review"
@@ -178,46 +199,76 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
         (body.mode === "light_review" &&
           validatedOutput.data.outputType !== "light_review")
       ) {
+        throw new AiProcessingError("invalid_output", requestId);
+      }
+      return withSessionCookie(
+        withRequestId(NextResponse.json(validatedOutput.data), requestId),
+        session,
+      );
+    } catch (error) {
+      if (request.signal.aborted) {
+        return withSessionCookie(withRequestId(new Response(null, { status: 499 }), requestId), session);
+      }
+      if (error instanceof AiProcessingError) {
         return withSessionCookie(
-          NextResponse.json(makeFriendlyFailureOutput(routeKey), { status: 502 }),
+          withRequestId(
+            NextResponse.json(toAiProcessingFailure(error), {
+              status: processingFailureStatus(error),
+              headers: error.retryAfterMs
+                ? { "Retry-After": String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))) }
+                : undefined,
+            }),
+            requestId,
+          ),
           session,
         );
       }
-      return withSessionCookie(NextResponse.json(validatedOutput.data), session);
-    } catch (error) {
-      if (request.signal.aborted) return withSessionCookie(new Response(null, { status: 499 }), session);
       if (error instanceof AiUpstreamUnavailableError) {
         const retryAfterSeconds = Math.max(
           1,
           Math.min(30, Math.ceil(error.retryAfterMs / 1_000)),
         );
         return withSessionCookie(
-          NextResponse.json(makeFriendlyFailureOutput(routeKey), {
+          withRequestId(NextResponse.json({
+            error: "ai_processing_failure",
+            category: "rate_limit",
+            message: "这次暂时没整理出来。你填写的内容还保留在本页，可以再整理一次。",
+            requestId,
+            retryable: true,
+          } satisfies AiProcessingFailure, {
             status: 503,
             headers: { "Retry-After": String(retryAfterSeconds) },
-          }),
+          }), requestId),
           session,
         );
       }
       if (error instanceof AiRequestGuardError) {
         return withSessionCookie(
-          NextResponse.json(
-            makeFriendlyFailureOutput(routeKey),
+          withRequestId(NextResponse.json(
+            makeRequestFailure(requestId),
             {
               status: error.status,
               headers: error.retryAfterSeconds
                 ? { "Retry-After": String(Math.min(error.retryAfterSeconds, 86_400)) }
                 : undefined,
-            },
-          ),
+            }), requestId),
           session,
         );
       }
       if (error instanceof z.ZodError || error instanceof SyntaxError) {
-        return withSessionCookie(NextResponse.json(makeFriendlyFailureOutput(routeKey), { status: 400 }), session);
+        return withSessionCookie(
+          withRequestId(NextResponse.json(makeRequestFailure(requestId), { status: 400 }), requestId),
+          session,
+        );
       }
       return withSessionCookie(
-        NextResponse.json(makeFriendlyFailureOutput(routeKey), { status: 500 }),
+        withRequestId(NextResponse.json({
+          error: "ai_processing_failure",
+          category: "invalid_output",
+          message: "这次暂时没整理出来。你填写的内容还保留在本页，可以再整理一次。",
+          requestId,
+          retryable: true,
+        } satisfies AiProcessingFailure, { status: 500 }), requestId),
         session,
       );
     } finally {
@@ -226,20 +277,52 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
   };
 }
 
-function makeSensitiveInfoFailureOutput(routeKey: RouteKey) {
-  const output = makeFriendlyFailureOutput(routeKey);
+function makeSensitiveInfoFailure(requestId: string): AiProcessingFailure {
   return {
-    ...output,
-    shortAssessment:
-      "请先删除手机号、证件号、邮箱、明确病情或婚育等敏感个人信息，再重新提交。",
-    todayAction: {
-      ...output.todayAction,
-      actionTitle: "先删除敏感个人信息",
-      actionReason: "这些信息不是完成当前求职判断所必需的，不应发送给外部 AI。",
-      actionSteps: ["删除敏感个人信息后重新提交"],
-      recordAfterDone: "只保留完成当前任务所需的非敏感内容。",
-    },
+    error: "ai_processing_failure",
+    category: "sensitive_input",
+    message: "请先删除手机号、证件号、邮箱或婚育健康等敏感个人信息，再重新提交。",
+    requestId,
+    retryable: true,
   };
+}
+
+function makeRequestFailure(requestId: string) {
+  return {
+    error: "invalid_request",
+    message: "这次提交没有识别出来，请检查填写内容后再试。",
+    requestId,
+  } as const;
+}
+
+function processingFailureStatus(error: AiProcessingError): number {
+  if (error.category === "cancelled") return 499;
+  if (error.category === "timeout" || error.category === "deadline") return 504;
+  if (
+    error.category === "transport" ||
+    error.category === "rate_limit" ||
+    error.category === "circuit_open"
+  ) {
+    return 503;
+  }
+  if (error.category === "sensitive_input") return 422;
+  return 502;
+}
+
+function createRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? "untracked-request";
+}
+
+function withRequestId(response: Response, requestId: string): Response {
+  response.headers.set("X-Request-Id", requestId);
+  return response;
+}
+
+function defaultFailureReporter(): AiFailureReporter {
+  if (process.env.NODE_ENV !== "production") return noopAiFailureReporter;
+  return createSafeAiFailureReporter((event) => {
+    console.warn("[ai-processing-failure]", event);
+  });
 }
 
 function projectLocalRecord(

@@ -71,6 +71,7 @@ export default function RouteInputPage() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [showSecondApplication, setShowSecondApplication] = useState(false);
   const [aiStatus, setAiStatus] = useState("");
+  const [hasProcessingFailure, setHasProcessingFailure] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isDraftPersisted = useRef(false);
   const activeRequest = useRef<AbortController | null>(null);
@@ -119,6 +120,7 @@ export default function RouteInputPage() {
     if (isSubmitting) return;
 
     setIsSubmitting(true);
+    setHasProcessingFailure(false);
     setAiStatus("正在阅读你提供的信息。");
     const controller = new AbortController();
     activeRequest.current = controller;
@@ -145,6 +147,7 @@ export default function RouteInputPage() {
         setAiStatus(
           "请先删除手机号、证件号、邮箱或婚育健康等敏感信息，再重新生成。",
         );
+        setHasProcessingFailure(true);
         setIsSubmitting(false);
         return;
       }
@@ -154,7 +157,11 @@ export default function RouteInputPage() {
 
       setAiStatus("正在生成今天先做的一步。");
       const parsedOutput = routeOutputWithProvenanceSchema.safeParse(await response.json());
-      if (!parsedOutput.success || parsedOutput.data.routeKey !== routeKey) {
+      if (
+        !parsedOutput.success
+        || parsedOutput.data.routeKey !== routeKey
+        || !isActionableOutputType(parsedOutput.data.outputType)
+      ) {
         throw new Error("Invalid response");
       }
       const output = parsedOutput.data as RouteOutput;
@@ -167,6 +174,7 @@ export default function RouteInputPage() {
       }
       router.push(`/routes/${routeKey}/action`);
     } catch {
+      setHasProcessingFailure(true);
       setAiStatus(
         isDraftPersisted.current
           ? "这次暂时没整理出来。草稿已经保存在本页，可以稍后再试。"
@@ -301,13 +309,23 @@ export default function RouteInputPage() {
 
           <ExternalAiNotice />
           <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "正在生成..." : "生成今天先做的一步"}
+            {isSubmitting
+              ? "正在生成..."
+              : hasProcessingFailure
+                ? "再整理一次"
+                : "生成今天先做的一步"}
           </button>
           <Link className="secondary-button" href="/">先保存，稍后继续</Link>
         </form>
       </section>
     </main>
   );
+}
+
+function isActionableOutputType(outputType: RouteOutput["outputType"]): boolean {
+  return outputType === "route_result"
+    || outputType === "missing_info"
+    || outputType === "light_review";
 }
 
 function inputPlaceholder(routeKey: RouteKey, field: string) {

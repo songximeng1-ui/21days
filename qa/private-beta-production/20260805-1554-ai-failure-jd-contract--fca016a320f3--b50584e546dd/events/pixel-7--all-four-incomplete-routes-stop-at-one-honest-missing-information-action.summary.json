@@ -1,0 +1,6 @@
+{
+  "project": "pixel-7",
+  "test": "all four incomplete routes stop at one honest missing-information action",
+  "status": "passed",
+  "eventCount": 13
+}

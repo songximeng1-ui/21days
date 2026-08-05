@@ -1,0 +1,1 @@
+{"at":"2026-08-05T08:00:53.326Z","project":"desktop-chromium","test":"browser timeout aborts the pending AI request and keeps the draft","kind":"requestfailed","method":"POST","resourceType":"fetch","url":"http://127.0.0.1:3100/api/ai","failure":"net::ERR_ABORTED"}

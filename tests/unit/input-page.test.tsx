@@ -2,7 +2,14 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RouteInputPage from "@/app/routes/[routeKey]/input/page";
-import { loadCurrentAction, saveDraft } from "@/lib/local-store";
+import {
+  loadCurrentAction,
+  loadDraft,
+  loadRecords,
+  loadReviews,
+  saveCurrentAction,
+  saveDraft,
+} from "@/lib/local-store";
 import { withTestProvenance } from "../helpers/test-provenance";
 
 const push = vi.fn();
@@ -185,6 +192,95 @@ describe("RouteInputPage draft status", () => {
     );
     expect(push).not.toHaveBeenCalled();
     expect(loadCurrentAction()).toBeNull();
+  });
+
+  it("rejects an HTTP 200 friendly failure without replacing an existing action or navigating", async () => {
+    const existing = withTestProvenance({
+      routeKey: "experience_to_resume",
+      outputType: "route_result",
+      shortAssessment: "旧行动仍然有效。",
+      routeResult: {
+        confirmedFacts: ["整理过报名表"],
+        missingFacts: [],
+        doNotExaggerate: ["不夸大职责"],
+        resumeSnippetDraft: "整理社团报名表。",
+        supportingFacts: ["报名表"],
+      },
+      missingInfo: null,
+      todayAction: {
+        actionTitle: "核对旧经历",
+        actionReason: "保留已确认的行动。",
+        actionSteps: ["核对报名表"],
+        estimatedTime: "15 分钟",
+        recordAfterDone: "记录核对结果。",
+        actionType: "experience_fact",
+      },
+      recordGuide: {
+        recordType: "experience_fact",
+        fieldsToRecord: ["actualActions"],
+        requiresUserConfirmation: true,
+      },
+    });
+    const savedExisting = saveCurrentAction(existing);
+    const friendlyFailure = withTestProvenance({
+      ...existing,
+      outputType: "friendly_failure" as const,
+      shortAssessment: "这次暂时没整理出来。",
+      routeResult: null,
+      todayAction: {
+        ...existing.todayAction,
+        actionTitle: "稍后重试",
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify(friendlyFailure),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )));
+    render(<RouteInputPage />);
+
+    fireEvent.change(await screen.findByLabelText(/先写一段相关真实经历/), {
+      target: { value: "特斯拉销售专员原文" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成今天先做的一步" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/这次暂时没整理出来/);
+    expect(screen.getByRole("button", { name: "再整理一次" })).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+    expect(loadCurrentAction()).toEqual(savedExisting);
+    expect(loadDraft("experience_to_resume").rawExperience).toBe("特斯拉销售专员原文");
+  });
+
+  it("keeps all journey stores unchanged when processing returns a non-200 failure", async () => {
+    const before = {
+      action: loadCurrentAction(),
+      records: loadRecords(),
+      reviews: loadReviews(),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        type: "ai_processing_failure",
+        category: "timeout",
+        message: "这次暂时没整理出来，请再试一次。",
+        retryable: true,
+        requestId: "req_test",
+      }),
+      { status: 504, headers: { "Content-Type": "application/json" } },
+    )));
+    render(<RouteInputPage />);
+    const field = await screen.findByLabelText(/先写一段相关真实经历/);
+    fireEvent.change(field, { target: { value: "逐字保留：成交 9，转化 52.94%" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成今天先做的一步" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/这次暂时没整理出来/);
+    expect(field).toHaveValue("逐字保留：成交 9，转化 52.94%");
+    expect(loadDraft("experience_to_resume").rawExperience).toBe(
+      "逐字保留：成交 9，转化 52.94%",
+    );
+    expect(loadCurrentAction()).toEqual(before.action);
+    expect(loadRecords()).toEqual(before.records);
+    expect(loadReviews()).toEqual(before.reviews);
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("shows reading and then an unsaved state instead of claiming a fresh draft was saved", async () => {
@@ -380,7 +476,7 @@ describe("RouteInputPage draft status", () => {
     fireEvent.click(screen.getByRole("button", { name: "生成今天先做的一步" }));
 
     await waitFor(() => expect(screen.getByRole("button", {
-      name: "生成今天先做的一步",
+      name: "再整理一次",
     })).not.toBeDisabled());
     expect(loadCurrentAction()).toBeNull();
     expect(push).not.toHaveBeenCalled();

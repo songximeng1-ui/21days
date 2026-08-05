@@ -17,8 +17,13 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from "@/ai/orchestration-policy";
+import {
+  AiProcessingError,
+  type AiProcessingFailureCategory,
+} from "@/ai/processing-failure";
 import { validateRouteOutput } from "@/domain/action-card";
 import { classifyJdMaterialEvidence, compactEvidenceAnchor } from "@/domain/jd-action-clarity";
+import { assembleJdRouteOutput } from "@/domain/jd-route-assembler";
 import { selectJobTaxonomyDirections, validateDirectionCandidates } from "@/domain/job-taxonomy";
 import { attachOutputProvenance } from "@/domain/provenance";
 import { getRouteStrategy, isPlaceholderValue, isRouteInputSufficient } from "@/domain/routes";
@@ -26,6 +31,7 @@ import { hasGroundedExperienceRoleStrength, scanRouteSafety } from "@/domain/saf
 import type { ActionType, RecordType, RouteKey, RouteOutput } from "@/domain/types";
 import type { LocalRecord } from "@/lib/local-store";
 import { routeOutputEnvelopeSchema } from "@/schemas/route-output";
+import { jdMappingCandidateSchema } from "@/schemas/jd-mapping-candidate";
 
 type GenerateRouteOutputInput = {
   routeKey: RouteKey;
@@ -38,6 +44,7 @@ type GenerateRouteOutputInput = {
   signal?: AbortSignal;
   deadlineMs?: number;
   surfaceUpstreamUnavailable?: boolean;
+  failureMode?: "friendly" | "throw";
 };
 
 type LightReviewRecord = Omit<
@@ -64,6 +71,7 @@ type GenerateLightReviewInput = {
   signal?: AbortSignal;
   deadlineMs?: number;
   surfaceUpstreamUnavailable?: boolean;
+  failureMode?: "friendly" | "throw";
 };
 
 export class AiUpstreamUnavailableError extends Error {
@@ -108,30 +116,47 @@ export async function generateRouteOutput({
   signal,
   deadlineMs,
   surfaceUpstreamUnavailable,
+  failureMode = "friendly",
 }: GenerateRouteOutputInput): Promise<RouteOutput> {
   if (!isRouteInputSufficient(routeKey, input)) {
     const missing = makeMissingInfoOutput(routeKey, input);
     const withProvenance = attachOutputProvenance(missing, input);
-    return withProvenance.ok ? withProvenance.output : makeFriendlyFailureOutput(routeKey);
+    if (withProvenance.ok) return withProvenance.output;
+    if (failureMode === "throw") {
+      throw new AiProcessingError("invalid_output", sanitizeRequestId(requestId));
+    }
+    return makeFriendlyFailureOutput(routeKey);
   }
 
   if (routeKey === "direction_to_jobs" && !hasEnoughDirectionTaxonomyEvidence(input)) {
     const missing = makeMissingInfoOutput(routeKey, input, directionEvidenceMissingInfoConfig);
     const withProvenance = attachOutputProvenance(missing, input);
-    return withProvenance.ok ? withProvenance.output : makeFriendlyFailureOutput(routeKey);
+    if (withProvenance.ok) return withProvenance.output;
+    if (failureMode === "throw") {
+      throw new AiProcessingError("invalid_output", sanitizeRequestId(requestId));
+    }
+    return makeFriendlyFailureOutput(routeKey);
   }
 
-  return orchestrateOutput({
-    routeKey,
-    input,
-    mode: "route",
-    ...resolveProviders(provider, primary, fallback),
-    reporter: reporter ?? noopAiFailureReporter,
-    requestId: sanitizeRequestId(requestId),
-    signal,
-    deadlineMs,
-    surfaceUpstreamUnavailable,
-  });
+  try {
+    return await orchestrateOutput({
+      routeKey,
+      input,
+      mode: "route",
+      ...resolveProviders(provider, primary, fallback),
+      reporter: reporter ?? noopAiFailureReporter,
+      requestId: sanitizeRequestId(requestId),
+      signal,
+      deadlineMs,
+      surfaceUpstreamUnavailable,
+      allowLegacyThirdAttempt: failureMode === "friendly",
+    });
+  } catch (error) {
+    if (failureMode === "friendly" && error instanceof AiProcessingError) {
+      return makeFriendlyFailureOutput(routeKey);
+    }
+    throw error;
+  }
 }
 
 export async function generateLightReviewOutput({
@@ -147,6 +172,7 @@ export async function generateLightReviewOutput({
   signal,
   deadlineMs,
   surfaceUpstreamUnavailable,
+  failureMode = "friendly",
 }: GenerateLightReviewInput): Promise<RouteOutput> {
   const reviewRecords = records ?? (record ? [record] : []);
   const sourceRecords =
@@ -162,25 +188,39 @@ export async function generateLightReviewOutput({
     sourceRecords.some((item) => item.routeKey !== routeKey) ||
     (routeKey === "applications_to_review" && reviewRecords.length < 2)
   ) {
+    if (failureMode === "throw") {
+      throw new AiProcessingError(
+        "invalid_output",
+        sanitizeRequestId(requestId),
+      );
+    }
     return makeFriendlyFailureOutput(routeKey ?? "applications_to_review");
   }
 
-  return orchestrateOutput({
-    routeKey,
-    input: routeKey === "applications_to_review"
-      ? { mode: "light_review", records: reviewRecords }
-      : { mode: "light_review", record: reviewRecords[0] },
-    provenanceInput: routeKey === "applications_to_review"
-      ? { mode: "light_review", records: sourceRecords }
-      : { mode: "light_review", record: sourceRecords[0] },
-    mode: "light_review",
-    ...resolveProviders(provider, primary, fallback),
-    reporter: reporter ?? noopAiFailureReporter,
-    requestId: sanitizeRequestId(requestId),
-    signal,
-    deadlineMs,
-    surfaceUpstreamUnavailable,
-  });
+  try {
+    return await orchestrateOutput({
+      routeKey,
+      input: routeKey === "applications_to_review"
+        ? { mode: "light_review", records: reviewRecords }
+        : { mode: "light_review", record: reviewRecords[0] },
+      provenanceInput: routeKey === "applications_to_review"
+        ? { mode: "light_review", records: sourceRecords }
+        : { mode: "light_review", record: sourceRecords[0] },
+      mode: "light_review",
+      ...resolveProviders(provider, primary, fallback),
+      reporter: reporter ?? noopAiFailureReporter,
+      requestId: sanitizeRequestId(requestId),
+      signal,
+      deadlineMs,
+      surfaceUpstreamUnavailable,
+      allowLegacyThirdAttempt: failureMode === "friendly",
+    });
+  } catch (error) {
+    if (failureMode === "friendly" && error instanceof AiProcessingError) {
+      return makeFriendlyFailureOutput(routeKey);
+    }
+    throw error;
+  }
 }
 
 type OrchestrateOutputInput = {
@@ -195,6 +235,7 @@ type OrchestrateOutputInput = {
   signal?: AbortSignal;
   deadlineMs?: number;
   surfaceUpstreamUnavailable?: boolean;
+  allowLegacyThirdAttempt?: boolean;
 };
 
 type AttemptFailure = {
@@ -214,17 +255,27 @@ type AttemptResult =
   | { output?: never; failure: AttemptFailure };
 
 async function orchestrateOutput(options: OrchestrateOutputInput): Promise<RouteOutput> {
-  if (!options.primary) return makeFriendlyFailureOutput(options.routeKey);
+  if (!options.primary) {
+    throw new AiProcessingError("transport", options.requestId);
+  }
   const execution = createOrchestrationExecution(options.signal, options.deadlineMs ?? 28_000);
 
   try {
     let primaryFailuresAllowFallback = true;
     let unavailableRetryAfterMs: number | undefined;
+    let lastFailure: AttemptFailure | undefined;
     let retryFeedback: AiRetryFeedback | undefined;
     let maxPrimaryAttempts = 2;
     for (let attempt = 1; attempt <= maxPrimaryAttempts; attempt += 1) {
       if (execution.signal.aborted) break;
       if (!beginProviderAttempt(options.primary)) {
+        lastFailure = {
+          stage: "provider_transport",
+          code: "circuit_open",
+          retryPrimary: false,
+          allowFallback: true,
+          durationMs: 0,
+        };
         unavailableRetryAfterMs = earliestRetryAfter(
           unavailableRetryAfterMs,
           getProviderRetryAfterMs(options.primary) ?? 1_000,
@@ -240,18 +291,23 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
       );
       if (result.output) return result.output;
 
+      lastFailure = result.failure;
+
       primaryFailuresAllowFallback = primaryFailuresAllowFallback && result.failure.allowFallback;
       unavailableRetryAfterMs = earliestRetryAfter(
         unavailableRetryAfterMs,
         result.failure.retryAfterMs,
       );
       await reportAttemptFailure(options, "primary", attempt, result.failure);
-      if (execution.signal.aborted) return makeFriendlyFailureOutput(options.routeKey);
+      if (execution.signal.aborted) {
+        throw new AiProcessingError(execution.abortCategory(), options.requestId);
+      }
       if (!result.failure.retryPrimary) {
         if (primaryFailuresAllowFallback && options.fallback) break;
-        return makeFriendlyFailureOutput(options.routeKey);
+        throw processingErrorFromAttempt(result.failure, options.requestId);
       }
       if (
+        options.allowLegacyThirdAttempt &&
         attempt === 2 &&
         maxPrimaryAttempts === 2 &&
         !options.fallback &&
@@ -262,6 +318,7 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
         continue;
       }
       if (
+        options.allowLegacyThirdAttempt &&
         attempt === 2 &&
         maxPrimaryAttempts === 2 &&
         retryFeedback?.stage === "grounding" &&
@@ -271,6 +328,7 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
         continue;
       }
       if (
+        options.allowLegacyThirdAttempt &&
         attempt === 2 &&
         maxPrimaryAttempts === 2 &&
         retryFeedback?.code === "provider_retryable" &&
@@ -293,12 +351,20 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
           execution.deadlineAtMs,
         );
         if (result.output) return result.output;
+        lastFailure = result.failure;
         unavailableRetryAfterMs = earliestRetryAfter(
           unavailableRetryAfterMs,
           result.failure.retryAfterMs,
         );
         await reportAttemptFailure(options, "fallback", 1, result.failure);
       } else {
+        lastFailure = {
+          stage: "provider_transport",
+          code: "circuit_open",
+          retryPrimary: false,
+          allowFallback: false,
+          durationMs: 0,
+        };
         unavailableRetryAfterMs = earliestRetryAfter(
           unavailableRetryAfterMs,
           getProviderRetryAfterMs(options.fallback) ?? 1_000,
@@ -309,10 +375,53 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
     if (options.surfaceUpstreamUnavailable && unavailableRetryAfterMs !== undefined) {
       throw new AiUpstreamUnavailableError(unavailableRetryAfterMs);
     }
-    return makeFriendlyFailureOutput(options.routeKey);
+    throw processingErrorFromAttempt(
+      lastFailure ?? {
+        stage: "provider_transport",
+        code: "transport",
+        retryPrimary: false,
+        allowFallback: false,
+        durationMs: 0,
+      },
+      options.requestId,
+    );
   } finally {
     execution.cleanup();
   }
+}
+
+function processingErrorFromAttempt(
+  failure: AttemptFailure,
+  requestId: string,
+): AiProcessingError {
+  return new AiProcessingError(
+    processingFailureCategory(failure),
+    requestId,
+    failure.retryAfterMs,
+  );
+}
+
+function processingFailureCategory(
+  failure: AttemptFailure,
+): AiProcessingFailureCategory {
+  if (failure.code === "timeout") return "timeout";
+  if (failure.code === "cancelled") return "cancelled";
+  if (failure.code === "circuit_open") return "circuit_open";
+  if (failure.stage === "safety") return "safety";
+  if (
+    failure.stage === "provider_http" &&
+    (failure.providerErrorCode?.toLowerCase().includes("rate") ||
+      failure.httpStatusClass === "4xx")
+  ) {
+    return "rate_limit";
+  }
+  if (
+    failure.stage === "provider_transport" ||
+    failure.stage === "provider_http"
+  ) {
+    return "transport";
+  }
+  return "invalid_output";
 }
 
 async function generateAndValidate(
@@ -323,7 +432,7 @@ async function generateAndValidate(
   deadlineAtMs?: number,
 ): Promise<AttemptResult> {
   const startedAt = nowMs();
-  let rawOutput: RouteOutput;
+  let rawOutput: unknown;
 
   try {
     rawOutput = await awaitProvider(provider.generate({
@@ -343,7 +452,15 @@ async function generateAndValidate(
     recordProviderFailure(provider, new AiProviderError("model_json"));
     return { failure };
   };
-  const repairedOutput = repairCandidateBeforeSchema(rawOutput, options.routeKey);
+  const isNarrowJdCandidate = options.routeKey === "jd_to_revision"
+    && options.mode === "route"
+    && jdMappingCandidateSchema.safeParse(rawOutput).success;
+  const repairedOutput = repairCandidateBeforeSchema(
+    rawOutput,
+    options.routeKey,
+    options.input,
+    options.mode,
+  );
   const parsed = routeOutputEnvelopeSchema.safeParse(repairedOutput);
   if (!parsed.success) {
     return rejectContent({
@@ -356,7 +473,9 @@ async function generateAndValidate(
     });
   }
 
-  const output = normalizeCandidateForInput(parsed.data as RouteOutput, options.routeKey, options.input);
+  const output = isNarrowJdCandidate
+    ? parsed.data as RouteOutput
+    : normalizeCandidateForInput(parsed.data as RouteOutput, options.routeKey, options.input);
   if (output.routeKey !== options.routeKey) {
     return rejectContent(contentFailure("route_mismatch", "route_mismatch", durationMs));
   }
@@ -402,7 +521,9 @@ async function generateAndValidate(
   if (safety.blockedReasons.length > 0) {
     return rejectContent(contentFailure("safety", "safety_boundary", durationMs));
   }
-  if (!hasGroundedOutput(options.routeKey, output, options.input, options.mode)) {
+  if (!(isNarrowJdCandidate
+    ? hasGroundedNarrowJdOutput(output, options.input)
+    : hasGroundedOutput(options.routeKey, output, options.input, options.mode))) {
     return { failure: contentFailure("grounding", "grounding_failure", durationMs) };
   }
 
@@ -427,7 +548,42 @@ async function generateAndValidate(
   return { output: withProvenance.output };
 }
 
-function repairCandidateBeforeSchema(rawOutput: unknown, routeKey: RouteKey): unknown {
+function hasGroundedNarrowJdOutput(
+  output: RouteOutput,
+  input: Record<string, unknown>,
+): boolean {
+  if (!isRecord(output.routeResult)) return false;
+  const jd = typeof input.jdTextOrRequirements === "string" ? input.jdTextOrRequirements : "";
+  const material = typeof input.userMaterial === "string" ? input.userMaterial : "";
+  const requirements = output.routeResult.jdKeyRequirements;
+  const support = output.routeResult.supportedByMaterial;
+  const revisionTarget = output.routeResult.revisionTarget;
+  return Array.isArray(requirements)
+    && requirements.length > 0
+    && requirements.every((item) => typeof item === "string" && jd.includes(item))
+    && Array.isArray(support)
+    && support.every((item) => typeof item === "string" && material.includes(item))
+    && typeof revisionTarget === "string"
+    && material.includes(revisionTarget);
+}
+
+function repairCandidateBeforeSchema(
+  rawOutput: unknown,
+  routeKey: RouteKey,
+  input: Record<string, unknown>,
+  mode: "route" | "light_review",
+): unknown {
+  if (routeKey === "jd_to_revision" && mode === "route") {
+    const narrow = jdMappingCandidateSchema.safeParse(rawOutput);
+    if (narrow.success) {
+      return assembleJdRouteOutput({
+        targetJobTitle: String(input.targetJobTitle ?? ""),
+        jdTextOrRequirements: String(input.jdTextOrRequirements ?? ""),
+        userMaterial: String(input.userMaterial ?? ""),
+        currentQuestion: String(input.currentQuestion ?? ""),
+      }, narrow.data);
+    }
+  }
   if (routeKey !== "jd_to_revision" || !isPlainObject(rawOutput)) return rawOutput;
   const todayAction = rawOutput.todayAction;
   if (!isPlainObject(todayAction) || todayAction.recordAfterDone !== undefined) return rawOutput;
@@ -460,7 +616,7 @@ function providerFailure(error: unknown, durationMs: number): AttemptFailure {
   return {
     stage: providerStage(error.kind),
     code: error.kind,
-    retryPrimary: eligible && error.kind !== "timeout",
+    retryPrimary: eligible,
     allowFallback: eligible,
     durationMs,
     httpStatusClass: error.httpStatusClass,
@@ -2080,13 +2236,20 @@ function createOrchestrationExecution(callerSignal: AbortSignal | undefined, dea
   const controller = new AbortController();
   const boundedDeadlineMs = Math.max(1, Math.min(deadlineMs, 30_000));
   const deadlineAtMs = Date.now() + boundedDeadlineMs;
-  const timeout = setTimeout(() => controller.abort("deadline"), boundedDeadlineMs);
+  let deadlineExpired = false;
+  const timeout = setTimeout(() => {
+    deadlineExpired = true;
+    controller.abort("deadline");
+  }, boundedDeadlineMs);
   const onCallerAbort = () => controller.abort(callerSignal?.reason);
   if (callerSignal?.aborted) onCallerAbort();
   else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
   return {
     signal: controller.signal,
     deadlineAtMs,
+    abortCategory(): "deadline" | "cancelled" {
+      return deadlineExpired ? "deadline" : "cancelled";
+    },
     cleanup() {
       clearTimeout(timeout);
       callerSignal?.removeEventListener("abort", onCallerAbort);
