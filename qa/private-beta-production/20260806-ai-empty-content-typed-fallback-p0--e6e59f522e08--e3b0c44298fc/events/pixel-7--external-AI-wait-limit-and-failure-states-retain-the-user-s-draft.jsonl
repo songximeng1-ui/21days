@@ -1,0 +1,2 @@
+{"at":"2026-08-06T05:59:08.927Z","project":"pixel-7","test":"external-AI wait, limit and failure states retain the user's draft","kind":"http","method":"POST","status":429,"url":"http://127.0.0.1:3100/api/ai"}
+{"at":"2026-08-06T05:59:08.928Z","project":"pixel-7","test":"external-AI wait, limit and failure states retain the user's draft","kind":"console","level":"error","text":"Failed to load resource: the server responded with a status of 429 (Too Many Requests)"}

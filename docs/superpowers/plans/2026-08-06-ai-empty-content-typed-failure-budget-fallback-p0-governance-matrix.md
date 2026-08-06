@@ -39,7 +39,16 @@
 
 ## 尚未满足
 
-- 尚未执行提交后、clean HEAD 的 production Playwright 证据；将在本轮发布前补齐。
 - 尚未执行新的真实 DeepSeek/Qwen canary，因为没有新的付费调用授权。
 - 尚无 8–12 名普通应届生、7 天使用、2–3 天回访与至少两次真实推进证据。
 - 因此当前只能判定为“离线技术候选通过”，不能宣称真实 provider 修复已被生产验证，也不能给出整体用户价值 `GO`。
+
+## 提交后 production E2E 证据
+
+- 证据目录：`qa/private-beta-production/20260806-ai-empty-content-typed-fallback-p0--e6e59f522e08--e3b0c44298fc/`。
+- `manifest.json`：clean HEAD `e6e59f522e08`，dirty=false，build passed，Playwright passed，exitCode=0。
+- 浏览器：Microsoft Edge desktop 与 Pixel 7 emulation；28/28 tests passed。
+- 覆盖：四路线完整/缺信息、AI 等待/限流/失败草稿保持、浏览器超时、保存失败、JD 修改/补证据/all-keep、记录、轻复盘、七日轨迹、移动端、严重 WCAG 与横向溢出门。
+- manifest 明确记录：`real provider keys disabled`，仅启用 production E2E 保留的 deterministic mock。
+- 人工抽查：desktop/mobile JD 行动、desktop 保存失败、mobile 轻复盘截图均无明显横向溢出、重复主行动或内部失败术语外显。
+- runner 没有生成单一 `summary.md`，而是为每个测试生成 `.summary.json`；clean HEAD 下 `implementationFiles=[]`，因此 `implementationHash=e3b0...` 是空集合哈希，不能当作源码哈希。此轮可信源码身份以 manifest 的 clean HEAD、完整 12 位提交前缀与 Git commit 为准。

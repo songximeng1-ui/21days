@@ -1,0 +1,6 @@
+{
+  "project": "desktop-chromium",
+  "test": "draft save failure is explicit and never drops the typed value",
+  "status": "passed",
+  "eventCount": 0
+}

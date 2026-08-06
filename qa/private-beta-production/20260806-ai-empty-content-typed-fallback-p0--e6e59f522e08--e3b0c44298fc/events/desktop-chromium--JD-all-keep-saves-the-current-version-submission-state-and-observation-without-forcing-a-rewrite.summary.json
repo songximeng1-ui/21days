@@ -1,0 +1,6 @@
+{
+  "project": "desktop-chromium",
+  "test": "JD all-keep saves the current version, submission state, and observation without forcing a rewrite",
+  "status": "passed",
+  "eventCount": 0
+}

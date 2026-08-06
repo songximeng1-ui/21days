@@ -1,0 +1,3 @@
+{"at":"2026-08-06T05:59:13.144Z","project":"pixel-7","test":"direction route carries constraints through action, record, light review and seven-day track","kind":"http","method":"POST","status":200,"url":"http://127.0.0.1:3100/api/ai"}
+{"at":"2026-08-06T05:59:13.626Z","project":"pixel-7","test":"direction route carries constraints through action, record, light review and seven-day track","kind":"requestfailed","method":"GET","resourceType":"fetch","url":"http://127.0.0.1:3100/routes/direction_to_jobs/record","failure":"net::ERR_ABORTED"}
+{"at":"2026-08-06T05:59:14.178Z","project":"pixel-7","test":"direction route carries constraints through action, record, light review and seven-day track","kind":"http","method":"POST","status":200,"url":"http://127.0.0.1:3100/api/ai"}

@@ -1,0 +1,6 @@
+{"at":"2026-08-06T05:59:05.255Z","project":"pixel-7","test":"all four complete routes reach a document-shaped action","kind":"http","method":"POST","status":200,"url":"http://127.0.0.1:3100/api/ai"}
+{"at":"2026-08-06T05:59:05.623Z","project":"pixel-7","test":"all four complete routes reach a document-shaped action","kind":"http","method":"POST","status":200,"url":"http://127.0.0.1:3100/api/ai"}
+{"at":"2026-08-06T05:59:05.647Z","project":"pixel-7","test":"all four complete routes reach a document-shaped action","kind":"requestfailed","method":"GET","resourceType":"fetch","url":"http://127.0.0.1:3100/routes/experience_to_resume/input","failure":"net::ERR_ABORTED"}
+{"at":"2026-08-06T05:59:05.968Z","project":"pixel-7","test":"all four complete routes reach a document-shaped action","kind":"http","method":"POST","status":200,"url":"http://127.0.0.1:3100/api/ai"}
+{"at":"2026-08-06T05:59:06.423Z","project":"pixel-7","test":"all four complete routes reach a document-shaped action","kind":"http","method":"POST","status":200,"url":"http://127.0.0.1:3100/api/ai"}
+{"at":"2026-08-06T05:59:06.454Z","project":"pixel-7","test":"all four complete routes reach a document-shaped action","kind":"requestfailed","method":"GET","resourceType":"fetch","url":"http://127.0.0.1:3100/routes/applications_to_review/input","failure":"net::ERR_ABORTED"}

@@ -1,0 +1,6 @@
+{
+  "project": "desktop-chromium",
+  "test": "external-AI wait, limit and failure states retain the user's draft",
+  "status": "passed",
+  "eventCount": 2
+}

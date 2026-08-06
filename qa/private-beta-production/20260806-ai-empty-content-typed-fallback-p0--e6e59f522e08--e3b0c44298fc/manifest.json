@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260806-ai-empty-content-typed-fallback-p0--e6e59f522e08--e3b0c44298fc",
+  "requestedRunId": "20260806-ai-empty-content-typed-fallback-p0",
+  "head": "e6e59f522e08",
+  "dirty": false,
+  "gitStatus": [],
+  "patchHash": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+  "patchHashAlgorithm": "sha256(git status --short + NUL + git diff --binary HEAD)",
+  "implementationHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "initialImplementationHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "implementationHashAlgorithm": "sha256(sorted relative implementation path + NUL + file content + NUL)",
+  "implementationFiles": [],
+  "lockHash": "aab4e3603b2ccd92a24d044b8a19eda2eaf062ba7f4e68802f4433ef4b6fa30a",
+  "lockHashAlgorithm": "sha256(package-lock.json)",
+  "startedAtUtc": "2026-08-06T05:58:24.031Z",
+  "startedAtLocal": "2026-08-06T13:58:24.031+08:00",
+  "environment": {
+    "node": "v24.18.0",
+    "npm": "11.16.0",
+    "playwright": "Version 1.62.1",
+    "platform": "win32-x64",
+    "ci": "",
+    "browserTargets": [
+      "Microsoft Edge desktop (Desktop Chrome viewport)",
+      "Microsoft Edge mobile emulation (Pixel 7)"
+    ]
+  },
+  "commands": [
+    {
+      "command": "npm.cmd run build",
+      "status": "passed",
+      "exitCode": 0,
+      "startedAt": "2026-08-06T05:58:26.082Z",
+      "endedAt": "2026-08-06T05:58:34.480Z"
+    },
+    {
+      "command": "npx.cmd playwright test --config=playwright.production.config.ts",
+      "status": "passed",
+      "exitCode": 0,
+      "startedAt": "2026-08-06T05:58:34.480Z",
+      "endedAt": "2026-08-06T05:59:23.242Z"
+    }
+  ],
+  "providerMode": "deterministic mock enabled only by MVP_PRODUCTION_E2E_ALLOW_MOCK=1; real provider keys disabled",
+  "requestGuardMode": "reserved production E2E identity uses expanded in-memory quotas; ordinary production defaults remain unchanged",
+  "tracePolicy": {
+    "success": "not-retained",
+    "failure": "retained"
+  },
+  "screenshotPolicy": {
+    "success": "named route/state/project screenshots",
+    "failure": "Playwright only-on-failure screenshot"
+  },
+  "endedAtUtc": "2026-08-06T05:59:23.362Z",
+  "endedAtLocal": "2026-08-06T13:59:23.362+08:00",
+  "exitCode": 0,
+  "finalImplementationHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "finalImplementationFiles": [],
+  "implementationStable": true
+}
