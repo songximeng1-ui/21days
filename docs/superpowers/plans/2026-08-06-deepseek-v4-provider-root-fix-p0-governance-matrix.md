@@ -18,7 +18,7 @@
 - TypeScript noEmit：通过。
 - Next.js production build：通过。
 - npm audit high gate：通过，无 high/critical。
-- 审计仅发现 `next` → `postcss` 依赖链中的 moderate 问题；修复需强制升级到范围外的 Next.js 16.3.0，故本 P0 不纳入该强制 major 升级。
+- 审计仅发现 `next` → `postcss` 依赖链中的 moderate 问题；修复需强制升级到当前声明范围外的 Next.js 16.3.0（minor 版本升级），故本 P0 不纳入该升级。
 - git diff check：通过。
 
 ## 验收边界
