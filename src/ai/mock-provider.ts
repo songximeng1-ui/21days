@@ -398,11 +398,9 @@ function makeJdDecisionCandidate(input: AiProviderInput): unknown | null {
     currentQuestion: readText(input.input.currentQuestion),
   });
   if (catalog.requirements.length === 0 || catalog.materials.length === 0) return null;
-  const selectedRequirementIds = catalog.requirements.map((source) => source.sourceId);
   const usedMaterialIds = new Set<string>();
   return {
     routeKey: "jd_to_revision",
-    selectedRequirementIds,
     decisions: catalog.requirements.map((requirement) => {
       const material = catalog.materials.find((source) =>
         !usedMaterialIds.has(source.sourceId)

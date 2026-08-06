@@ -20,31 +20,56 @@ type JdModification = {
   reason: string;
 };
 
+export type JdAssemblyFailureCode =
+  | "candidate_schema"
+  | "requirement_coverage"
+  | "unknown_requirement_id"
+  | "unknown_material_id"
+  | "unknown_conflict_id"
+  | "unsupported_relation"
+  | "ungrounded_candidate";
+
+export type JdAssemblyFailure = {
+  ok: false;
+  code: JdAssemblyFailureCode;
+};
+
+export type JdAssemblyResult =
+  | { ok: true; output: RouteOutput }
+  | JdAssemblyFailure;
+
 export { buildJdEvidenceCatalog } from "@/domain/jd-evidence-contract";
 export type { JdEvidenceCatalog } from "@/domain/jd-evidence-contract";
 
-export function assembleJdRouteOutput(
+export function assembleJdRouteOutputResult(
   input: JdRouteInput,
   rawCandidate: JdMappingCandidate,
-): RouteOutput {
-  const candidate = jdMappingCandidateSchema.parse(rawCandidate);
+): JdAssemblyResult {
+  const parsedCandidate = jdMappingCandidateSchema.safeParse(rawCandidate);
+  if (!parsedCandidate.success) {
+    return { ok: false, code: "candidate_schema" };
+  }
+  const candidate = parsedCandidate.data;
   const catalog = buildJdEvidenceCatalog(input);
   const requirementById = new Map(catalog.requirements.map((source) => [source.sourceId, source]));
   const materialById = new Map(catalog.materials.map((source) => [source.sourceId, source]));
   const requiredSelection = catalog.requirements.map((source) => source.sourceId);
+  if (candidate.decisions.some((decision) => !requirementById.has(decision.requirementId))) {
+    return { ok: false, code: "unknown_requirement_id" };
+  }
   if (
-    candidate.selectedRequirementIds.length !== requiredSelection.length
-    || requiredSelection.some((id) => !candidate.selectedRequirementIds.includes(id))
+    candidate.decisions.length !== requiredSelection.length
+    || requiredSelection.some((id) => !candidate.decisions.some((decision) => decision.requirementId === id))
   ) {
-    throw new Error("JD decisions must completely cover the first 3-5 request requirements");
+    return { ok: false, code: "requirement_coverage" };
   }
 
-  const resolved = candidate.decisions.map((decision) => resolveDecision(
-    input,
-    decision,
-    requirementById,
-    materialById,
-  ));
+  const resolved = [];
+  for (const decision of candidate.decisions) {
+    const item = resolveDecision(input, decision, requirementById, materialById);
+    if ("ok" in item) return item;
+    resolved.push(item);
+  }
   const safeModifications = resolved
     .filter((item): item is typeof item & { modification: JdModification } => item.modification !== null)
     .sort((left, right) => modificationScore(right.modification) - modificationScore(left.modification))
@@ -90,7 +115,7 @@ export function assembleJdRouteOutput(
     ? `打开“${compact(firstModification.revisionTarget, 42)}”对应的原始文档、截图、数据记录或上线版本，逐项核对动作、数字、工具、角色和结果。`
     : "打开原始文档、截图、数据记录或上线版本；找不到来源就记录证据缺口，不改材料。";
 
-  return {
+  return { ok: true, output: {
     routeKey: "jd_to_revision",
     outputType: "route_result",
     shortAssessment: externalDecision === "modify"
@@ -129,7 +154,7 @@ export function assembleJdRouteOutput(
           : ["targetJobTitle", "materialVersion", "submitted", "observationPoint"],
       requiresUserConfirmation: true,
     },
-  };
+  } };
 }
 
 function resolveDecision(
@@ -137,22 +162,29 @@ function resolveDecision(
   decision: JdMappingDecision,
   requirementById: Map<string, ExactSourceRef>,
   materialById: Map<string, ExactSourceRef>,
-) {
+): {
+  decision: JdMappingDecision;
+  requirement: ExactSourceRef;
+  materials: ExactSourceRef[];
+  modification: JdModification | null;
+  relationSupported: boolean;
+} | JdAssemblyFailure {
   const requirement = requirementById.get(decision.requirementId);
   if (!requirement || !verifyExactSourceRef(input, requirement)) {
-    throw new Error(`JD decision references unknown requirement source ID: ${decision.requirementId}`);
+    return { ok: false, code: "unknown_requirement_id" };
   }
-  const materials = decision.evidenceIds.map((id) => {
+  const materials: ExactSourceRef[] = [];
+  for (const id of decision.evidenceIds) {
     const source = materialById.get(id);
     if (!source || !verifyExactSourceRef(input, source)) {
-      throw new Error(`JD decision references unknown material source ID: ${id}`);
+      return { ok: false, code: "unknown_material_id" };
     }
-    return source;
-  });
+    materials.push(source);
+  }
   for (const id of decision.conflictSourceIds ?? []) {
     const source = requirementById.get(id) ?? materialById.get(id);
     if (!source || !verifyExactSourceRef(input, source)) {
-      throw new Error(`JD decision references unknown conflict source ID: ${id}`);
+      return { ok: false, code: "unknown_conflict_id" };
     }
   }
   const target = decision.revisionTargetId
@@ -167,6 +199,20 @@ function resolveDecision(
       source.exactQuote,
       decision.relation,
     ));
+  const changesMaterial = decision.disposition === "replace" || decision.disposition === "insert";
+  if (changesMaterial && !relationSupported) {
+    return { ok: false, code: "unsupported_relation" };
+  }
+  if (
+    changesMaterial
+    && decision.candidate
+    && !isCandidateGrounded(
+      decision.candidate,
+      factualMaterials.map((source) => source.exactQuote).join("\n"),
+    )
+  ) {
+    return { ok: false, code: "ungrounded_candidate" };
+  }
   const canModify = Boolean(
     decision.candidate
     && target

@@ -29,7 +29,7 @@ function makeRequest(signal?: AbortSignal): Request {
 describe("POST /api/ai processing-failure contract", () => {
   it.each([
     ["transport", 503],
-    ["timeout", 504],
+    ["timeout", 503],
   ] as const)("maps provider %s to %i without a fake action", async (kind, status) => {
     const provider: AiProvider = {
       generate: vi.fn().mockRejectedValue(new AiProviderError(kind)),
@@ -53,7 +53,7 @@ describe("POST /api/ai processing-failure contract", () => {
     );
   });
 
-  it("maps exhausted invalid model output to 502", async () => {
+  it("maps a missing provider output root to typed machine-unavailable 503", async () => {
     const provider: AiProvider = {
       generate: vi.fn().mockResolvedValue({} as never),
     };
@@ -62,10 +62,10 @@ describe("POST /api/ai processing-failure contract", () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(503);
     expect(body).toMatchObject({
       error: "ai_processing_failure",
-      category: "invalid_output",
+      category: "machine_unavailable",
     });
     expect(body).not.toHaveProperty("todayAction");
   });

@@ -67,6 +67,24 @@ describe("POST /api/ai", () => {
     expect(JSON.stringify(output)).not.toMatch(/DeepSeek|Qwen|fallback|prompt|token|API/i);
   });
 
+  it("returns a typed 503 when empty provider content exhausts machine recovery", async () => {
+    const provider: AiProvider = {
+      generate: vi.fn().mockRejectedValue(new AiProviderError("empty_content")),
+    };
+    const response = await createAiRouteHandler({
+      providerFactory: () => provider,
+      guard: new AiRequestGuard({ sessionRateLimit: 10 }),
+    })(makeExperienceRequest("empty-content-exhausted"));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: "ai_processing_failure",
+      category: "machine_unavailable",
+      message: "服务暂时没有返回结果。你的草稿已保存，请稍后再试。",
+      retryable: true,
+    });
+  });
+
   it("does not allow the production mock marker without a reserved E2E identity", async () => {
     expect(isReservedProductionE2eRun({
       MVP_PRODUCTION_E2E_ALLOW_MOCK: "1",
@@ -1154,11 +1172,13 @@ describe("POST /api/ai", () => {
   });
 
   it("returns a 5xx status with a friendly body for unknown server errors", async () => {
+    const events: Array<Record<string, unknown>> = [];
     const handler = createAiRouteHandler({
       providerFactory: () => {
         throw new Error("sensitive internal detail");
       },
       guard: new AiRequestGuard(),
+      reporter: { report: (event) => { events.push(event); } },
     });
 
     const response = await handler(makeExperienceRequest("unknown-error"));
@@ -1173,6 +1193,27 @@ describe("POST /api/ai", () => {
     expect(parsedBody).not.toHaveProperty("todayAction");
     expect(body).not.toContain("sensitive internal detail");
     expect(body).not.toMatch(/stack|exception|providerFactory/i);
+    expect(events.filter((event) => event.stage === "terminal")).toEqual([
+      expect.objectContaining({ terminalCategory: "unexpected_internal" }),
+    ]);
+  });
+
+  it("keeps an unexpected provider implementation bug as internal 500", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const handler = createAiRouteHandler({
+      providerFactory: () => ({
+        generate: vi.fn().mockRejectedValue(new TypeError("private provider bug")),
+      }),
+      guard: new AiRequestGuard(),
+      reporter: { report: (event) => { events.push(event); } },
+    });
+
+    const response = await handler(makeExperienceRequest("unexpected-provider-bug"));
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(await response.json())).not.toContain("private provider bug");
+    expect(events.filter((event) => event.stage === "terminal")).toEqual([
+      expect.objectContaining({ terminalCategory: "unexpected_internal" }),
+    ]);
   });
 });
 

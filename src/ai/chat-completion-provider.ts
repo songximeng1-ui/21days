@@ -5,6 +5,7 @@ import {
   type AiProviderInput,
   type AiProviderSet,
   type AiRetryFeedback,
+  type AiSafeProviderObservation,
 } from "@/ai/provider";
 import { normalizeProviderBaseUrl } from "@/ai/provider-url-policy";
 import { MockAiProvider } from "@/ai/mock-provider";
@@ -46,9 +47,25 @@ export class ChatCompletionProvider implements AiProvider {
       throw new AiProviderError("timeout");
     }
 
-    let response: Response;
+    const requestBody = JSON.stringify({
+      model: this.options.model,
+      temperature: 0.2,
+      max_tokens: maxTokensForRoute(input.routeKey),
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: buildSystemPrompt(),
+        },
+        {
+          role: "user",
+          content: buildUserPrompt(input),
+        },
+      ],
+    });
     const requestSignal = createProviderRequestSignal(input.signal, input.deadlineAtMs, this.timeoutMs);
 
+    let response: Response;
     try {
       response = await this.fetchFn(this.completionsUrl, {
         method: "POST",
@@ -58,22 +75,7 @@ export class ChatCompletionProvider implements AiProvider {
           "Content-Type": "application/json",
         },
         signal: requestSignal.signal,
-        body: JSON.stringify({
-          model: this.options.model,
-          temperature: 0.2,
-          max_tokens: maxTokensForRoute(input.routeKey),
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "system",
-              content: buildSystemPrompt(),
-            },
-            {
-              role: "user",
-              content: buildUserPrompt(input),
-            },
-          ],
-        }),
+        body: requestBody,
       });
     } catch {
       requestSignal.cleanup();
@@ -113,12 +115,13 @@ export class ChatCompletionProvider implements AiProvider {
     } catch {
       throw new AiProviderError("envelope_json");
     }
+    const observation = observeEnvelope(payload);
     const content = readEnvelopeContent(payload);
 
     try {
       return parseJsonObjectContent(content) as RouteOutput;
     } catch {
-      throw new AiProviderError("model_json");
+      throw new AiProviderError("model_json", undefined, undefined, undefined, observation);
     }
   }
 }
@@ -171,33 +174,81 @@ function readRetryAfterMs(response: Response): number | undefined {
 }
 
 function readEnvelopeContent(payload: unknown): string {
+  const observation = observeEnvelope(payload);
   if (!isRecord(payload) || !Array.isArray(payload.choices)) {
-    throw new AiProviderError("envelope_json");
+    throw new AiProviderError("envelope_json", undefined, undefined, undefined, observation);
   }
 
   const firstChoice = payload.choices[0];
   if (firstChoice === undefined) {
-    throw new AiProviderError("empty_content");
+    throw new AiProviderError("empty_content", undefined, undefined, undefined, observation);
   }
   if (!isRecord(firstChoice) || !isRecord(firstChoice.message)) {
-    throw new AiProviderError("envelope_json");
+    throw new AiProviderError("envelope_json", undefined, undefined, undefined, observation);
   }
 
   const content = firstChoice.message.content;
   if (content === undefined || content === null || (typeof content === "string" && !content.trim())) {
-    throw new AiProviderError("empty_content");
+    throw new AiProviderError("empty_content", undefined, undefined, undefined, observation);
   }
   if (Array.isArray(content)) {
     const text = readTextContentItems(content);
     if (!text.trim()) {
-      throw new AiProviderError("empty_content");
+      throw new AiProviderError("empty_content", undefined, undefined, undefined, observation);
     }
     return text;
   }
   if (typeof content !== "string") {
-    throw new AiProviderError("envelope_json");
+    throw new AiProviderError("envelope_json", undefined, undefined, undefined, observation);
   }
   return content;
+}
+
+function observeEnvelope(payload: unknown): AiSafeProviderObservation {
+  if (!isRecord(payload) || !Array.isArray(payload.choices)) {
+    return {
+      finishReason: "unknown",
+      choiceCountBucket: "unknown",
+      contentShape: "unknown",
+      contentLengthBucket: "unknown",
+    };
+  }
+  const choiceCountBucket = payload.choices.length === 0
+    ? "zero"
+    : payload.choices.length === 1
+      ? "one"
+      : "many";
+  const firstChoice = payload.choices[0];
+  const finishReasonValue = isRecord(firstChoice) ? firstChoice.finish_reason : undefined;
+  const finishReason = finishReasonValue === "stop"
+    || finishReasonValue === "length"
+    || finishReasonValue === "content_filter"
+    || finishReasonValue === "tool_calls"
+    ? finishReasonValue
+    : "unknown";
+  const content = isRecord(firstChoice) && isRecord(firstChoice.message)
+    ? firstChoice.message.content
+    : undefined;
+  const contentShape = content === undefined || content === null
+    ? "missing"
+    : typeof content === "string"
+      ? "string"
+      : Array.isArray(content)
+        ? "array"
+        : "other";
+  const length = typeof content === "string"
+    ? new TextEncoder().encode(content.trim()).byteLength
+    : undefined;
+  const contentLengthBucket = length === undefined
+    ? "unknown"
+    : length === 0
+      ? "empty"
+      : length < 256
+        ? "1_255"
+        : length < 2048
+          ? "256_2047"
+          : "gte_2048";
+  return { finishReason, choiceCountBucket, contentShape, contentLengthBucket };
 }
 
 function readTextContentItems(content: unknown[]): string {
@@ -408,7 +459,6 @@ function buildJdMappingPrompt(input: AiProviderInput): string {
   const catalog = buildJdEvidenceCatalog(routeInput);
   const narrowContract = {
     routeKey: "jd_to_revision",
-    selectedRequirementIds: ["all 1-5 requirement sourceId values (normally 3-5)"],
     decisions: [{
       requirementId: "selected requirement sourceId",
       evidenceIds: ["0-3 material sourceId values"],
@@ -424,7 +474,7 @@ function buildJdMappingPrompt(input: AiProviderInput): string {
     "当前且唯一的路线：jd_to_revision。",
     "你只负责对服务端签发的岗位要求与材料证据 ID 做决策；服务端负责验证来源并组装全部用户行动字段。",
     "只返回下方窄合同的 JSON，不得返回 outputType、routeResult、todayAction、recordGuide 或其他字段。",
-    "必须覆盖目录中的全部 1–5 条岗位要求；正常输入为 3–5 条，不足 3 条时也不得遗漏。selectedRequirementIds 不得重复，decisions 必须一一完整覆盖。",
+    "必须覆盖目录中的全部 1–5 条岗位要求；正常输入为 3–5 条，不足 3 条时也不得遗漏。decisions 的 requirementId 不得重复，且必须一一完整覆盖。",
     "只有覆盖至少 3 条要求、且每条都是 direct + keep 并有精确材料来源时才可 all-keep；少于 3 条不得形成 all-keep。",
     "requirementId、evidenceIds、revisionTargetId 和 conflictSourceIds 只能使用证据目录中的 sourceId。",
     "direct 表示要求有直接事实证据；partial 表示只有部分事实；unsupported 表示没有事实证据。",

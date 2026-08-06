@@ -9,6 +9,7 @@ import {
 import {
   createSafeAiFailureReporter,
   noopAiFailureReporter,
+  type AiFailureEvent,
   type AiFailureReporter,
 } from "@/ai/failure-diagnostics";
 import {
@@ -133,16 +134,20 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
     );
     const operationSignal = AbortSignal.any([request.signal, deadlineController.signal]);
     let routeKey: RouteKey = "experience_to_resume";
+    let mode: AiFailureEvent["mode"] = "route";
     const requestId = createRequestId();
+    const requestTerminal = createBufferedRequestTerminalReporter(reporter);
     let requestMetadata: RequestMetadata | undefined;
     let session = guard.readSession(request);
     let release: (() => void) | undefined;
+    let aiExecutionStarted = false;
 
     try {
       guard.assertTrustedJsonRequest(request);
       const body = routeRequestSchema.parse(await guard.readJson(request, operationSignal));
       requestMetadata = body.requestMetadata;
       routeKey = body.routeKey;
+      mode = body.mode;
       if (containsSensitivePersonalInfo(body.input)) {
         return withSessionCookie(
           withRequestId(NextResponse.json(makeSensitiveInfoFailure(requestId), {
@@ -164,6 +169,7 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
       if (lightReviewRecords.some((record) => record.routeKey !== body.routeKey)) {
         throw new AiRequestGuardError(400);
       }
+      aiExecutionStarted = true;
       const provider = reuseProvider(providerFactory(body), reusableProviders);
       const providerReviewRecords = lightReviewRecords.map(projectProviderRecord);
       const output =
@@ -179,7 +185,7 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
                     provenanceRecord: lightReviewRecords[0],
                   }),
               provider,
-              reporter,
+              reporter: requestTerminal.reporter,
               requestId,
               signal: operationSignal,
               deadlineMs: Math.max(1, deadlineAtMs - Date.now()),
@@ -190,7 +196,7 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
               routeKey,
               input: body.input,
               provider,
-              reporter,
+              reporter: requestTerminal.reporter,
               requestId,
               signal: operationSignal,
               deadlineMs: Math.max(1, deadlineAtMs - Date.now()),
@@ -198,6 +204,7 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
               surfaceUpstreamUnavailable: true,
             });
       if (request.signal.aborted) {
+        requestTerminal.finalize("cancelled", { requestId, routeKey, mode });
         return withSessionCookie(withRequestId(new Response(null, { status: 499 }), requestId, requestMetadata), session);
       }
       const verifiedProvenance = attachOutputProvenance(
@@ -220,11 +227,25 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
       ) {
         throw new AiProcessingError("invalid_output", requestId);
       }
+      requestTerminal.finalize(
+        validatedOutput.data.outputType === "missing_info" ? "business_missing_info" : "success",
+        { requestId, routeKey, mode },
+      );
       return withSessionCookie(
         withRequestId(NextResponse.json(validatedOutput.data), requestId, requestMetadata),
         session,
       );
     } catch (error) {
+      if (aiExecutionStarted) {
+        requestTerminal.finalize(
+          request.signal.aborted
+            ? "cancelled"
+            : deadlineController.signal.aborted
+              ? "deadline"
+              : terminalCategoryForError(error),
+          { requestId, routeKey, mode },
+        );
+      }
       if (request.signal.aborted) {
         return withSessionCookie(withRequestId(new Response(null, { status: 499 }), requestId, requestMetadata), session);
       }
@@ -305,6 +326,78 @@ export function createAiRouteHandler(dependencies: AiRouteHandlerDependencies = 
   };
 }
 
+type RequestTerminalContext = {
+  requestId: string;
+  routeKey: RouteKey;
+  mode: AiFailureEvent["mode"];
+};
+
+function createBufferedRequestTerminalReporter(base: AiFailureReporter): {
+  reporter: AiFailureReporter;
+  finalize(
+    category: NonNullable<AiFailureEvent["terminalCategory"]>,
+    context: RequestTerminalContext,
+  ): void;
+} {
+  let pendingTerminal: AiFailureEvent | undefined;
+  let finalized = false;
+  return {
+    reporter: {
+      report(event) {
+        if (event.stage === "terminal") {
+          pendingTerminal = event;
+          return;
+        }
+        return base.report(event);
+      },
+    },
+    finalize(category, context) {
+      if (finalized) return;
+      finalized = true;
+      const event: AiFailureEvent = {
+        requestId: context.requestId,
+        routeKey: context.routeKey,
+        mode: context.mode,
+        providerRole: pendingTerminal?.providerRole ?? "primary",
+        attempt: 0,
+        stage: "terminal",
+        code: category,
+        failureClass: category === "business_missing_info"
+          ? "business_missing_info"
+          : category === "semantic_invalid"
+            ? "semantic_invalid"
+            : "machine_unavailable",
+        recoveryDecision: "stop",
+        durationBucket: "lt_100ms",
+        ...(pendingTerminal?.remainingBudgetBucket
+          ? { remainingBudgetBucket: pendingTerminal.remainingBudgetBucket }
+          : {}),
+        terminalCategory: category,
+      };
+      try {
+        void Promise.resolve(base.report(event)).catch(() => undefined);
+      } catch {
+        // Diagnostics must never change the request result.
+      }
+    },
+  };
+}
+
+function terminalCategoryForError(
+  error: unknown,
+): NonNullable<AiFailureEvent["terminalCategory"]> {
+  if (error instanceof AiProcessingError) {
+    if (error.category === "deadline") return "deadline";
+    if (error.category === "cancelled") return "cancelled";
+    if (error.category === "invalid_output" || error.category === "safety") {
+      return "semantic_invalid";
+    }
+    return "machine_unavailable";
+  }
+  if (error instanceof AiUpstreamUnavailableError) return "machine_unavailable";
+  return "unexpected_internal";
+}
+
 function makeSensitiveInfoFailure(requestId: string): AiProcessingFailure {
   return {
     error: "ai_processing_failure",
@@ -327,6 +420,7 @@ function processingFailureStatus(error: AiProcessingError): number {
   if (error.category === "cancelled") return 499;
   if (error.category === "timeout" || error.category === "deadline") return 504;
   if (
+    error.category === "machine_unavailable" ||
     error.category === "transport" ||
     error.category === "rate_limit" ||
     error.category === "circuit_open"

@@ -58,12 +58,20 @@ export type AiProviderErrorKind =
 
 export type AiHttpStatusClass = "3xx" | "4xx" | "5xx";
 
+export type AiSafeProviderObservation = {
+  finishReason: "stop" | "length" | "content_filter" | "tool_calls" | "unknown";
+  choiceCountBucket: "zero" | "one" | "many" | "unknown";
+  contentShape: "missing" | "string" | "array" | "other" | "unknown";
+  contentLengthBucket: "empty" | "1_255" | "256_2047" | "gte_2048" | "unknown";
+};
+
 export class AiProviderError extends Error {
   constructor(
     readonly kind: AiProviderErrorKind = "transport",
     readonly httpStatusClass?: AiHttpStatusClass,
     readonly providerErrorCode?: string,
     readonly retryAfterMs?: number,
+    readonly observation?: AiSafeProviderObservation,
   ) {
     super("AI provider request failed");
     this.name = "AiProviderError";

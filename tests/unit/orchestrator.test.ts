@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { ChatCompletionProvider } from "@/ai/chat-completion-provider";
 import { MockAiProvider } from "@/ai/mock-provider";
 import { AiProviderError } from "@/ai/provider";
+import { recordProviderFailure } from "@/ai/orchestration-policy";
+import { canRetryPrimary } from "@/ai/orchestration-budget";
 import { generateLightReviewOutput, generateRouteOutput } from "@/ai/orchestrator";
 import { attachOutputProvenance } from "@/domain/provenance";
 import type { RouteOutput } from "@/domain/types";
@@ -69,6 +71,48 @@ function readPath(source: Record<string, unknown>, path: string): unknown {
 }
 
 describe("generateRouteOutput", () => {
+  it("includes scheduling margin when admitting a primary retry before fallback", () => {
+    expect(canRetryPrimary(9_000, true)).toBe(false);
+    expect(canRetryPrimary(9_250, true)).toBe(true);
+  });
+  it("reports exactly one machine terminal event when no primary provider is configured", async () => {
+    const events: Array<{ stage: string; terminalCategory?: string }> = [];
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      reporter: {
+        report(event) {
+          events.push(event);
+        },
+      },
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(events.filter((event) => event.stage === "terminal")).toEqual([
+      expect.objectContaining({ terminalCategory: "machine_unavailable" }),
+    ]);
+  });
+
+  it("reports fallback skipped when its circuit is already open", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const primary = { generate: vi.fn().mockRejectedValue(new AiProviderError("empty_content")) };
+    const fallback = { generate: vi.fn() };
+    recordProviderFailure(fallback, new AiProviderError("empty_content"));
+    recordProviderFailure(fallback, new AiProviderError("empty_content"));
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+      reporter: { report: (event) => { events.push(event); } },
+    });
+
+    expect(result.outputType).toBe("friendly_failure");
+    expect(fallback.generate).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({ code: "fallback_skipped_circuit" }));
+  });
   it("rejects a fictional direction that cannot map to the controlled job taxonomy", async () => {
     const generated = await new MockAiProvider("success").generate({
       routeKey: "direction_to_jobs",
@@ -125,6 +169,7 @@ describe("generateRouteOutput", () => {
 
   it("stops the active provider and skips fallback when the total orchestration deadline expires", async () => {
     let observedSignal: AbortSignal | undefined;
+    const events: Array<Record<string, unknown>> = [];
     const primary = {
       generate: vi.fn((input) => {
         observedSignal = input.signal;
@@ -145,15 +190,21 @@ describe("generateRouteOutput", () => {
       primary,
       fallback,
       deadlineMs: 5,
+      reporter: { report: (event) => { events.push(event); } },
     });
 
     expect(result.outputType).toBe("friendly_failure");
     expect(observedSignal?.aborted).toBe(true);
     expect(fallback.generate).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({ code: "fallback_skipped_deadline" }));
+    expect(events.filter((event) => event.stage === "terminal")).toEqual([
+      expect.objectContaining({ terminalCategory: "deadline" }),
+    ]);
   });
 
   it("propagates caller cancellation and never starts another provider attempt", async () => {
     const controller = new AbortController();
+    const events: Array<Record<string, unknown>> = [];
     const primary = {
       generate: vi.fn((input) =>
         new Promise<RouteOutput>((_resolve, reject) => {
@@ -172,6 +223,7 @@ describe("generateRouteOutput", () => {
       primary,
       fallback,
       signal: controller.signal,
+      reporter: { report: (event) => { events.push(event); } },
     });
 
     controller.abort();
@@ -180,6 +232,10 @@ describe("generateRouteOutput", () => {
     expect(result.outputType).toBe("friendly_failure");
     expect(primary.generate).toHaveBeenCalledTimes(1);
     expect(fallback.generate).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({ code: "fallback_skipped_cancelled" }));
+    expect(events.filter((event) => event.stage === "terminal")).toEqual([
+      expect.objectContaining({ terminalCategory: "cancelled" }),
+    ]);
   });
 
   it("honors provider Retry-After by opening its circuit and using fallback without an immediate retry", async () => {
@@ -226,6 +282,93 @@ describe("generateRouteOutput", () => {
 
     expect(result.outputType).toBe("route_result");
     expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers two empty primary responses through fallback and reports its lifecycle", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const primary = {
+      generate: vi.fn().mockRejectedValue(new AiProviderError("empty_content")),
+    };
+    const fallback = {
+      generate: vi.fn().mockResolvedValue(await makeValidExperienceOutput()),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+      reporter: { report: (event) => { events.push(event); } },
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
+    expect(fallback.generate).toHaveBeenCalledTimes(1);
+    expect(events.map((event) => event.code)).toContain("fallback_started");
+    expect(events.map((event) => event.code)).toContain("fallback_succeeded");
+    expect(events.filter((event) => event.stage === "terminal")).toEqual([
+      expect.objectContaining({ terminalCategory: "success" }),
+    ]);
+  });
+
+  it("skips a primary retry when the remaining deadline only funds fallback", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    let primaryDeadlineAtMs = 0;
+    let fallbackDeadlineAtMs = 0;
+    const primary = {
+      generate: vi.fn((providerInput) => {
+        primaryDeadlineAtMs = providerInput.deadlineAtMs ?? 0;
+        throw new AiProviderError("empty_content");
+      }),
+    };
+    const fallback = {
+      generate: vi.fn((providerInput) => {
+        fallbackDeadlineAtMs = providerInput.deadlineAtMs ?? 0;
+        return makeValidExperienceOutput();
+      }),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+      deadlineMs: 7_000,
+      reporter: { report: (event) => { events.push(event); } },
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
+    expect(fallback.generate).toHaveBeenCalledTimes(1);
+    expect(fallbackDeadlineAtMs - primaryDeadlineAtMs).toBeGreaterThanOrEqual(5_000);
+    expect(events).toContainEqual(expect.objectContaining({
+      code: "primary_retry_skipped_budget",
+      recoveryDecision: "try_fallback",
+    }));
+  });
+
+  it("still starts fallback when primary settles at its reserved attempt deadline", async () => {
+    const primary = {
+      generate: vi.fn((providerInput) => new Promise<never>((_resolve, reject) => {
+        const delayMs = Math.max(0, (providerInput.deadlineAtMs ?? Date.now()) - Date.now());
+        setTimeout(() => reject(new AiProviderError("timeout")), delayMs);
+      })),
+    };
+    const fallback = {
+      generate: vi.fn().mockResolvedValue(await makeValidExperienceOutput()),
+    };
+
+    const result = await generateRouteOutput({
+      routeKey: "experience_to_resume",
+      input: sufficientExperienceInput,
+      primary,
+      fallback,
+      deadlineMs: 6_300,
+    });
+
+    expect(result.outputType).toBe("route_result");
+    expect(primary.generate).toHaveBeenCalledTimes(1);
     expect(fallback.generate).toHaveBeenCalledTimes(1);
   });
 
@@ -2622,6 +2765,7 @@ describe("generateRouteOutput", () => {
     ] as const;
 
     for (const [routeKey, actionType, fieldsToRecord] of cases) {
+      const events: Array<Record<string, unknown>> = [];
       const result = await generateRouteOutput({
         routeKey,
         input:
@@ -2656,13 +2800,14 @@ describe("generateRouteOutput", () => {
                 actualActions: "organized",
                 deliverableOrResult: "no clear result",
                 targetJobTitle: "intern",
-                jdTextOrRequirements: "content work",
-                userMaterial: "club content",
+                jdTextOrRequirements: "发布内容",
+                userMaterial: "发布 13 条内容。",
               },
         provider: new MockAiProvider("success"),
+        reporter: { report: (event) => { events.push(event); } },
       });
 
-      expect(result.outputType).toBe("route_result");
+      expect(result.outputType, `route=${routeKey} events=${JSON.stringify(events)}`).toBe("route_result");
       expect(result.todayAction.actionType).toBe(actionType);
       expect(result.recordGuide.fieldsToRecord).toEqual(fieldsToRecord);
 
@@ -3266,7 +3411,7 @@ describe("generateRouteOutput", () => {
     expect(provider.generate).toHaveBeenCalledTimes(4);
   });
 
-  it("allows a third primary attempt when a provider-content failure is followed by a grounding failure", async () => {
+  it("never exceeds two primary attempts when machine recovery is followed by semantic invalidity", async () => {
     const validOutput = await makeValidExperienceOutput();
     const ungroundedOutput = {
       ...validOutput,
@@ -3285,17 +3430,12 @@ describe("generateRouteOutput", () => {
       primary,
     });
 
-    expect(result.outputType).toBe("route_result");
-    expect(primary.generate).toHaveBeenCalledTimes(3);
+    expect(result.outputType).toBe("friendly_failure");
+    expect(primary.generate).toHaveBeenCalledTimes(2);
     expect(primary.generate.mock.calls[1]?.[0]).toMatchObject({
       routeKey: "experience_to_resume",
       input: sufficientExperienceInput,
       retryFeedback: { code: "provider_retryable" },
-    });
-    expect(primary.generate.mock.calls[2]?.[0]).toMatchObject({
-      routeKey: "experience_to_resume",
-      input: sufficientExperienceInput,
-      retryFeedback: { stage: "grounding", code: "grounding_failure" },
     });
   });
 
@@ -3725,16 +3865,26 @@ describe("generateRouteOutput", () => {
       "failureClass",
       "recoveryDecision",
       "durationBucket",
-      "schemaPaths",
-      "httpStatusClass",
-      "providerErrorCode",
+      "remainingBudgetBucket",
+      "terminalCategory",
+      "finishReason",
+      "choiceCountBucket",
+      "contentShape",
+      "contentLengthBucket",
     ]);
-    expect(events.length).toBe(3);
+    expect(events.map((event) => event.code)).toEqual([
+      "retryable_http",
+      "retryable_http",
+      "fallback_started",
+      "candidate_zod",
+      "fallback_failed",
+      "machine_unavailable",
+    ]);
     for (const event of events) {
       expect(Object.keys(event).every((key) => allowedKeys.has(key))).toBe(true);
     }
     expect(JSON.stringify(events)).not.toMatch(/secret input|prompt value|Authorization|Bearer|api\.example|stack/i);
-    expect(events[0]?.providerErrorCode).toBe("AllocationQuota.FreeTierOnly");
+    expect(events[0]).not.toHaveProperty("providerErrorCode");
     expect(JSON.stringify(result)).not.toMatch(
       /provider_http|retryable_http|candidate_schema|schema|fallback|transport|stage|code/i,
     );
@@ -3757,7 +3907,8 @@ describe("generateRouteOutput", () => {
       },
     });
 
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(3);
+    expect(events.filter((event) => event.stage === "terminal")).toHaveLength(1);
     const diagnosticRequestIds = events.map((event) => event.requestId);
     expect(new Set(diagnosticRequestIds).size).toBe(1);
     expect(diagnosticRequestIds[0]).toMatch(/^[a-zA-Z0-9-]{1,64}$/);

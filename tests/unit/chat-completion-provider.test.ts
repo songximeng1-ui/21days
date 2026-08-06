@@ -164,7 +164,7 @@ it("treats a capability summary as evidence to verify instead of a completed act
     "ACTIVE_ROUTE_CONTRACT_BEGIN",
     "ACTIVE_ROUTE_CONTRACT_END",
   );
-  expect(Object.keys(contract)).toEqual(["routeKey", "selectedRequirementIds", "decisions"]);
+  expect(Object.keys(contract)).toEqual(["routeKey", "decisions"]);
   expect(contract).not.toHaveProperty("routeResult");
   expect(contract).not.toHaveProperty("todayAction");
   expect(prompt).toContain("服务端负责验证来源并组装全部用户行动字段");
@@ -174,6 +174,29 @@ it("treats a capability summary as evidence to verify instead of a completed act
 });
 
 describe("ChatCompletionProvider", () => {
+  it("does not mask request-payload construction bugs as provider transport failures", async () => {
+    const fetchMock = vi.fn();
+    const provider = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+    const throwingInput = new Proxy<Record<string, unknown>>({}, {
+      get() {
+        throw new TypeError("private prompt construction bug");
+      },
+    });
+
+    const error = await provider.generate({
+      routeKey: "experience_to_resume",
+      input: throwingInput,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error).not.toBeInstanceOf(AiProviderError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it("rejects provider redirects instead of replaying the prompt outside the allowlisted host", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       if (init?.redirect !== "error") {
@@ -218,7 +241,7 @@ describe("ChatCompletionProvider", () => {
       expect(prompt).toContain("ACTIVE_ROUTE_CONTRACT_BEGIN");
       expect(prompt).toContain(`\"routeKey\": \"${routeKey}\"`);
       if (routeKey === "jd_to_revision") {
-        expect(Object.keys(contract)).toEqual(["routeKey", "selectedRequirementIds", "decisions"]);
+        expect(Object.keys(contract)).toEqual(["routeKey", "decisions"]);
         expect(prompt).toContain('"requirementId": "selected requirement sourceId"');
         expect(prompt).toContain('"evidenceIds"');
         expect(prompt).not.toContain('"outputType": "route_result"');
@@ -619,7 +642,7 @@ describe("ChatCompletionProvider", () => {
     const contract = prompt.split("ACTIVE_ROUTE_CONTRACT_BEGIN")[1]?.split("ACTIVE_ROUTE_CONTRACT_END")[0] ?? "";
     const evidence = prompt.split("ALLOWED_EVIDENCE_BEGIN")[1]?.split("ALLOWED_EVIDENCE_END")[0] ?? "";
 
-    expect(contract).toContain("selectedRequirementIds");
+    expect(contract).not.toContain("selectedRequirementIds");
     expect(contract).toContain("decisions");
     expect(contract).toContain("direct | partial | unsupported");
     expect(contract).toContain("replace | insert | collect_evidence | keep");
@@ -1445,6 +1468,103 @@ describe("ChatCompletionProvider", () => {
     expect(serialized).not.toMatch(
       /secret-test-key|sensitive user input|sensitive prompt material|Authorization|sensitive response body|query-value/i,
     );
+  });
+
+  it("records only bucketed envelope observations for empty content", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ finish_reason: "length", message: { content: "   " } }],
+      secret: "raw-envelope-secret",
+    }), { status: 200 }));
+    const provider = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+
+    const error = await provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "内容运营",
+        rawExperience: "private-source-text",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    }).catch((caught: unknown) => caught as AiProviderError);
+
+    expect(error).toMatchObject({
+      kind: "empty_content",
+      observation: {
+        finishReason: "length",
+        choiceCountBucket: "one",
+        contentShape: "string",
+        contentLengthBucket: "empty",
+      },
+    });
+    expect(JSON.stringify(error)).not.toMatch(/raw-envelope-secret|private-source-text|secret-test-key/);
+  });
+
+  it("records only bucketed envelope observations for unparseable model JSON", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: "not-json-secret-body" } }],
+      secret: "raw-envelope-secret",
+    }), { status: 200 }));
+    const provider = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+
+    const error = await provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "内容运营",
+        rawExperience: "private-source-text",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    }).catch((caught: unknown) => caught as AiProviderError);
+
+    expect(error).toMatchObject({
+      kind: "model_json",
+      observation: {
+        finishReason: "stop",
+        choiceCountBucket: "one",
+        contentShape: "string",
+        contentLengthBucket: "1_255",
+      },
+    });
+    expect(JSON.stringify(error)).not.toMatch(
+      /not-json-secret-body|raw-envelope-secret|private-source-text|secret-test-key/,
+    );
+  });
+
+  it("uses trimmed UTF-8 bytes for provider content length buckets", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: "中".repeat(100) } }],
+    }), { status: 200 }));
+    const provider = new ChatCompletionProvider({
+      apiKey: "secret-test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "test-model",
+      fetchFn: fetchMock,
+    });
+
+    const error = await provider.generate({
+      routeKey: "experience_to_resume",
+      input: {
+        targetDirection: "内容运营",
+        rawExperience: "private-source-text",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      },
+    }).catch((caught: unknown) => caught as AiProviderError);
+
+    expect(error).toMatchObject({
+      kind: "model_json",
+      observation: { contentLengthBucket: "256_2047" },
+    });
   });
 
   it("keeps a safe provider HTTP error code for diagnostics without exposing the response body", async () => {

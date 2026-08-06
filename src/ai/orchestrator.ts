@@ -1,10 +1,15 @@
 import {
   AiProviderError,
   type AiProvider,
-  type AiProviderErrorKind,
   type AiProviderSet,
   type AiRetryFeedback,
 } from "@/ai/provider";
+import {
+  processingFailureCategory,
+  providerFailure,
+  semanticFailure as contentFailure,
+  type AttemptFailure,
+} from "@/ai/attempt-failure";
 import {
   noopAiFailureReporter,
   type AiFailureEvent,
@@ -18,12 +23,19 @@ import {
   recordProviderSuccess,
 } from "@/ai/orchestration-policy";
 import {
-  AiProcessingError,
-  type AiProcessingFailureCategory,
-} from "@/ai/processing-failure";
+  canRetryPrimary,
+  canStartFallback,
+  ORCHESTRATION_FALLBACK_MIN_MS,
+  ORCHESTRATION_RESPONSE_RESERVE_MS,
+  ORCHESTRATION_SCHEDULING_MARGIN_MS,
+  providerAttemptDeadlineAtMs,
+  remainingBudgetBucket,
+  remainingBudgetMs,
+} from "@/ai/orchestration-budget";
+import { AiProcessingError } from "@/ai/processing-failure";
 import { validateRouteOutput } from "@/domain/action-card";
 import { classifyJdMaterialEvidence, compactEvidenceAnchor } from "@/domain/jd-action-clarity";
-import { assembleJdRouteOutput } from "@/domain/jd-route-assembler";
+import { assembleJdRouteOutputResult } from "@/domain/jd-route-assembler";
 import { selectJobTaxonomyDirections, validateDirectionCandidates } from "@/domain/job-taxonomy";
 import { attachOutputProvenance } from "@/domain/provenance";
 import { getRouteStrategy, isPlaceholderValue, isRouteInputSufficient } from "@/domain/routes";
@@ -118,10 +130,15 @@ export async function generateRouteOutput({
   surfaceUpstreamUnavailable,
   failureMode = "friendly",
 }: GenerateRouteOutputInput): Promise<RouteOutput> {
+  const safeRequestId = sanitizeRequestId(requestId);
+  const activeReporter = reporter ?? noopAiFailureReporter;
   if (!isRouteInputSufficient(routeKey, input)) {
     const missing = makeMissingInfoOutput(routeKey, input);
     const withProvenance = attachOutputProvenance(missing, input);
-    if (withProvenance.ok) return withProvenance.output;
+    if (withProvenance.ok) {
+      reportStandaloneTerminal(activeReporter, safeRequestId, routeKey, "route", "business_missing_info");
+      return withProvenance.output;
+    }
     if (failureMode === "throw") {
       throw new AiProcessingError("invalid_output", sanitizeRequestId(requestId));
     }
@@ -131,7 +148,10 @@ export async function generateRouteOutput({
   if (routeKey === "direction_to_jobs" && !hasEnoughDirectionTaxonomyEvidence(input)) {
     const missing = makeMissingInfoOutput(routeKey, input, directionEvidenceMissingInfoConfig);
     const withProvenance = attachOutputProvenance(missing, input);
-    if (withProvenance.ok) return withProvenance.output;
+    if (withProvenance.ok) {
+      reportStandaloneTerminal(activeReporter, safeRequestId, routeKey, "route", "business_missing_info");
+      return withProvenance.output;
+    }
     if (failureMode === "throw") {
       throw new AiProcessingError("invalid_output", sanitizeRequestId(requestId));
     }
@@ -144,12 +164,12 @@ export async function generateRouteOutput({
       input,
       mode: "route",
       ...resolveProviders(provider, primary, fallback),
-      reporter: reporter ?? noopAiFailureReporter,
-      requestId: sanitizeRequestId(requestId),
+      reporter: activeReporter,
+      requestId: safeRequestId,
       signal,
       deadlineMs,
       surfaceUpstreamUnavailable,
-      allowLegacyThirdAttempt: failureMode === "friendly",
+      allowLegacyFullJdOutput: failureMode === "friendly",
     });
   } catch (error) {
     if (failureMode === "friendly" && error instanceof AiProcessingError) {
@@ -188,6 +208,13 @@ export async function generateLightReviewOutput({
     sourceRecords.some((item) => item.routeKey !== routeKey) ||
     (routeKey === "applications_to_review" && reviewRecords.length < 2)
   ) {
+    reportStandaloneTerminal(
+      reporter ?? noopAiFailureReporter,
+      sanitizeRequestId(requestId),
+      routeKey ?? "applications_to_review",
+      "light_review",
+      "semantic_invalid",
+    );
     if (failureMode === "throw") {
       throw new AiProcessingError(
         "invalid_output",
@@ -213,7 +240,7 @@ export async function generateLightReviewOutput({
       signal,
       deadlineMs,
       surfaceUpstreamUnavailable,
-      allowLegacyThirdAttempt: failureMode === "friendly",
+      allowLegacyFullJdOutput: failureMode === "friendly",
     });
   } catch (error) {
     if (failureMode === "friendly" && error instanceof AiProcessingError) {
@@ -235,20 +262,7 @@ type OrchestrateOutputInput = {
   signal?: AbortSignal;
   deadlineMs?: number;
   surfaceUpstreamUnavailable?: boolean;
-  allowLegacyThirdAttempt?: boolean;
-};
-
-type AttemptFailure = {
-  stage: AiFailureStage;
-  code: string;
-  retryPrimary: boolean;
-  allowFallback: boolean;
-  failureClass: AiFailureEvent["failureClass"];
-  durationMs: number;
-  schemaPaths?: string[];
-  httpStatusClass?: AiProviderError["httpStatusClass"];
-  providerErrorCode?: AiProviderError["providerErrorCode"];
-  retryAfterMs?: number;
+  allowLegacyFullJdOutput?: boolean;
 };
 
 type AttemptResult =
@@ -257,16 +271,39 @@ type AttemptResult =
 
 async function orchestrateOutput(options: OrchestrateOutputInput): Promise<RouteOutput> {
   if (!options.primary) {
+    reportStandaloneTerminal(
+      options.reporter,
+      options.requestId,
+      options.routeKey,
+      options.mode,
+      "machine_unavailable",
+    );
     throw new AiProcessingError("transport", options.requestId);
   }
   const execution = createOrchestrationExecution(options.signal, options.deadlineMs ?? 28_000);
+  let terminalReported = false;
+  const reportTerminal = (
+    terminalCategory: NonNullable<AiFailureEvent["terminalCategory"]>,
+    providerRole: AiFailureEvent["providerRole"] = "primary",
+  ) => {
+    if (terminalReported) return;
+    terminalReported = true;
+    reportAttemptFailure(options, providerRole, 0, {
+      stage: "terminal",
+      code: terminalCategory,
+      retryPrimary: false,
+      allowFallback: false,
+      failureClass: terminalCategory === "semantic_invalid" ? "semantic_invalid" : "machine_unavailable",
+      durationMs: 0,
+    }, "stop", remainingBudgetMs(execution.deadlineAtMs), terminalCategory);
+  };
 
   try {
     let primaryFailuresAllowFallback = true;
     let unavailableRetryAfterMs: number | undefined;
     let lastFailure: AttemptFailure | undefined;
     let retryFeedback: AiRetryFeedback | undefined;
-    let maxPrimaryAttempts = 2;
+    const maxPrimaryAttempts = 2;
     for (let attempt = 1; attempt <= maxPrimaryAttempts; attempt += 1) {
       if (execution.signal.aborted) break;
       if (!beginProviderAttempt(options.primary)) {
@@ -289,9 +326,18 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
         options,
         retryFeedback,
         execution.signal,
-        execution.deadlineAtMs,
+        providerAttemptDeadlineAtMs(
+          execution.deadlineAtMs,
+          ORCHESTRATION_RESPONSE_RESERVE_MS
+            + (options.fallback && (attempt === 1 || lastFailure?.allowFallback)
+              ? ORCHESTRATION_FALLBACK_MIN_MS + ORCHESTRATION_SCHEDULING_MARGIN_MS
+              : 0),
+        ),
       );
-      if (result.output) return result.output;
+      if (result.output) {
+        reportTerminal("success", "primary");
+        return result.output;
+      }
 
       lastFailure = result.failure;
 
@@ -300,75 +346,117 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
         unavailableRetryAfterMs,
         result.failure.retryAfterMs,
       );
+      const remainingMs = remainingBudgetMs(execution.deadlineAtMs);
+      const retryAllowed = result.failure.retryPrimary
+        && attempt < maxPrimaryAttempts
+        && canRetryPrimary(remainingMs, Boolean(options.fallback && result.failure.allowFallback));
       reportAttemptFailure(
         options,
         "primary",
         attempt,
         result.failure,
-        result.failure.retryPrimary && attempt < maxPrimaryAttempts
+        retryAllowed
           ? "retry_primary"
           : result.failure.allowFallback && options.fallback
             ? "try_fallback"
             : "stop",
       );
       if (execution.signal.aborted) {
-        throw new AiProcessingError(execution.abortCategory(), options.requestId);
+        const abortCategory = execution.abortCategory();
+        reportFallbackSkippedAbort(options, abortCategory, remainingMs);
+        throw new AiProcessingError(abortCategory, options.requestId);
       }
       if (!result.failure.retryPrimary) {
         if (primaryFailuresAllowFallback && options.fallback) break;
+        if (!result.failure.allowFallback && options.fallback) {
+          reportFallbackSkippedPolicy(options, remainingMs);
+        }
         throw processingErrorFromAttempt(result.failure, options.requestId);
       }
-      if (
-        options.allowLegacyThirdAttempt &&
-        attempt === 2 &&
-        maxPrimaryAttempts === 2 &&
-        !options.fallback &&
-        result.failure.stage === "provider_content"
-      ) {
-        maxPrimaryAttempts = 3;
-        retryFeedback = toRetryFeedback(result.failure);
-        continue;
-      }
-      if (
-        options.allowLegacyThirdAttempt &&
-        attempt === 2 &&
-        maxPrimaryAttempts === 2 &&
-        retryFeedback?.stage === "grounding" &&
-        result.failure.stage === "provider_content"
-      ) {
-        maxPrimaryAttempts = 3;
-        continue;
-      }
-      if (
-        options.allowLegacyThirdAttempt &&
-        attempt === 2 &&
-        maxPrimaryAttempts === 2 &&
-        retryFeedback?.code === "provider_retryable" &&
-        result.failure.stage === "grounding"
-      ) {
-        maxPrimaryAttempts = 3;
-        retryFeedback = toRetryFeedback(result.failure);
-        continue;
+      if (!retryAllowed) {
+        if (result.failure.allowFallback && options.fallback) {
+          if (attempt < maxPrimaryAttempts) {
+            reportAttemptFailure(options, "primary", attempt, {
+              ...result.failure,
+              stage: "orchestration",
+              code: "primary_retry_skipped_budget",
+              durationMs: 0,
+            }, "try_fallback", remainingMs);
+          }
+          break;
+        }
+        if (!result.failure.allowFallback && options.fallback) {
+          reportFallbackSkippedPolicy(options, remainingMs);
+        }
+        throw processingErrorFromAttempt(result.failure, options.requestId);
       }
       retryFeedback = toRetryFeedback(result.failure);
     }
 
-    if (!execution.signal.aborted && primaryFailuresAllowFallback && options.fallback) {
-      if (beginProviderAttempt(options.fallback)) {
+    if (execution.signal.aborted) {
+      const abortCategory = execution.abortCategory();
+      reportFallbackSkippedAbort(
+        options,
+        abortCategory,
+        remainingBudgetMs(execution.deadlineAtMs),
+      );
+      throw new AiProcessingError(abortCategory, options.requestId);
+    }
+
+    if (primaryFailuresAllowFallback && options.fallback) {
+      const fallbackRemainingMs = remainingBudgetMs(execution.deadlineAtMs);
+      if (!canStartFallback(fallbackRemainingMs)) {
+        reportAttemptFailure(options, "fallback", 1, {
+          stage: "orchestration",
+          code: "fallback_skipped_budget",
+          retryPrimary: false,
+          allowFallback: false,
+          failureClass: "machine_unavailable",
+          durationMs: 0,
+        }, "stop", fallbackRemainingMs);
+      } else if (beginProviderAttempt(options.fallback)) {
+        reportAttemptFailure(options, "fallback", 1, {
+          stage: "orchestration",
+          code: "fallback_started",
+          retryPrimary: false,
+          allowFallback: false,
+          failureClass: "machine_unavailable",
+          durationMs: 0,
+        }, "stop", fallbackRemainingMs);
         const result = await generateAndValidate(
           options.fallback,
           options,
           undefined,
           execution.signal,
-          execution.deadlineAtMs,
+          providerAttemptDeadlineAtMs(
+            execution.deadlineAtMs,
+            ORCHESTRATION_RESPONSE_RESERVE_MS,
+          ),
         );
-        if (result.output) return result.output;
+        if (result.output) {
+          reportAttemptFailure(options, "fallback", 1, {
+            stage: "orchestration",
+            code: "fallback_succeeded",
+            retryPrimary: false,
+            allowFallback: false,
+            failureClass: "machine_unavailable",
+            durationMs: 0,
+          }, "stop", remainingBudgetMs(execution.deadlineAtMs));
+          reportTerminal("success", "fallback");
+          return result.output;
+        }
         lastFailure = result.failure;
         unavailableRetryAfterMs = earliestRetryAfter(
           unavailableRetryAfterMs,
           result.failure.retryAfterMs,
         );
         reportAttemptFailure(options, "fallback", 1, result.failure, "stop");
+        reportAttemptFailure(options, "fallback", 1, {
+          ...result.failure,
+          stage: "orchestration",
+          code: "fallback_failed",
+          durationMs: 0,
+        }, "stop", remainingBudgetMs(execution.deadlineAtMs));
       } else {
         lastFailure = {
           stage: "provider_transport",
@@ -378,6 +466,11 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
           failureClass: "machine_unavailable",
           durationMs: 0,
         };
+        reportAttemptFailure(options, "fallback", 0, {
+          ...lastFailure,
+          stage: "orchestration",
+          code: "fallback_skipped_circuit",
+        }, "stop", remainingBudgetMs(execution.deadlineAtMs));
         unavailableRetryAfterMs = earliestRetryAfter(
           unavailableRetryAfterMs,
           getProviderRetryAfterMs(options.fallback) ?? 1_000,
@@ -399,6 +492,21 @@ async function orchestrateOutput(options: OrchestrateOutputInput): Promise<Route
       },
       options.requestId,
     );
+  } catch (error) {
+    if (error instanceof AiProcessingError) {
+      reportTerminal(
+        error.category === "deadline" ? "deadline"
+          : error.category === "cancelled" ? "cancelled"
+            : error.category === "invalid_output" || error.category === "safety"
+              ? "semantic_invalid"
+              : "machine_unavailable",
+      );
+    } else if (error instanceof AiUpstreamUnavailableError) {
+      reportTerminal("machine_unavailable");
+    } else {
+      reportTerminal("unexpected_internal");
+    }
+    throw error;
   } finally {
     execution.cleanup();
   }
@@ -415,32 +523,9 @@ function processingErrorFromAttempt(
   );
 }
 
-function processingFailureCategory(
-  failure: AttemptFailure,
-): AiProcessingFailureCategory {
-  if (failure.code === "timeout") return "timeout";
-  if (failure.code === "cancelled") return "cancelled";
-  if (failure.code === "circuit_open") return "circuit_open";
-  if (failure.stage === "safety") return "safety";
-  if (
-    failure.stage === "provider_http" &&
-    (failure.providerErrorCode?.toLowerCase().includes("rate") ||
-      failure.httpStatusClass === "4xx")
-  ) {
-    return "rate_limit";
-  }
-  if (
-    failure.stage === "provider_transport" ||
-    failure.stage === "provider_http"
-  ) {
-    return "transport";
-  }
-  return "invalid_output";
-}
-
 async function generateAndValidate(
   provider: AiProvider,
-  options: Pick<OrchestrateOutputInput, "routeKey" | "input" | "provenanceInput" | "mode" | "allowLegacyThirdAttempt">,
+  options: Pick<OrchestrateOutputInput, "routeKey" | "input" | "provenanceInput" | "mode" | "allowLegacyFullJdOutput">,
   retryFeedback?: AiRetryFeedback,
   signal?: AbortSignal,
   deadlineAtMs?: number,
@@ -472,7 +557,7 @@ async function generateAndValidate(
     options.routeKey === "jd_to_revision"
     && options.mode === "route"
     && !isNarrowJdCandidate
-    && !options.allowLegacyThirdAttempt
+    && !options.allowLegacyFullJdOutput
   ) {
     return rejectContent(contentFailure("candidate_schema", "signed_jd_contract_required", durationMs));
   }
@@ -482,6 +567,13 @@ async function generateAndValidate(
     options.input,
     options.mode,
   );
+  if (isJdAssemblyFailure(repairedOutput)) {
+    return rejectContent(contentFailure(
+      repairedOutput.code === "candidate_schema" ? "candidate_schema" : "grounding",
+      repairedOutput.code,
+      durationMs,
+    ));
+  }
   const parsed = routeOutputEnvelopeSchema.safeParse(repairedOutput);
   if (!parsed.success) {
     return rejectContent({
@@ -623,12 +715,13 @@ function repairCandidateBeforeSchema(
   if (routeKey === "jd_to_revision" && mode === "route") {
     const narrow = jdMappingCandidateSchema.safeParse(rawOutput);
     if (narrow.success) {
-      return assembleJdRouteOutput({
+      const assembled = assembleJdRouteOutputResult({
         targetJobTitle: String(input.targetJobTitle ?? ""),
         jdTextOrRequirements: String(input.jdTextOrRequirements ?? ""),
         userMaterial: String(input.userMaterial ?? ""),
         currentQuestion: String(input.currentQuestion ?? ""),
       }, narrow.data);
+      return assembled.ok ? assembled.output : assembled;
     }
   }
   if (routeKey !== "jd_to_revision" || !isPlainObject(rawOutput)) return rawOutput;
@@ -648,30 +741,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function providerFailure(error: unknown, durationMs: number): AttemptFailure {
-  if (!(error instanceof AiProviderError)) {
-    return {
-      stage: "provider_transport",
-      code: "unexpected_provider_error",
-      retryPrimary: false,
-      allowFallback: false,
-      failureClass: "machine_unavailable",
-      durationMs,
-    };
-  }
-
-  const eligible = isProviderFailureRetryable(error.kind);
-  return {
-    stage: providerStage(error.kind),
-    code: error.kind,
-    retryPrimary: eligible,
-    allowFallback: eligible,
-    failureClass: "machine_unavailable",
-    durationMs,
-    httpStatusClass: error.httpStatusClass,
-    providerErrorCode: error.providerErrorCode,
-    retryAfterMs: error.retryAfterMs,
-  };
+function isJdAssemblyFailure(value: unknown): value is { ok: false; code: string } {
+  return isPlainObject(value) && value.ok === false && typeof value.code === "string";
 }
 
 function earliestRetryAfter(
@@ -680,17 +751,6 @@ function earliestRetryAfter(
 ): number | undefined {
   if (candidate === undefined || !Number.isFinite(candidate) || candidate <= 0) return current;
   return current === undefined ? candidate : Math.min(current, candidate);
-}
-
-function contentFailure(stage: AiFailureStage, code: string, durationMs: number): AttemptFailure {
-  return {
-    stage,
-    code,
-    retryPrimary: true,
-    allowFallback: false,
-    failureClass: "semantic_invalid",
-    durationMs,
-  };
 }
 
 const HARD_ROUTE_CONTRACTS: Record<
@@ -2151,19 +2211,6 @@ function toRetryFeedback(failure: AttemptFailure): AiRetryFeedback {
   return { stage: "grounding", code: "grounding_failure" };
 }
 
-function isProviderFailureRetryable(kind: AiProviderErrorKind): boolean {
-  return kind !== "non_retryable_http" && kind !== "cancelled" && kind !== "circuit_open";
-}
-
-function providerStage(kind: AiProviderErrorKind): AiFailureStage {
-  if (kind === "transport" || kind === "timeout" || kind === "cancelled" || kind === "circuit_open") {
-    return "provider_transport";
-  }
-  if (kind === "retryable_http" || kind === "non_retryable_http") return "provider_http";
-  if (kind === "envelope_json") return "provider_envelope";
-  return "provider_content";
-}
-
 function isActionIssue(issue: string): boolean {
   return issue.startsWith("今日行动") || issue.includes("预计时间");
 }
@@ -2270,6 +2317,8 @@ function reportAttemptFailure(
   attempt: number,
   failure: AttemptFailure,
   recoveryDecision: AiFailureEvent["recoveryDecision"],
+  remainingMs?: number,
+  terminalCategory?: AiFailureEvent["terminalCategory"],
 ): void {
   const event: AiFailureEvent = {
     requestId: options.requestId,
@@ -2282,9 +2331,9 @@ function reportAttemptFailure(
     failureClass: failure.failureClass,
     recoveryDecision,
     durationBucket: durationBucket(failure.durationMs),
-    ...(failure.schemaPaths ? { schemaPaths: failure.schemaPaths } : {}),
-    ...(failure.httpStatusClass ? { httpStatusClass: failure.httpStatusClass } : {}),
-    ...(failure.providerErrorCode ? { providerErrorCode: failure.providerErrorCode } : {}),
+    ...(remainingMs === undefined ? {} : { remainingBudgetBucket: remainingBudgetBucket(remainingMs) }),
+    ...(terminalCategory ? { terminalCategory } : {}),
+    ...(failure.observation ?? {}),
   };
 
   try {
@@ -2292,6 +2341,66 @@ function reportAttemptFailure(
   } catch {
     // Diagnostics must never change the user-visible orchestration result.
   }
+}
+
+function reportStandaloneTerminal(
+  reporter: AiFailureReporter,
+  requestId: string,
+  routeKey: RouteKey,
+  mode: AiFailureEvent["mode"],
+  terminalCategory: NonNullable<AiFailureEvent["terminalCategory"]>,
+): void {
+  try {
+    void Promise.resolve(reporter.report({
+      requestId,
+      routeKey,
+      mode,
+      providerRole: "primary",
+      attempt: 0,
+      stage: "terminal",
+      code: terminalCategory,
+      failureClass: terminalCategory === "business_missing_info"
+        ? "business_missing_info"
+        : terminalCategory === "semantic_invalid"
+          ? "semantic_invalid"
+          : "machine_unavailable",
+      recoveryDecision: "stop",
+      durationBucket: "lt_100ms",
+      terminalCategory,
+    })).catch(() => undefined);
+  } catch {
+    // Diagnostics must never change the user-visible orchestration result.
+  }
+}
+
+function reportFallbackSkippedPolicy(
+  options: OrchestrateOutputInput,
+  remainingMs: number,
+): void {
+  reportAttemptFailure(options, "fallback", 0, {
+    stage: "orchestration",
+    code: "fallback_skipped_policy",
+    retryPrimary: false,
+    allowFallback: false,
+    failureClass: "semantic_invalid",
+    durationMs: 0,
+  }, "stop", remainingMs);
+}
+
+function reportFallbackSkippedAbort(
+  options: OrchestrateOutputInput,
+  category: "deadline" | "cancelled",
+  remainingMs: number,
+): void {
+  if (!options.fallback) return;
+  reportAttemptFailure(options, "fallback", 0, {
+    stage: "orchestration",
+    code: `fallback_skipped_${category}`,
+    retryPrimary: false,
+    allowFallback: false,
+    failureClass: "machine_unavailable",
+    durationMs: 0,
+  }, "stop", remainingMs);
 }
 
 function durationBucket(durationMs: number): AiFailureEvent["durationBucket"] {

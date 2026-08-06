@@ -50,19 +50,11 @@ const decisionSchema = z.object({
 
 export const jdMappingCandidateSchema = z.object({
   routeKey: z.literal("jd_to_revision"),
-  selectedRequirementIds: z.array(sourceIdSchema).min(1).max(5),
   decisions: z.array(decisionSchema).min(1).max(5),
 }).strict().superRefine((candidate, context) => {
-  const selected = new Set(candidate.selectedRequirementIds);
   const decided = new Set(candidate.decisions.map((decision) => decision.requirementId));
-  if (selected.size !== candidate.selectedRequirementIds.length) {
-    context.addIssue({ code: "custom", path: ["selectedRequirementIds"], message: "Selected requirement IDs must be unique." });
-  }
   if (decided.size !== candidate.decisions.length) {
     context.addIssue({ code: "custom", path: ["decisions"], message: "Each selected requirement must have one decision." });
-  }
-  if (selected.size !== decided.size || [...selected].some((id) => !decided.has(id))) {
-    context.addIssue({ code: "custom", path: ["decisions"], message: "Decisions must completely cover the selected requirement IDs." });
   }
 });
 

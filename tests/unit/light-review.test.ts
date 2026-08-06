@@ -92,6 +92,7 @@ describe("light review workflow", () => {
   });
 
   it("rejects a legacy combined application payload instead of treating it as two records", async () => {
+    const events: Array<{ stage: string; terminalCategory?: string }> = [];
     const output = await generateLightReviewOutput({
       record: {
         ...record,
@@ -104,10 +105,18 @@ describe("light review workflow", () => {
         },
       },
       provider: new MockAiProvider("success"),
+      reporter: {
+        report(event) {
+          events.push(event);
+        },
+      },
     });
 
     expect(output.outputType).toBe("friendly_failure");
     expect(output.routeResult).toBeNull();
+    expect(events.filter((event) => event.stage === "terminal")).toEqual([
+      expect.objectContaining({ terminalCategory: "semantic_invalid" }),
+    ]);
   });
 
   it("saves and loads the latest light review locally", () => {
