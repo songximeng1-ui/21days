@@ -1725,6 +1725,23 @@ describe("ChatCompletionProvider", () => {
     },
   );
 
+  it("shares the canonical V4 Flash circuit key for DeepSeek chat aliases", () => {
+    const legacyAliasProvider = new ChatCompletionProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-chat",
+    });
+    const canonicalModelProvider = new ChatCompletionProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+    });
+
+    expect(legacyAliasProvider.circuitKey).toBe(canonicalModelProvider.circuitKey);
+    expect(legacyAliasProvider.circuitKey).toContain("deepseek-v4-flash");
+    expect(legacyAliasProvider.circuitKey).not.toContain("deepseek-chat");
+  });
+
   it("rejects deepseek-reasoner without exposing the API key", () => {
     let caught: unknown;
     try {
