@@ -60,6 +60,38 @@ async function capturePrompt(input: AiProviderInput): Promise<string> {
   return body.messages.map((message) => message.content).join("\n");
 }
 
+async function captureRequestBody(options: {
+  baseUrl: string;
+  model: string;
+  routeKey?: RouteKey;
+}): Promise<Record<string, unknown>> {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify(validOutput) } }],
+  }), { status: 200 }));
+  const provider = new ChatCompletionProvider({
+    apiKey: "test-key",
+    baseUrl: options.baseUrl,
+    model: options.model,
+    fetchFn: fetchMock,
+  });
+  const routeKey = options.routeKey ?? "experience_to_resume";
+  const input = routeKey === "jd_to_revision"
+    ? {
+        targetJobTitle: "AI 产品运营",
+        jdTextOrRequirements: "维护产品\n分析复盘\n梳理流程",
+        userMaterial: "运营公众号并发布 13 条内容。",
+      }
+    : {
+        targetDirection: "运营",
+        rawExperience: "社团活动",
+        actualActions: "整理报名表",
+        deliverableOrResult: "报名名单",
+      };
+  await provider.generate({ routeKey, input });
+  const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+  return JSON.parse(requestInit.body as string) as Record<string, unknown>;
+}
+
 function parsePromptSection(prompt: string, begin: string, end: string): Record<string, unknown> {
   const section = prompt.split(begin)[1]?.split(end)[0]?.trim();
   if (!section) throw new Error(`Missing prompt section: ${begin}`);
@@ -174,6 +206,42 @@ it("treats a capability summary as evidence to verify instead of a completed act
 });
 
 describe("ChatCompletionProvider", () => {
+  it.each(["deepseek-v4-flash", "deepseek-v4-pro"])(
+    "sends %s as an explicit non-thinking JSON request",
+    async (model) => {
+      const body = await captureRequestBody({
+        baseUrl: "https://api.deepseek.com",
+        model,
+      });
+      expect(body).toMatchObject({
+        model,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        thinking: { type: "disabled" },
+      });
+    },
+  );
+
+  it("does not send DeepSeek thinking to Qwen", async () => {
+    const body = await captureRequestBody({
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen-plus",
+    });
+    expect(body.model).toBe("qwen-plus");
+    expect(body).not.toHaveProperty("thinking");
+  });
+
+  it("keeps the 900-token JD JSON contract", async () => {
+    const body = await captureRequestBody({
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      routeKey: "jd_to_revision",
+    });
+    expect(body.max_tokens).toBe(900);
+    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.thinking).toEqual({ type: "disabled" });
+  });
+
   it("does not mask request-payload construction bugs as provider transport failures", async () => {
     const fetchMock = vi.fn();
     const provider = new ChatCompletionProvider({
@@ -1629,6 +1697,47 @@ describe("ChatCompletionProvider", () => {
 
     expect(provider).toMatchObject({ primary: expect.anything(), fallback: expect.anything() });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, "deepseek-chat"])(
+    "uses V4 Flash non-thinking for configured model %s",
+    async (configuredModel) => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(validOutput) } }],
+      }), { status: 200 }));
+      const provider = createAiProviderFromEnv({
+        DEEPSEEK_API_KEY: "secret-test-key",
+        ...(configuredModel ? { DEEPSEEK_MODEL: configuredModel } : {}),
+      }, fetchMock);
+      await provider.generate({
+        routeKey: "experience_to_resume",
+        input: {
+          targetDirection: "运营",
+          rawExperience: "社团活动",
+          actualActions: "整理报名表",
+          deliverableOrResult: "报名名单",
+        },
+      });
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+      const body = JSON.parse(requestInit.body as string) as Record<string, unknown>;
+      expect(body.model).toBe("deepseek-v4-flash");
+      expect(body.thinking).toEqual({ type: "disabled" });
+    },
+  );
+
+  it("rejects deepseek-reasoner without exposing the API key", () => {
+    let caught: unknown;
+    try {
+      createAiProviderFromEnv({
+        DEEPSEEK_API_KEY: "secret-test-key",
+        DEEPSEEK_MODEL: "deepseek-reasoner",
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(String(caught)).toContain("Invalid AI provider model configuration");
+    expect(JSON.stringify(caught)).not.toContain("secret-test-key");
   });
 
   it("falls back to mock provider in non-production when DeepSeek is not configured", () => {

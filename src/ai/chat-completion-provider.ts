@@ -8,6 +8,10 @@ import {
   type AiSafeProviderObservation,
 } from "@/ai/provider";
 import { normalizeProviderBaseUrl } from "@/ai/provider-url-policy";
+import {
+  resolveProviderRuntimeProfile,
+  type ProviderRuntimeProfile,
+} from "@/ai/provider-runtime-profile";
 import { MockAiProvider } from "@/ai/mock-provider";
 import { APPLICATION_RECORD_FIELDS, getRouteContract } from "@/domain/route-contracts";
 import { buildJdEvidenceCatalog } from "@/domain/jd-route-assembler";
@@ -31,12 +35,17 @@ export class ChatCompletionProvider implements AiProvider {
   private readonly completionsUrl: string;
   private readonly timeoutMs: number;
   private readonly maxResponseBytes: number;
+  private readonly runtimeProfile: ProviderRuntimeProfile;
 
   constructor(private readonly options: ChatCompletionProviderOptions) {
     this.fetchFn = options.fetchFn ?? fetch;
     const normalizedBaseUrl = normalizeProviderBaseUrl(options.baseUrl);
+    this.runtimeProfile = resolveProviderRuntimeProfile(
+      normalizedBaseUrl,
+      options.model,
+    );
     this.completionsUrl = `${normalizedBaseUrl}/chat/completions`;
-    this.circuitKey = `chat-completion:${normalizedBaseUrl}:${options.model}`;
+    this.circuitKey = `chat-completion:${normalizedBaseUrl}:${this.runtimeProfile.model}`;
     this.timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 12_000, 30_000));
     this.maxResponseBytes = Math.max(64, Math.min(options.maxResponseBytes ?? 512 * 1024, 1024 * 1024));
   }
@@ -48,10 +57,13 @@ export class ChatCompletionProvider implements AiProvider {
     }
 
     const requestBody = JSON.stringify({
-      model: this.options.model,
+      model: this.runtimeProfile.model,
       temperature: 0.2,
       max_tokens: maxTokensForRoute(input.routeKey),
       response_format: { type: "json_object" },
+      ...(this.runtimeProfile.thinking
+        ? { thinking: this.runtimeProfile.thinking }
+        : {}),
       messages: [
         {
           role: "system",
@@ -369,7 +381,7 @@ export function createAiProviderFromEnv(env: ProviderEnv = process.env, fetchFn?
     const primary = new ChatCompletionProvider({
       apiKey: env.DEEPSEEK_API_KEY,
       baseUrl: env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
-      model: env.DEEPSEEK_MODEL ?? "deepseek-chat",
+      model: env.DEEPSEEK_MODEL ?? "deepseek-v4-flash",
       fetchFn,
     });
 
